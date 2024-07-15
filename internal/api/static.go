@@ -12,7 +12,7 @@ func initStatic(staticDir string) {
 		log.Info().Str("dir", staticDir).Msg("[api] serve static")
 		root = http.Dir(staticDir)
 	} else {
-		root = http.FS(www.Static)
+		root = http.FS(www.GetStaticFS())
 	}
 
 	base := len(basePath)
