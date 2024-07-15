@@ -6,7 +6,6 @@ import (
 )
 
 func main() {
-	// app.Version = "1.9.4"
 	app.AppName = "vrtc"
 	app.Init()
 	shell.RunUntilSignal()
