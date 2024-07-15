@@ -1,6 +1,7 @@
 package app
 
 import (
+	"context"
 	"flag"
 	"fmt"
 	"os"
@@ -16,7 +17,7 @@ const usage = `Usage of vrtc:
   -v, --version  Print version and exit
 `
 
-func Init() {
+func Init(ctx *context.Context) {
 	var config flagConfig
 	var daemon bool
 	var version bool

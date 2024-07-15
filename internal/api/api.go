@@ -1,6 +1,7 @@
 package api
 
 import (
+	"context"
 	"crypto/tls"
 	"encoding/json"
 	"fmt"
@@ -28,7 +29,7 @@ const (
 	MimeText = "text/plain"
 )
 
-func Init() {
+func Init(ctx *context.Context) {
 	var cfg struct {
 		Mod struct {
 			Listen     string `yaml:"listen"`
@@ -79,17 +80,17 @@ func Init() {
 	}
 
 	if cfg.Mod.Listen != "" {
-		go listen("tcp", cfg.Mod.Listen)
+		go listen(ctx, "tcp", cfg.Mod.Listen)
 	}
 
 	if cfg.Mod.UnixListen != "" {
 		_ = syscall.Unlink(cfg.Mod.UnixListen)
-		go listen("unix", cfg.Mod.UnixListen)
+		go listen(ctx, "unix", cfg.Mod.UnixListen)
 	}
 
 	// Initialize the HTTPS server
 	if cfg.Mod.TLSListen != "" && cfg.Mod.TLSCert != "" && cfg.Mod.TLSKey != "" {
-		go tlsListen("tcp", cfg.Mod.TLSListen, cfg.Mod.TLSCert, cfg.Mod.TLSKey)
+		go tlsListen(ctx, "tcp", cfg.Mod.TLSListen, cfg.Mod.TLSCert, cfg.Mod.TLSKey)
 	}
 }
 
@@ -104,7 +105,7 @@ func HandleFunc(pattern string, handler http.HandlerFunc) {
 	http.HandleFunc(pattern, handler)
 }
 
-func listen(network, address string) {
+func listen(ctx *context.Context, network, address string) {
 	ln, err := net.Listen(network, address)
 	if err != nil {
 		log.Error().Err(err).Msg("[api] listen")
@@ -117,7 +118,8 @@ func listen(network, address string) {
 		Port = ln.Addr().(*net.TCPAddr).Port
 	}
 
-	server := http.Server{
+	server := &http.Server{
+		BaseContext:       func(net.Listener) context.Context { return *ctx },
 		Handler:           Handler,
 		ReadHeaderTimeout: 5 * time.Second, // Example: Set to 5 seconds
 	}
@@ -126,7 +128,7 @@ func listen(network, address string) {
 	}
 }
 
-func tlsListen(network, address, certFile, keyFile string) {
+func tlsListen(ctx *context.Context, network, address, certFile, keyFile string) {
 	var cert tls.Certificate
 	var err error
 	if strings.IndexByte(certFile, '\n') < 0 && strings.IndexByte(keyFile, '\n') < 0 {
@@ -150,6 +152,7 @@ func tlsListen(network, address, certFile, keyFile string) {
 	log.Info().Str("addr", address).Msg("[api] tls listen")
 
 	server := &http.Server{
+		BaseContext:       func(net.Listener) context.Context { return *ctx },
 		Handler:           Handler,
 		TLSConfig:         &tls.Config{Certificates: []tls.Certificate{cert}},
 		ReadHeaderTimeout: 5 * time.Second,
@@ -240,8 +243,10 @@ func exitHandler(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "Code must be in the range [0, 125]", http.StatusBadRequest)
 		return
 	}
+	_, cancel := context.WithCancel(r.Context())
+	cancel()
 
-	os.Exit(code)
+	// os.Exit(code)
 }
 
 func restartHandler(w http.ResponseWriter, r *http.Request) {

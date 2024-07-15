@@ -1,17 +1,25 @@
 package main
 
 import (
+	"context"
+	"os"
+	"os/signal"
+
 	"github.com/vtpl1/vrtc/internal/api"
 	"github.com/vtpl1/vrtc/internal/app"
-	"github.com/vtpl1/vrtc/pkg/shell"
 )
 
 func main() {
+
+	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt)
+	defer stop()
 	// 1. Core modules: app, api/ws, streams
-	app.Init() // init config and logs
-	api.Init()
-
+	app.Init(&ctx) // init config and logs
+	log := app.GetLogger("api")
+	api.Init(&ctx)
+	log.Info().Msg("Waiting for ctx done")
 	// 7. Go
-
-	shell.RunUntilSignal()
+	<-ctx.Done()
+	log.Info().Msg("ctx done")
+	// shell.RunUntilSignal()
 }
