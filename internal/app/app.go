@@ -73,6 +73,7 @@ func Init() {
 
 func readRevisionTime() (revision, vcsTime string) {
 	if info, ok := debug.ReadBuildInfo(); ok {
+		Version = info.Main.Version
 		for _, setting := range info.Settings {
 			switch setting.Key {
 			case "vcs.revision":
