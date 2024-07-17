@@ -8,6 +8,7 @@ import (
 	"github.com/vtpl1/vrtc/internal/api"
 	"github.com/vtpl1/vrtc/internal/app"
 	"github.com/vtpl1/vrtc/internal/grpc"
+	"github.com/vtpl1/vrtc/internal/streams"
 )
 
 func main() {
@@ -20,6 +21,7 @@ func main() {
 	log := app.GetLogger("api")
 	api.Init(&ctx)
 	grpc.Init(&ctx)
+	streams.Init()
 	log.Info().Msg("Waiting for ctx done")
 
 	// 7. Go

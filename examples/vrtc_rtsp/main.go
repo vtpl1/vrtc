@@ -7,6 +7,5 @@ import (
 
 func main() {
 	app.AppName = "vrtc"
-	app.Init()
 	shell.RunUntilSignal()
 }
