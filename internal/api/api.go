@@ -23,6 +23,7 @@ var log zerolog.Logger
 var Handler http.Handler
 var Port int
 var mu sync.Mutex
+var InternalTerminationRequest chan int
 
 const (
 	MimeJSON = "application/json"
@@ -243,9 +244,13 @@ func exitHandler(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "Code must be in the range [0, 125]", http.StatusBadRequest)
 		return
 	}
-	_, cancel := context.WithCancel(r.Context())
-	cancel()
-
+	path, err := os.Executable()
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	log.Info().Msgf("[api] exit %s", path)
+	InternalTerminationRequest <- 1
 	// os.Exit(code)
 }
 
