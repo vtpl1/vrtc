@@ -7,6 +7,7 @@ import (
 
 	"github.com/vtpl1/vrtc/internal/api"
 	"github.com/vtpl1/vrtc/internal/app"
+	"github.com/vtpl1/vrtc/internal/grpc"
 )
 
 func main() {
@@ -18,6 +19,7 @@ func main() {
 	app.Init(&ctx) // init config and logs
 	log := app.GetLogger("api")
 	api.Init(&ctx)
+	grpc.Init(&ctx)
 	log.Info().Msg("Waiting for ctx done")
 
 	// 7. Go
