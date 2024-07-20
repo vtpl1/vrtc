@@ -1,0 +1,11 @@
+log:
+  level: trace  # default level
+  api: trace
+  exec: debug
+  ngrok: info
+  rtsp: warn
+  streams: debug
+  webrtc: trace
+streams:
+  "1": rtsp://admin:AdmiN1234@172.16.0.55:554/live.sdp
+  "2": rtsp://root:AdmiN1234@172.16.0.92/axis-media/media.amp?videocodec=h265
