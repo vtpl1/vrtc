@@ -14,6 +14,7 @@ func configHandler(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "", http.StatusGone)
 		return
 	}
+
 	switch r.Method {
 	case "GET":
 		data, err := os.ReadFile(app.ConfigPath)
@@ -23,12 +24,14 @@ func configHandler(w http.ResponseWriter, r *http.Request) {
 		}
 		// https://www.ietf.org/archive/id/draft-ietf-httpapi-yaml-mediatypes-00.html
 		Response(w, data, "application/yaml")
+
 	case "POST", "PATCH":
 		data, err := io.ReadAll(r.Body)
 		if err != nil {
 			http.Error(w, err.Error(), http.StatusBadRequest)
 			return
 		}
+
 		if r.Method == "PATCH" {
 			// no need to validate after merge
 			data, err = mergeYAML(app.ConfigPath, data)

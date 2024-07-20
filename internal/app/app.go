@@ -9,6 +9,13 @@ import (
 	"runtime/debug"
 )
 
+var (
+	Version    string
+	UserAgent  string
+	ConfigPath string
+	Info       = make(map[string]any)
+)
+
 const usage = `Usage of vrtc:
 
   -c, --config   Path to config file or config string as YAML or JSON, support multiple
@@ -34,7 +41,7 @@ func Init() {
 	revision, vcsTime := readRevisionTime()
 
 	if version {
-		fmt.Printf("%s version %s (%s) %s/%s\n", AppName, Version, revision, runtime.GOOS, runtime.GOARCH)
+		fmt.Printf("vrtc version %s (%s) %s/%s\n", Version, revision, runtime.GOOS, runtime.GOARCH)
 		os.Exit(0)
 	}
 
@@ -54,7 +61,7 @@ func Init() {
 		os.Exit(0)
 	}
 
-	UserAgent = AppName + "/" + Version
+	UserAgent = "vrtc/" + Version
 
 	Info["version"] = Version
 	Info["revision"] = revision
@@ -63,8 +70,8 @@ func Init() {
 	initLogger()
 
 	platform := fmt.Sprintf("%s/%s", runtime.GOOS, runtime.GOARCH)
-	Logger.Info().Str("version", Version).Str("platform", platform).Str("revision", revision).Msg(AppName)
-	Logger.Info().Str("version", runtime.Version()).Str("vcs.time", vcsTime).Msg("build")
+	Logger.Info().Str("version", Version).Str("platform", platform).Str("revision", revision).Msg("vrtc")
+	Logger.Debug().Str("version", runtime.Version()).Str("vcs.time", vcsTime).Msg("build")
 
 	if ConfigPath != "" {
 		Logger.Info().Str("path", ConfigPath).Msg("config")
@@ -73,7 +80,6 @@ func Init() {
 
 func readRevisionTime() (revision, vcsTime string) {
 	if info, ok := debug.ReadBuildInfo(); ok {
-		Version = info.Main.Version
 		for _, setting := range info.Settings {
 			switch setting.Key {
 			case "vcs.revision":

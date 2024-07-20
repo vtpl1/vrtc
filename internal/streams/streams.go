@@ -12,10 +12,6 @@ import (
 	"github.com/vtpl1/vrtc/internal/app"
 )
 
-var log zerolog.Logger
-var streams = map[string]*Stream{}
-var streamsMu sync.Mutex
-
 func Init() {
 	var cfg struct {
 		Streams map[string]any `yaml:"streams"`
@@ -146,3 +142,7 @@ func Streams() map[string]*Stream {
 func Delete(id string) {
 	delete(streams, id)
 }
+
+var log zerolog.Logger
+var streams = map[string]*Stream{}
+var streamsMu sync.Mutex

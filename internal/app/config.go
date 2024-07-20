@@ -10,14 +10,6 @@ import (
 	"github.com/vtpl1/vrtc/pkg/yaml"
 )
 
-var (
-	Version    string
-	AppName    string
-	UserAgent  string
-	ConfigPath string
-	Info       = make(map[string]any)
-)
-
 func LoadConfig(v any) {
 	for _, data := range configs {
 		if err := yaml.Unmarshal(data, v); err != nil {

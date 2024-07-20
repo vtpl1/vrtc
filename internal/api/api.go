@@ -17,20 +17,6 @@ import (
 	"github.com/vtpl1/vrtc/internal/app"
 )
 
-const StreamNotFound = "stream not found"
-
-var basePath string
-var log zerolog.Logger
-var Handler http.Handler
-var Port int
-var mu sync.Mutex
-var InternalTerminationRequest chan int
-
-const (
-	MimeJSON = "application/json"
-	MimeText = "text/plain"
-)
-
 func Init() {
 	var cfg struct {
 		Mod struct {
@@ -73,6 +59,7 @@ func Init() {
 	if cfg.Mod.Origin == "*" {
 		Handler = middlewareCORS(Handler) // 3rd
 	}
+
 	if cfg.Mod.Username != "" {
 		Handler = middlewareAuth(cfg.Mod.Username, cfg.Mod.Password, Handler) // 2nd
 	}
@@ -96,17 +83,6 @@ func Init() {
 	}
 }
 
-// HandleFunc handle pattern with relative path:
-// - "api/streams" => "{basepath}/api/streams"
-// - "/streams"    => "/streams"
-func HandleFunc(pattern string, handler http.HandlerFunc) {
-	if len(pattern) == 0 || pattern[0] != '/' {
-		pattern = basePath + "/" + pattern
-	}
-	log.Trace().Str("path", pattern).Msg("[api] register path")
-	http.HandleFunc(pattern, handler)
-}
-
 func listen(network, address string) {
 	ln, err := net.Listen(network, address)
 	if err != nil {
@@ -120,8 +96,7 @@ func listen(network, address string) {
 		Port = ln.Addr().(*net.TCPAddr).Port
 	}
 
-	server := &http.Server{
-		// BaseContext:       func(net.Listener) context.Context { return *ctx },
+	server := http.Server{
 		Handler:           Handler,
 		ReadHeaderTimeout: 5 * time.Second, // Example: Set to 5 seconds
 	}
@@ -154,7 +129,6 @@ func tlsListen(network, address, certFile, keyFile string) {
 	log.Info().Str("addr", address).Msg("[api] tls listen")
 
 	server := &http.Server{
-		// BaseContext:       func(net.Listener) context.Context { return *ctx },
 		Handler:           Handler,
 		TLSConfig:         &tls.Config{Certificates: []tls.Certificate{cert}},
 		ReadHeaderTimeout: 5 * time.Second,
@@ -164,36 +138,24 @@ func tlsListen(network, address, certFile, keyFile string) {
 	}
 }
 
-func middlewareCORS(next http.Handler) http.Handler {
-	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Access-Control-Allow-Origin", "*")
-		w.Header().Set("Access-Control-Allow-Methods", "GET, POST, PUT, DELETE, OPTIONS")
-		w.Header().Set("Access-Control-Allow-Headers", "Authorization, Content-Type")
-		next.ServeHTTP(w, r)
-	})
-}
+var Port int
 
-func middlewareAuth(username, password string, next http.Handler) http.Handler {
-	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if !strings.HasPrefix(r.RemoteAddr, "127.") && !strings.HasPrefix(r.RemoteAddr, "[::1]") && r.RemoteAddr != "@" {
-			user, pass, ok := r.BasicAuth()
-			if !ok || user != username || pass != password {
+const (
+	MimeJSON = "application/json"
+	MimeText = "text/plain"
+)
 
-				w.Header().Set("Www-Authenticate", fmt.Sprintf(`Basic realm="%s"`, app.AppName))
-				http.Error(w, "Unauthorized", http.StatusUnauthorized)
-				return
-			}
-		}
+var Handler http.Handler
 
-		next.ServeHTTP(w, r)
-	})
-}
-
-func middlewareLog(next http.Handler) http.Handler {
-	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		log.Trace().Msgf("[api] %s %s %s", r.Method, r.URL, r.RemoteAddr)
-		next.ServeHTTP(w, r)
-	})
+// HandleFunc handle pattern with relative path:
+// - "api/streams" => "{basepath}/api/streams"
+// - "/streams"    => "/streams"
+func HandleFunc(pattern string, handler http.HandlerFunc) {
+	if len(pattern) == 0 || pattern[0] != '/' {
+		pattern = basePath + "/" + pattern
+	}
+	log.Trace().Str("path", pattern).Msg("[api] register path")
+	http.HandleFunc(pattern, handler)
 }
 
 // ResponseJSON important always add Content-Type
@@ -222,6 +184,45 @@ func Response(w http.ResponseWriter, body any, contentType string) {
 		_, _ = fmt.Fprint(w, body)
 	}
 }
+
+const StreamNotFound = "stream not found"
+
+var basePath string
+var log zerolog.Logger
+var InternalTerminationRequest chan int
+
+func middlewareLog(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		log.Trace().Msgf("[api] %s %s %s", r.Method, r.URL, r.RemoteAddr)
+		next.ServeHTTP(w, r)
+	})
+}
+
+func middlewareAuth(username, password string, next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if !strings.HasPrefix(r.RemoteAddr, "127.") && !strings.HasPrefix(r.RemoteAddr, "[::1]") && r.RemoteAddr != "@" {
+			user, pass, ok := r.BasicAuth()
+			if !ok || user != username || pass != password {
+				w.Header().Set("Www-Authenticate", `Basic realm="vrtc"`)
+				http.Error(w, "Unauthorized", http.StatusUnauthorized)
+				return
+			}
+		}
+
+		next.ServeHTTP(w, r)
+	})
+}
+
+func middlewareCORS(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Access-Control-Allow-Origin", "*")
+		w.Header().Set("Access-Control-Allow-Methods", "GET, POST, PUT, DELETE, OPTIONS")
+		w.Header().Set("Access-Control-Allow-Headers", "Authorization, Content-Type")
+		next.ServeHTTP(w, r)
+	})
+}
+
+var mu sync.Mutex
 
 func apiHandler(w http.ResponseWriter, r *http.Request) {
 	mu.Lock()
@@ -284,4 +285,32 @@ func logHandler(w http.ResponseWriter, r *http.Request) {
 	default:
 		http.Error(w, "Method not allowed", http.StatusBadRequest)
 	}
+}
+
+type Source struct {
+	ID       string `json:"id,omitempty"`
+	Name     string `json:"name,omitempty"`
+	Info     string `json:"info,omitempty"`
+	URL      string `json:"url,omitempty"`
+	Location string `json:"location,omitempty"`
+}
+
+func ResponseSources(w http.ResponseWriter, sources []*Source) {
+	if len(sources) == 0 {
+		http.Error(w, "no sources", http.StatusNotFound)
+		return
+	}
+
+	var response = struct {
+		Sources []*Source `json:"sources"`
+	}{
+		Sources: sources,
+	}
+	ResponseJSON(w, response)
+}
+
+func Error(w http.ResponseWriter, err error) {
+	log.Error().Err(err).Caller(1).Send()
+
+	http.Error(w, err.Error(), http.StatusInsufficientStorage)
 }

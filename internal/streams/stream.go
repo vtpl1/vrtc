@@ -92,6 +92,8 @@ func (s *Stream) stopProducers() {
 		log.Trace().Msg("[streams] skip stop pending producer")
 		return
 	}
+
+	s.mu.Lock()
 producers:
 	for _, producer := range s.producers {
 		for _, track := range producer.receivers {
