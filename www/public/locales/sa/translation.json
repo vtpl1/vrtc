@@ -1,0 +1,19 @@
+{
+    "title": "منصة التوعية الظرفية",
+    "dashboard": "لوحه القياده",
+    "Analytics": "التحليلات",
+    "Time": "وقت",
+    "Location": "موقع",
+    "Identifier": "المعرف",
+    "Map": "خريطة",
+    "Snap": "فرقعة",
+    "Select": "يختار",
+    "Latitude": "خط العرض",
+    "Longitude": "خط الطول",
+    "Camera Name": "اسم الكاميرا",
+    "Search identifier": "معرف البحث",
+    "Search": "يبحث",
+    "Select...": "يختار...",
+    "Vehicle Type":"نوع السيارة",
+    "Vehicle Color":"لون المركبة"
+}

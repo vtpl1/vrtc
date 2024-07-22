@@ -1,0 +1,19 @@
+{
+    "title": "Situational awarness platform",
+    "dashboard": "Dashboard",
+    "Analytics": "Analytics",
+    "Time": "Time",
+    "Location": "Location",
+    "Identifier": "Identifier",
+    "Map": "Map",
+    "Snap": "Snap",
+    "Select": "select",
+    "Latitude": "Latitude",
+    "Longitude": "Longitude",
+    "Camera Name": "Camera Name",
+    "Search identifier": "Search identifier",
+    "Search": "Search",
+    "Select...": "Select...",
+    "Vehicle Type":"Vehicle Type",
+    "Vehicle Color":"Vehicle Color"
+}

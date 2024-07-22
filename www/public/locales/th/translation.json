@@ -1,0 +1,19 @@
+{
+    "title": "แพลตฟอร์มการรับรู้สถานการณ์",
+    "dashboard": "แผงควบคุม",
+    "Analytics": "การวิเคราะห์",
+    "Time": "เวลา",
+    "Location": "ที่ตั้ง",
+    "Identifier": "ตัวระบุ",
+    "Map": "แผนที่",
+    "Snap": "สแน็ป",
+    "Select": "เลือก",
+    "Latitude": "ละติจูด",
+    "Longitude": "ลองจิจูด",
+    "Camera Name": "ชื่อกล้อง",
+    "Search identifier": "ตัวระบุการค้นหา",
+    "Search": "ค้นหา",
+    "Select...": "เลือก...",
+    "Vehicle Type":"ประเภทยานพาหนะ",
+    "Vehicle Color":"สีรถ"
+}

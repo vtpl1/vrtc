@@ -1,0 +1,19 @@
+{
+    "title": "Plataforma de concientización situacional",
+    "dashboard": "Panel",
+    "Analytics": "Analítica",
+    "Time": "Tiempo",
+    "Location": "Ubicación",
+    "Identifier": "Identificador",
+    "Map": "Mapa",
+    "Snap": "Quebrar",
+    "Select": "Seleccionar",
+    "Latitude": "Latitud",
+    "Longitude": "Longitud",
+    "Camera Name": "Nombre de la cámara",
+    "Search identifier": "Identificador de búsqueda",
+    "Search": "Buscar",
+    "Select...": "Seleccionar...",
+    "Vehicle Type":"tipo de vehiculo",
+    "Vehicle Color":"Color del vehículo"
+}

@@ -10,7 +10,7 @@ var embed_ui embed.FS
 
 func GetStaticFS() fs.FS {
 	//embedRoot, err := fs.Sub(embed_ui, "ui")
-	embedRoot, err := fs.Sub(embed_ui, "dist_orig")
+	embedRoot, err := fs.Sub(embed_ui, "dist")
 	if err != nil {
 		// slog.Error("Unable to get root for web ui", slog.String("error", err.Error()))
 		// os.Exit(1)
