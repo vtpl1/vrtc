@@ -1,8 +1,7 @@
-import { Box } from "@chakra-ui/react";
-import { useRef, useState } from "react";
-import React, { useCallback, useEffect } from "react";
-import useWebSocket, { ReadyState } from "react-use-websocket";
+import { Box, Button, Text } from "@chakra-ui/react";
+import { useRef, useState, useCallback, useEffect } from "react";
 import { useDebounce } from "@uidotdev/usehooks";
+
 
 
 const VideoPlayer = () => {
@@ -11,33 +10,10 @@ const VideoPlayer = () => {
   const boxRef = useRef<HTMLDivElement>(null);
   const [videoWidth, setVideoWidth] = useState<number>(0);
   const [videoHeight, setVideoHeight] = useState<number>(0);
-  const [socketUrl, setSocketUrl] = useState("ws://localhost:1984/api/ws?src=1");
-  const [messageHistory, setMessageHistory] = useState<MessageEvent<any>[]>([]);
-
-  const { sendMessage, lastMessage, readyState } = useWebSocket(socketUrl);
-
-  useEffect(() => {
-    if (lastMessage !== null) {
-      console.log(lastMessage)
-      setMessageHistory((prev) => prev.concat(lastMessage));
-    }
-  }, [lastMessage]);
 
 
-  const handleClickChangeSocketUrl = useCallback(
-    () => setSocketUrl("wss://demos.kaazing.com/echo"),
-    []
-  );
 
-  const handleClickSendMessage = useCallback(() => sendMessage("Hello"), []);
-
-  const connectionStatus = {
-    [ReadyState.CONNECTING]: "Connecting",
-    [ReadyState.OPEN]: "Open",
-    [ReadyState.CLOSING]: "Closing",
-    [ReadyState.CLOSED]: "Closed",
-    [ReadyState.UNINSTANTIATED]: "Uninstantiated",
-  }[readyState];
+  // const handleClickSendMessage = useCallback(() => sendJsonMessage({ "type": "mse" }), []);
 
 
   const [siteId, setSiteId] = useState<number>(-1);
@@ -75,6 +51,7 @@ const VideoPlayer = () => {
       }
     }, [])
   useEffect(() => {
+
     if (videoRef?.current) {
       start(videoRef.current, debouncedSiteId, debouncedAppId, debouncedChannelId, debouncedStreamId, debouncedLiveOrRecording, debouncedTimeStamp)
     }
@@ -91,6 +68,15 @@ const VideoPlayer = () => {
         // aspectRatio: "27.8/9",
         // aspectRatio: "23/9"
       }}>
+      <Box>
+        <Button >
+          Click Me to change Socket Url
+        </Button>
+        <Button >
+          Send
+        </Button>
+        <Text></Text>
+      </Box>
       <Box
         as="video"
         ref={videoRef}
