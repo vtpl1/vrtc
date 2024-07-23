@@ -1,6 +1,7 @@
 package api
 
 import (
+	"context"
 	"crypto/tls"
 	"encoding/json"
 	"fmt"
@@ -17,7 +18,7 @@ import (
 	"github.com/vtpl1/vrtc/internal/app"
 )
 
-func Init() {
+func Init(ctx *context.Context) {
 	var cfg struct {
 		Mod struct {
 			Listen     string `yaml:"listen"`
@@ -69,21 +70,21 @@ func Init() {
 	}
 
 	if cfg.Mod.Listen != "" {
-		go listen("tcp", cfg.Mod.Listen)
+		go listen(ctx, "tcp", cfg.Mod.Listen)
 	}
 
 	if cfg.Mod.UnixListen != "" {
 		_ = syscall.Unlink(cfg.Mod.UnixListen)
-		go listen("unix", cfg.Mod.UnixListen)
+		go listen(ctx, "unix", cfg.Mod.UnixListen)
 	}
 
 	// Initialize the HTTPS server
 	if cfg.Mod.TLSListen != "" && cfg.Mod.TLSCert != "" && cfg.Mod.TLSKey != "" {
-		go tlsListen("tcp", cfg.Mod.TLSListen, cfg.Mod.TLSCert, cfg.Mod.TLSKey)
+		go tlsListen(ctx, "tcp", cfg.Mod.TLSListen, cfg.Mod.TLSCert, cfg.Mod.TLSKey)
 	}
 }
 
-func listen(network, address string) {
+func listen(ctx *context.Context, network, address string) {
 	ln, err := net.Listen(network, address)
 	if err != nil {
 		log.Error().Err(err).Msg("[api] listen")
@@ -105,7 +106,7 @@ func listen(network, address string) {
 	}
 }
 
-func tlsListen(network, address, certFile, keyFile string) {
+func tlsListen(ctx *context.Context, network, address, certFile, keyFile string) {
 	var cert tls.Certificate
 	var err error
 	if strings.IndexByte(certFile, '\n') < 0 && strings.IndexByte(keyFile, '\n') < 0 {

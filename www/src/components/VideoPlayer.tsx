@@ -2,22 +2,27 @@ import { Box } from "@chakra-ui/react";
 import { useRef, useState } from "react";
 import React, { useCallback, useEffect } from "react";
 import useWebSocket, { ReadyState } from "react-use-websocket";
+import { useDebounce } from "@uidotdev/usehooks";
+
+
 const VideoPlayer = () => {
   const videoRef = useRef<HTMLVideoElement | null>(null);
   const svgRef = useRef<SVGSVGElement | null>(null);
   const boxRef = useRef<HTMLDivElement>(null);
   const [videoWidth, setVideoWidth] = useState<number>(0);
   const [videoHeight, setVideoHeight] = useState<number>(0);
-  const [socketUrl, setSocketUrl] = useState("wss://echo.websocket.org");
+  const [socketUrl, setSocketUrl] = useState("ws://localhost:1984/api/ws?src=1");
   const [messageHistory, setMessageHistory] = useState<MessageEvent<any>[]>([]);
 
   const { sendMessage, lastMessage, readyState } = useWebSocket(socketUrl);
 
   useEffect(() => {
     if (lastMessage !== null) {
+      console.log(lastMessage)
       setMessageHistory((prev) => prev.concat(lastMessage));
     }
   }, [lastMessage]);
+
 
   const handleClickChangeSocketUrl = useCallback(
     () => setSocketUrl("wss://demos.kaazing.com/echo"),
@@ -34,6 +39,49 @@ const VideoPlayer = () => {
     [ReadyState.UNINSTANTIATED]: "Uninstantiated",
   }[readyState];
 
+
+  const [siteId, setSiteId] = useState<number>(-1);
+  const [channelId, setChannelId] = useState<number>(-1);
+  const [appId, setAppId] = useState<number>(0);
+  const [liveOrRecording, setLiveOrRecording] = useState<boolean>(true);
+  const [streamId, setStreamId] = useState<number>(0);
+  const [timeStamp, setTimeStamp] = useState<number>(-1);
+
+  const debouncedSiteId = useDebounce(siteId, 500)
+  const debouncedChannelId = useDebounce(channelId, 500)
+  const debouncedAppId = useDebounce(appId, 500)
+  const debouncedLiveOrRecording = useDebounce(liveOrRecording, 500)
+  const debouncedStreamId = useDebounce(streamId, 500)
+  const debouncedTimeStamp = useDebounce(timeStamp, 500)
+
+
+  const start = useCallback(
+    (
+      video: HTMLVideoElement,
+      siteId: number,
+      appId: number,
+      channelId: number,
+      streamlId: number,
+      liveOrRecording: boolean,
+      timeStamp: number
+    ) => { }, [])
+  const stop = useCallback(
+    (
+      video: HTMLVideoElement | null
+    ) => {
+      if (video) {
+        video.src = ""
+        video.srcObject = null
+      }
+    }, [])
+  useEffect(() => {
+    if (videoRef?.current) {
+      start(videoRef.current, debouncedSiteId, debouncedAppId, debouncedChannelId, debouncedStreamId, debouncedLiveOrRecording, debouncedTimeStamp)
+    }
+    return () => {
+      stop(videoRef?.current)
+    }
+  }, [])
   return (
     <Box
       ref={boxRef}

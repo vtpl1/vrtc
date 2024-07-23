@@ -3,7 +3,7 @@ import GridSelector from "./GridSelector";
 import { useState } from "react";
 
 function Dashboard() {
-  const [channels, setChannels] = useState<number>(4);
+  const [channels, setChannels] = useState<number>(1);
   return (
     <Box>
       <HStack>

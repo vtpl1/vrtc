@@ -25,7 +25,7 @@ func main() {
 	// 1. Core modules: app, api/ws, streams
 	app.Init() // init config and logs
 	log := app.GetLogger("api")
-	api.Init()
+	api.Init(&ctx)
 	ws.Init() // init WS API endpoint
 	// grpc.Init(&ctx)
 
