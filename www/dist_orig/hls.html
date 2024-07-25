@@ -17,21 +17,21 @@
     </style>
 </head>
 <body>
-<script src="https://cdn.jsdelivr.net/npm/hls.js@1"></script>
-<video id="video" autoplay controls playsinline muted></video>
-<script>
-    // http://192.168.1.123:1984/hls.html?src=demo&mp4
-    // const url = new URL('api/stream.m3u8' + location.search, location.href);
-    const url = 'http://192.168.10.5:1984/api/stream.m3u8?src=rtsp-dahua2&mp4';
+    <script src="https://cdn.jsdelivr.net/npm/hls.js@1"></script>
+    <video id="video" autoplay controls playsinline muted></video>
+    <script>
+        // http://192.168.1.123:1984/hls.html?src=demo&mp4
+        const url = new URL('api/stream.m3u8' + location.search, location.href);
+        // const url = 'http://192.168.10.5:1984/api/stream.m3u8?src=rtsp-dahua2&mp4';
 
-    const video = document.getElementById('video');
-    if (Hls.isSupported()) {
-        const hls = new Hls();
-        hls.loadSource(url.toString());
-        hls.attachMedia(video);
-    } else if (video.canPlayType('application/vnd.apple.mpegurl')) {
-        video.src = url.toString();
-    }
-</script>
+        const video = document.getElementById('video');
+        if (Hls.isSupported()) {
+            const hls = new Hls();
+            hls.loadSource(url.toString());
+            hls.attachMedia(video);
+        } else if (video.canPlayType('application/vnd.apple.mpegurl')) {
+            video.src = url.toString();
+        }
+    </script>
 </body>
 </html>
