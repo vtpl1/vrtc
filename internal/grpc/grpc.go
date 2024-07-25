@@ -14,12 +14,12 @@ func Init(ctx *context.Context) {
 		Mod struct {
 			StreamAddr   string `yaml:"stream_addr"`
 			MetadataAddr string `yaml:"metadata_addr"`
-		} `yaml:"api"`
+		} `yaml:"grpc"`
 	}
 	// default config
 	cfg.Mod.StreamAddr = "dns:///172.16.2.143:2003"
 
-	go runDataGen(ctx, cfg.Mod.MetadataAddr)
+	// go runDataGen(ctx, cfg.Mod.MetadataAddr)
 
 }
 
