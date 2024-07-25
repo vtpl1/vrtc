@@ -1,0 +1,5 @@
+package hls
+
+func Init() {
+
+}

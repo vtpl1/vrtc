@@ -9,6 +9,7 @@ import (
 	"github.com/vtpl1/vrtc/internal/api"
 	"github.com/vtpl1/vrtc/internal/api/ws"
 	"github.com/vtpl1/vrtc/internal/app"
+	"github.com/vtpl1/vrtc/internal/hls"
 	"github.com/vtpl1/vrtc/internal/mp4"
 	"github.com/vtpl1/vrtc/internal/ngrok"
 	"github.com/vtpl1/vrtc/internal/rtsp"
@@ -39,7 +40,7 @@ func main() {
 	// 3. Main API
 
 	mp4.Init() // MP4 API
-	// hls.Init()   // HLS API
+	hls.Init() // HLS API
 	// mjpeg.Init() // MJPEG API
 
 	// 6. Helper modules
