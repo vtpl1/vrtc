@@ -5,6 +5,7 @@ option java_package         = "io.grpc.DataModels";
 option go_package           = "videonetics.com/service";
 option java_outer_classname = "DataModelsProto";
 option objc_class_prefix    = "DM";
+option cc_enable_arenas     = true;
 
 package data_models;
 
@@ -92,6 +93,7 @@ message MetaAttributeEvent {
   int32  app_id                  = 18;
   int32  track_id                = 19;
   string unique_event_id         = 20;
+  string vehicle_license_number  = 21;
 }
 
 message EventDetails {
@@ -122,6 +124,11 @@ message EventSnap {
   bytes image = 4;
 }
 
+message ObjectId {
+  string object_id_old = 1;
+  string object_id_new = 2;
+}
+
 message Account {
   string object_id  = 1;
   string username   = 2;
@@ -147,4 +154,39 @@ message Error {
   int64  code      = 1;
   string message   = 2;
   int64  exit_code = 3;
+}
+
+message VVideoClip {
+  int64  id                   = 1;
+  int32  channel_id           = 2;
+  string media_server_id      = 3;
+  int64  start_timestamp      = 4;
+  int64  end_timestamp        = 5;
+  int64  clip_size            = 6;
+  string clip_url             = 7;
+  string parallel_clip_url    = 8;
+  int32  junk_flag            = 9;
+  int32  dont_delete          = 10;
+  int32  incident_bookmark    = 11;
+  int32  dr_file_fatch_status = 12;
+  int64  secondary_id         = 13;
+  int32  backup_state         = 14;
+  string storage_path         = 15;
+  int32  stream_and_clip_mode = 16;
+}
+
+message ChannelClipId {
+  int32 channel_id          = 1;
+  int32 last_synced_clip_id = 2;
+}
+
+message Status {
+  int32 val = 1;
+}
+
+message FramePVA {
+  Channel channel = 1;
+  Frame   frame   = 2;
+  PVAData pva     = 3;
+  Status  status  = 4;
 }

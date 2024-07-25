@@ -9,6 +9,7 @@ import (
 	"github.com/vtpl1/vrtc/internal/api"
 	"github.com/vtpl1/vrtc/internal/api/ws"
 	"github.com/vtpl1/vrtc/internal/app"
+	"github.com/vtpl1/vrtc/internal/grpc"
 	"github.com/vtpl1/vrtc/internal/hls"
 	"github.com/vtpl1/vrtc/internal/mp4"
 	"github.com/vtpl1/vrtc/internal/ngrok"
@@ -28,7 +29,6 @@ func main() {
 	log := app.GetLogger("api")
 	api.Init(&ctx)
 	ws.Init() // init WS API endpoint
-	// grpc.Init(&ctx)
 
 	streams.Init()
 
@@ -36,6 +36,7 @@ func main() {
 
 	rtsp.Init()   // rtsp source, RTSP server
 	webrtc.Init() // webrtc source, WebRTC server
+	grpc.Init(&ctx)
 
 	// 3. Main API
 

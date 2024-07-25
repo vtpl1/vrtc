@@ -1,11 +1,13 @@
 log:
-  level: trace # default level
+  level: info # default level
   api: trace
   # exec: debug
   # ngrok: info
-  rtsp: error
+  # rtsp: error
   streams: trace
-  webrtc: error
+  # webrtc: error
+  hls: trace
+  grpc: trace
 streams:
   "1": rtsp://admin:AdmiN1234@172.16.0.55:554/live.sdp
   "2": rtsp://root:AdmiN1234@172.16.0.92/axis-media/media.amp?videocodec=h265
@@ -13,3 +15,5 @@ streams:
 api:
   listen: ":1984"
   origin: "*"
+grpc:
+  stream_addr: dns:///172.16.2.143:2003

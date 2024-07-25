@@ -1,7 +1,7 @@
 ```bash
 go install google.golang.org/protobuf/cmd/protoc-gen-go@latest
 go install google.golang.org/grpc/cmd/protoc-gen-go-grpc@latest
-cd internal/grpc
+cd pkg/grpc
 mkdir service
 protoc interfaces/*.proto \
     --go_out=service \

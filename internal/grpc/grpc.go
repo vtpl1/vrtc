@@ -3,13 +3,14 @@ package grpc
 import (
 	"context"
 
+	"github.com/rs/zerolog"
 	"github.com/vtpl1/vrtc/internal/app"
-	pb "github.com/vtpl1/vrtc/internal/grpc/service"
-	"google.golang.org/grpc"
-	"google.golang.org/grpc/credentials/insecure"
+	"github.com/vtpl1/vrtc/internal/streams"
+	"github.com/vtpl1/vrtc/pkg/core"
+	"github.com/vtpl1/vrtc/pkg/grpc"
 )
 
-func Init(ctx *context.Context) {
+func Init(ctx_ *context.Context) {
 	var cfg struct {
 		Mod struct {
 			StreamAddr   string `yaml:"stream_addr"`
@@ -17,45 +18,24 @@ func Init(ctx *context.Context) {
 		} `yaml:"grpc"`
 	}
 	// default config
-	cfg.Mod.StreamAddr = "dns:///172.16.2.143:2003"
+	// cfg.Mod.StreamAddr = "dns:///172.16.2.143:2003"
+	app.LoadConfig(&cfg)
+	app.Info["grpc"] = cfg.Mod
 
-	// go runDataGen(ctx, cfg.Mod.MetadataAddr)
-
+	log = app.GetLogger("grpc")
+	ctx = ctx_
+	// grpc client
+	streams.HandleFunc("grpc", grpcHandler)
 }
 
-func runDataGen(ctx *context.Context, metadataAddr string) {
-	log := app.GetLogger("api")
-	var opts []grpc.DialOption
-	opts = append(opts, grpc.WithTransportCredentials(insecure.NewCredentials()))
+var log zerolog.Logger
+var ctx *context.Context
 
-	conn, err := grpc.NewClient(metadataAddr, opts...)
-	if err != nil {
-		log.Info().Msg("[" + metadataAddr + "] failed to dial: " + err.Error() + " for")
-		return
+func grpcHandler(rawURL string) (core.Producer, error) {
+	log.Info().Msgf("[grpc] grpcHandler %s", rawURL)
+	conn := grpc.NewClient(rawURL)
+	if err := conn.Dial(); err != nil {
+		return nil, err
 	}
-	defer conn.Close()
-	log.Info().Msg("[" + metadataAddr + "] success to dial for ")
-	client := pb.NewStreamServiceClient(conn)
-	stream, err := client.WritePVAData(*ctx)
-	if err != nil {
-		log.Error().Msg("[" + metadataAddr + "] failed to WritePVAData: " + err.Error())
-		return
-	}
-	var siteId int32 = 1
-	var channelId int32 = 1
-	err = stream.Send(&pb.WritePVADataRequest{
-		Channel: &pb.Channel{
-			SiteId:    int64(siteId),
-			ChannelId: int64(channelId),
-			AppId:     0,
-		},
-		PvaData: &pb.PVAData{
-			SiteId:    siteId,
-			ChannelId: channelId,
-		},
-	})
-	if err != nil {
-		log.Error().Msg("[" + metadataAddr + "] failed to int32: " + err.Error())
-		return
-	}
+	return conn, nil
 }

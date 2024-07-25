@@ -5,6 +5,7 @@ option java_package         = "io.grpc.StreamService";
 option go_package           = "videonetics.com/service";
 option java_outer_classname = "StreamServiceProto";
 option objc_class_prefix    = "SS";
+option cc_enable_arenas     = true;
 
 package stream_service;
 
@@ -24,6 +25,11 @@ service StreamService {
   rpc WritePVAData(stream WritePVADataRequest) returns (WritePVADataResponse) {
   }
   rpc ReadPVAData(ReadPVADataRequest) returns (stream ReadPVADataResponse) {
+  }
+
+  rpc WriteFramePVA(stream WriteFramePVARequest) returns (WriteFramePVAResponse) {
+  }
+  rpc ReadFramePVA(ReadFramePVARequest) returns (stream ReadFramePVAResponse) {
   }
 }
 
@@ -45,6 +51,24 @@ message ReadFrameResponse {
   data_models.Channel channel = 1;
   data_models.Frame   frame   = 2;
   data_models.Error   err     = 3;
+}
+
+message WriteFramePVARequest {
+  data_models.FramePVA frame_pva = 1;
+}
+
+message WriteFramePVAResponse {
+  data_models.Channel channel = 1;
+  data_models.Error   error   = 2;
+}
+
+message ReadFramePVARequest {
+  data_models.Channel channel = 1;
+}
+
+message ReadFramePVAResponse {
+  data_models.FramePVA frame_pva = 1;
+  data_models.Error    error     = 2;
 }
 
 message SetChannelAlterationRequest {
