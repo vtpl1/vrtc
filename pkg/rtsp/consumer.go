@@ -4,6 +4,7 @@ import (
 	"time"
 
 	"github.com/pion/rtp"
+	"github.com/rs/zerolog/log"
 	"github.com/vtpl1/vrtc/pkg/aac"
 	"github.com/vtpl1/vrtc/pkg/core"
 	"github.com/vtpl1/vrtc/pkg/h264"
@@ -14,6 +15,7 @@ import (
 
 func (c *Conn) GetMedias() []*core.Media {
 	//core.Assert(c.Medias != nil)
+	log.Info().Msgf("RTSP Medias: %v", c.Medias)
 	return c.Medias
 }
 

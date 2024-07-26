@@ -9,12 +9,12 @@ import (
 	"github.com/vtpl1/vrtc/internal/api"
 	"github.com/vtpl1/vrtc/internal/api/ws"
 	"github.com/vtpl1/vrtc/internal/app"
-	"github.com/vtpl1/vrtc/internal/grpc"
 	"github.com/vtpl1/vrtc/internal/hls"
 	"github.com/vtpl1/vrtc/internal/mp4"
 	"github.com/vtpl1/vrtc/internal/ngrok"
 	"github.com/vtpl1/vrtc/internal/rtsp"
 	"github.com/vtpl1/vrtc/internal/streams"
+	"github.com/vtpl1/vrtc/internal/videonetics"
 	"github.com/vtpl1/vrtc/internal/webrtc"
 )
 
@@ -36,7 +36,7 @@ func main() {
 
 	rtsp.Init()   // rtsp source, RTSP server
 	webrtc.Init() // webrtc source, WebRTC server
-	grpc.Init(&ctx)
+	videonetics.Init(&ctx)
 
 	// 3. Main API
 

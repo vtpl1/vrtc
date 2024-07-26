@@ -1,4 +1,4 @@
-package grpc
+package videonetics
 
 import (
 	"context"
@@ -7,7 +7,7 @@ import (
 	"github.com/vtpl1/vrtc/internal/app"
 	"github.com/vtpl1/vrtc/internal/streams"
 	"github.com/vtpl1/vrtc/pkg/core"
-	"github.com/vtpl1/vrtc/pkg/grpc"
+	"github.com/vtpl1/vrtc/pkg/videonetics"
 )
 
 func Init(ctx_ *context.Context) {
@@ -15,27 +15,24 @@ func Init(ctx_ *context.Context) {
 		Mod struct {
 			StreamAddr   string `yaml:"stream_addr"`
 			MetadataAddr string `yaml:"metadata_addr"`
-		} `yaml:"grpc"`
+		} `yaml:"videonetics"`
 	}
 	// default config
 	// cfg.Mod.StreamAddr = "dns:///172.16.2.143:2003"
 	app.LoadConfig(&cfg)
-	app.Info["grpc"] = cfg.Mod
+	app.Info["videonetics"] = cfg.Mod
 
-	log = app.GetLogger("grpc")
+	log = app.GetLogger("videonetics")
 	ctx = ctx_
-	// grpc client
-	streams.HandleFunc("grpc", grpcHandler)
+	// videonetics client
+	streams.HandleFunc("videonetics", videoneticsHandler)
 }
 
 var log zerolog.Logger
 var ctx *context.Context
 
-func grpcHandler(rawURL string) (core.Producer, error) {
-	log.Info().Msgf("[grpc] grpcHandler %s", rawURL)
-	conn := grpc.NewClient(rawURL)
-	if err := conn.Dial(); err != nil {
-		return nil, err
-	}
-	return conn, nil
+func videoneticsHandler(rawURL string) (core.Producer, error) {
+	log.Info().Msgf("[videonetics] videoneticsHandler %s", rawURL)
+	conn, err := videonetics.NewClient(rawURL, ctx)
+	return conn, err
 }

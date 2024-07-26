@@ -25,6 +25,8 @@ const (
 	StreamService_GetChannelAlteration_FullMethodName = "/stream_service.StreamService/GetChannelAlteration"
 	StreamService_WritePVAData_FullMethodName         = "/stream_service.StreamService/WritePVAData"
 	StreamService_ReadPVAData_FullMethodName          = "/stream_service.StreamService/ReadPVAData"
+	StreamService_WriteFramePVA_FullMethodName        = "/stream_service.StreamService/WriteFramePVA"
+	StreamService_ReadFramePVA_FullMethodName         = "/stream_service.StreamService/ReadFramePVA"
 )
 
 // StreamServiceClient is the client API for StreamService service.
@@ -37,6 +39,8 @@ type StreamServiceClient interface {
 	GetChannelAlteration(ctx context.Context, in *GetChannelAlterationRequest, opts ...grpc.CallOption) (*GetChannelAlterationResponse, error)
 	WritePVAData(ctx context.Context, opts ...grpc.CallOption) (StreamService_WritePVADataClient, error)
 	ReadPVAData(ctx context.Context, in *ReadPVADataRequest, opts ...grpc.CallOption) (StreamService_ReadPVADataClient, error)
+	WriteFramePVA(ctx context.Context, opts ...grpc.CallOption) (StreamService_WriteFramePVAClient, error)
+	ReadFramePVA(ctx context.Context, in *ReadFramePVARequest, opts ...grpc.CallOption) (StreamService_ReadFramePVAClient, error)
 }
 
 type streamServiceClient struct {
@@ -203,6 +207,74 @@ func (x *streamServiceReadPVADataClient) Recv() (*ReadPVADataResponse, error) {
 	return m, nil
 }
 
+func (c *streamServiceClient) WriteFramePVA(ctx context.Context, opts ...grpc.CallOption) (StreamService_WriteFramePVAClient, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	stream, err := c.cc.NewStream(ctx, &StreamService_ServiceDesc.Streams[4], StreamService_WriteFramePVA_FullMethodName, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	x := &streamServiceWriteFramePVAClient{ClientStream: stream}
+	return x, nil
+}
+
+type StreamService_WriteFramePVAClient interface {
+	Send(*WriteFramePVARequest) error
+	CloseAndRecv() (*WriteFramePVAResponse, error)
+	grpc.ClientStream
+}
+
+type streamServiceWriteFramePVAClient struct {
+	grpc.ClientStream
+}
+
+func (x *streamServiceWriteFramePVAClient) Send(m *WriteFramePVARequest) error {
+	return x.ClientStream.SendMsg(m)
+}
+
+func (x *streamServiceWriteFramePVAClient) CloseAndRecv() (*WriteFramePVAResponse, error) {
+	if err := x.ClientStream.CloseSend(); err != nil {
+		return nil, err
+	}
+	m := new(WriteFramePVAResponse)
+	if err := x.ClientStream.RecvMsg(m); err != nil {
+		return nil, err
+	}
+	return m, nil
+}
+
+func (c *streamServiceClient) ReadFramePVA(ctx context.Context, in *ReadFramePVARequest, opts ...grpc.CallOption) (StreamService_ReadFramePVAClient, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	stream, err := c.cc.NewStream(ctx, &StreamService_ServiceDesc.Streams[5], StreamService_ReadFramePVA_FullMethodName, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	x := &streamServiceReadFramePVAClient{ClientStream: stream}
+	if err := x.ClientStream.SendMsg(in); err != nil {
+		return nil, err
+	}
+	if err := x.ClientStream.CloseSend(); err != nil {
+		return nil, err
+	}
+	return x, nil
+}
+
+type StreamService_ReadFramePVAClient interface {
+	Recv() (*ReadFramePVAResponse, error)
+	grpc.ClientStream
+}
+
+type streamServiceReadFramePVAClient struct {
+	grpc.ClientStream
+}
+
+func (x *streamServiceReadFramePVAClient) Recv() (*ReadFramePVAResponse, error) {
+	m := new(ReadFramePVAResponse)
+	if err := x.ClientStream.RecvMsg(m); err != nil {
+		return nil, err
+	}
+	return m, nil
+}
+
 // StreamServiceServer is the server API for StreamService service.
 // All implementations must embed UnimplementedStreamServiceServer
 // for forward compatibility
@@ -213,6 +285,8 @@ type StreamServiceServer interface {
 	GetChannelAlteration(context.Context, *GetChannelAlterationRequest) (*GetChannelAlterationResponse, error)
 	WritePVAData(StreamService_WritePVADataServer) error
 	ReadPVAData(*ReadPVADataRequest, StreamService_ReadPVADataServer) error
+	WriteFramePVA(StreamService_WriteFramePVAServer) error
+	ReadFramePVA(*ReadFramePVARequest, StreamService_ReadFramePVAServer) error
 	mustEmbedUnimplementedStreamServiceServer()
 }
 
@@ -237,6 +311,12 @@ func (UnimplementedStreamServiceServer) WritePVAData(StreamService_WritePVADataS
 }
 func (UnimplementedStreamServiceServer) ReadPVAData(*ReadPVADataRequest, StreamService_ReadPVADataServer) error {
 	return status.Errorf(codes.Unimplemented, "method ReadPVAData not implemented")
+}
+func (UnimplementedStreamServiceServer) WriteFramePVA(StreamService_WriteFramePVAServer) error {
+	return status.Errorf(codes.Unimplemented, "method WriteFramePVA not implemented")
+}
+func (UnimplementedStreamServiceServer) ReadFramePVA(*ReadFramePVARequest, StreamService_ReadFramePVAServer) error {
+	return status.Errorf(codes.Unimplemented, "method ReadFramePVA not implemented")
 }
 func (UnimplementedStreamServiceServer) mustEmbedUnimplementedStreamServiceServer() {}
 
@@ -381,6 +461,53 @@ func (x *streamServiceReadPVADataServer) Send(m *ReadPVADataResponse) error {
 	return x.ServerStream.SendMsg(m)
 }
 
+func _StreamService_WriteFramePVA_Handler(srv interface{}, stream grpc.ServerStream) error {
+	return srv.(StreamServiceServer).WriteFramePVA(&streamServiceWriteFramePVAServer{ServerStream: stream})
+}
+
+type StreamService_WriteFramePVAServer interface {
+	SendAndClose(*WriteFramePVAResponse) error
+	Recv() (*WriteFramePVARequest, error)
+	grpc.ServerStream
+}
+
+type streamServiceWriteFramePVAServer struct {
+	grpc.ServerStream
+}
+
+func (x *streamServiceWriteFramePVAServer) SendAndClose(m *WriteFramePVAResponse) error {
+	return x.ServerStream.SendMsg(m)
+}
+
+func (x *streamServiceWriteFramePVAServer) Recv() (*WriteFramePVARequest, error) {
+	m := new(WriteFramePVARequest)
+	if err := x.ServerStream.RecvMsg(m); err != nil {
+		return nil, err
+	}
+	return m, nil
+}
+
+func _StreamService_ReadFramePVA_Handler(srv interface{}, stream grpc.ServerStream) error {
+	m := new(ReadFramePVARequest)
+	if err := stream.RecvMsg(m); err != nil {
+		return err
+	}
+	return srv.(StreamServiceServer).ReadFramePVA(m, &streamServiceReadFramePVAServer{ServerStream: stream})
+}
+
+type StreamService_ReadFramePVAServer interface {
+	Send(*ReadFramePVAResponse) error
+	grpc.ServerStream
+}
+
+type streamServiceReadFramePVAServer struct {
+	grpc.ServerStream
+}
+
+func (x *streamServiceReadFramePVAServer) Send(m *ReadFramePVAResponse) error {
+	return x.ServerStream.SendMsg(m)
+}
+
 // StreamService_ServiceDesc is the grpc.ServiceDesc for StreamService service.
 // It's only intended for direct use with grpc.RegisterService,
 // and not to be introspected or modified (even as a copy)
@@ -416,6 +543,16 @@ var StreamService_ServiceDesc = grpc.ServiceDesc{
 		{
 			StreamName:    "ReadPVAData",
 			Handler:       _StreamService_ReadPVAData_Handler,
+			ServerStreams: true,
+		},
+		{
+			StreamName:    "WriteFramePVA",
+			Handler:       _StreamService_WriteFramePVA_Handler,
+			ClientStreams: true,
+		},
+		{
+			StreamName:    "ReadFramePVA",
+			Handler:       _StreamService_ReadFramePVA_Handler,
 			ServerStreams: true,
 		},
 	},
