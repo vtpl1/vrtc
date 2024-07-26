@@ -78,6 +78,8 @@ func Init() {
 	}
 }
 
+var InternalTerminationRequest chan int
+
 func readRevisionTime() (revision, vcsTime string) {
 	if info, ok := debug.ReadBuildInfo(); ok {
 		for _, setting := range info.Settings {

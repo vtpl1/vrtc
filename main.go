@@ -18,12 +18,12 @@ func main() {
 
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
-	api.InternalTerminationRequest = make(chan int)
+	app.InternalTerminationRequest = make(chan int)
 
 	// 1. Core modules: app, api/ws, streams
 	app.Init() // init config and logs
 	log := app.GetLogger("api")
-	api.Init(&ctx)
+	api.Init()
 	ws.Init() // init WS API endpoint
 
 	streams.Init()
@@ -50,7 +50,7 @@ func main() {
 		select {
 		case <-ctx.Done():
 			doShutdown = true
-		case <-api.InternalTerminationRequest:
+		case <-app.InternalTerminationRequest:
 			stop()
 			doShutdown = true
 		}
