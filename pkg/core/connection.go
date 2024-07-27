@@ -3,21 +3,13 @@ package core
 import (
 	"io"
 	"net/http"
-	"reflect"
-	"sync/atomic"
 )
 
-func NewID() uint32 {
-	return id.Add(1)
-}
-
-// Deprecated: use NewID instead
-func ID(v any) uint32 {
-	p := uintptr(reflect.ValueOf(v).UnsafePointer())
-	return 0x8000_0000 | uint32(p)
-}
-
-var id atomic.Uint32
+// // Deprecated: use NewID instead
+// func ID(v any) uint32 {
+// 	p := uintptr(reflect.ValueOf(v).UnsafePointer())
+// 	return 0x8000_0000 | uint32(p)
+// }
 
 type Info interface {
 	SetProtocol(string)
