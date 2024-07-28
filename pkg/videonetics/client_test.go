@@ -15,7 +15,7 @@ func TestNewClient(t *testing.T) {
 	tests := []struct {
 		name    string
 		args    args
-		want    *Producer
+		want    *Conn
 		wantErr bool
 	}{
 		{

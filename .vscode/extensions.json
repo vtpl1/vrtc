@@ -3,6 +3,5 @@
         "esbenp.prettier-vscode",
         "golang.go",
         "wmaurer.change-case",
-        "ms-python.python"
     ]
 }

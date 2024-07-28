@@ -2,23 +2,13 @@ package videonetics
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"time"
 
-	"github.com/rs/zerolog/log"
 	"github.com/vtpl1/vrtc/pkg/core"
 	pb "github.com/vtpl1/vrtc/pkg/videonetics/service"
-	"google.golang.org/grpc"
 )
-
-type Producer struct {
-	core.Connection
-	// core.Listener
-
-	uri        string
-	ctx        *context.Context
-	streamConn *grpc.ClientConn
-}
 
 func getMedias() []*core.Media {
 	medias := []*core.Media{
@@ -34,20 +24,29 @@ func getMedias() []*core.Media {
 }
 
 // GetMedias implements core.Producer.
-// Subtle: this method shadows the method (Connection).GetMedias of Producer.Connection.
-func (c *Producer) GetMedias() []*core.Media {
+// Subtle: this method shadows the method (Connection).GetMedias of Conn.Connection.
+func (c *Conn) GetMedias() []*core.Media {
 	log.Info().Msgf("GRPC Medias: %v", c.Medias)
 	return c.Medias
 }
 
 // GetTrack implements core.Producer.
-// Subtle: this method shadows the method (Connection).GetTrack of Producer.Connection.
-func (c *Producer) GetTrack(media *core.Media, codec *core.Codec) (*core.Receiver, error) {
+// Subtle: this method shadows the method (Connection).GetTrack of Conn.Connection.
+func (c *Conn) GetTrack(media *core.Media, codec *core.Codec) (*core.Receiver, error) {
 	core.Assert(media.Direction == core.DirectionRecvonly)
 
 	for _, track := range c.Receivers {
 		if track.Codec == codec {
 			return track, nil
+		}
+	}
+
+	c.stateMu.Lock()
+	defer c.stateMu.Unlock()
+
+	if c.state == StatePlay {
+		if err := c.Reconnect(); err != nil {
+			return nil, err
 		}
 	}
 
@@ -59,22 +58,47 @@ func (c *Producer) GetTrack(media *core.Media, codec *core.Codec) (*core.Receive
 	return track, nil
 }
 
-// Start implements core.Producer.
-func (c *Producer) Start() error {
-	log.Info().Msg("Start called")
-	go c.ReadFramePVA()
+func (c *Conn) Reconnect() error {
+	c.Fire("Videonetics reconnect")
+
+	// close current session
+	_ = c.Close()
+
+	// start new session
+	if err := c.Dial(); err != nil {
+		return err
+	}
+
 	return nil
+}
+
+func (c *Conn) Close() error {
+	if c.conn == nil {
+		return errors.New("connection is not established")
+	}
+	return c.conn.Close()
+}
+
+// Start implements core.Producer.
+func (c *Conn) Start() (err error) {
+	log.Info().Msg("Start called")
+	for {
+		ok := false
+		if !ok {
+			return
+		}
+	}
 }
 
 // Stop implements core.Producer.
-// Subtle: this method shadows the method (Connection).Stop of Producer.Connection.
-func (c *Producer) Stop() error {
+// Subtle: this method shadows the method (Connection).Stop of Conn.Connection.
+func (c *Conn) Stop() error {
 	log.Info().Msg("Stop called")
-	c.streamConn.Close()
+	c.conn.Close()
 	return nil
 }
 
-func (c *Producer) ReadFramePVA() {
+func (c *Conn) ReadFramePVA() {
 	ctx, cancel := context.WithCancel(*c.ctx)
 	defer cancel()
 	var channel = Channel{
@@ -86,7 +110,7 @@ func (c *Producer) ReadFramePVA() {
 		StartTS:    0,
 		SessionID:  "",
 	}
-	serviceClient := pb.NewStreamServiceClient(c.streamConn)
+	serviceClient := pb.NewStreamServiceClient(c.conn)
 	stream, err := serviceClient.ReadFramePVA(ctx, &pb.ReadFramePVARequest{Channel: &pb.Channel{
 		SiteId:     channel.SiteID,
 		ChannelId:  channel.ChannelID,
