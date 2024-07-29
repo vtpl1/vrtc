@@ -20,6 +20,7 @@ type Conn struct {
 
 	state   State
 	stateMu sync.Mutex
+	// stream  pb.StreamService_ReadFramePVAClient
 }
 
 const (
@@ -35,8 +36,6 @@ func (s State) String() string {
 		return "NONE"
 	case StateConn:
 		return "CONN"
-	case StateSetup:
-		return MethodSetup
 	case StatePlay:
 		return MethodPlay
 	}
@@ -46,10 +45,10 @@ func (s State) String() string {
 const (
 	StateNone State = iota
 	StateConn
-	StateSetup
 	StatePlay
 )
 
 func (c *Conn) Handle() (err error) {
+	c.ReadFramePVA()
 	return nil
 }

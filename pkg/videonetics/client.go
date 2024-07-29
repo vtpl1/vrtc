@@ -22,7 +22,7 @@ type Channel struct {
 
 var log zerolog.Logger
 
-func NewClient(uri string, ctx *context.Context) (*Conn, error) {
+func NewClient(uri string, ctx *context.Context) *Conn {
 	log = app.GetLogger("videonetics")
 	return &Conn{
 		Connection: core.Connection{
@@ -32,11 +32,10 @@ func NewClient(uri string, ctx *context.Context) (*Conn, error) {
 		},
 		uri: uri,
 		ctx: ctx,
-	}, nil
+	}
 }
 
 func (c *Conn) Dial() (err error) {
-	// log = app.GetLogger("grpc")
 	var opts []grpc.DialOption
 	opts = append(opts, grpc.WithTransportCredentials(insecure.NewCredentials()))
 	streamAddr := "dns:///172.16.1.146:20003"
@@ -47,6 +46,9 @@ func (c *Conn) Dial() (err error) {
 		return
 	}
 	log.Info().Msg("[" + streamAddr + "] success to dial for ")
+	c.stateMu.Lock()
+	c.state = StateConn
+	c.stateMu.Unlock()
 	c.conn = conn
 	return
 }

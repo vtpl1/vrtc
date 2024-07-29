@@ -92,6 +92,10 @@ var handlers []Handler
 var defaultMedias []*core.Media
 
 func rtspHandler(rawURL string) (core.Producer, error) {
+	log.Info().Msgf("[rtsp1] rtspHandler start")
+	defer func() {
+		log.Info().Msgf("[rtsp1] rtspHandler end")
+	}()
 	rawURL, rawQuery, _ := strings.Cut(rawURL, "#")
 
 	conn := rtsp.NewClient(rawURL)
@@ -138,11 +142,14 @@ func rtspHandler(rawURL string) (core.Producer, error) {
 			return nil, err
 		}
 	}
-
 	return conn, nil
 }
 
 func tcpHandler(conn *rtsp.Conn) {
+	log.Info().Msgf("[rtsp1] tcpHandler start")
+	defer func() {
+		log.Info().Msgf("[rtsp1] tcpHandler end")
+	}()
 	var name string
 	var closer func()
 

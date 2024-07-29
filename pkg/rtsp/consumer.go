@@ -14,6 +14,7 @@ import (
 
 func (c *Conn) GetMedias() []*core.Media {
 	//core.Assert(c.Medias != nil)
+	log.Info().Msgf("[rtsp1] Medias: %v", c.Medias)
 	return c.Medias
 }
 

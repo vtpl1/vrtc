@@ -9,9 +9,11 @@ import (
 	"github.com/vtpl1/vrtc/internal/api"
 	"github.com/vtpl1/vrtc/internal/api/ws"
 	"github.com/vtpl1/vrtc/internal/app"
+	"github.com/vtpl1/vrtc/internal/debug"
 	"github.com/vtpl1/vrtc/internal/mp4"
 	"github.com/vtpl1/vrtc/internal/rtsp"
 	"github.com/vtpl1/vrtc/internal/streams"
+	"github.com/vtpl1/vrtc/internal/videonetics"
 )
 
 func main() {
@@ -32,7 +34,7 @@ func main() {
 
 	rtsp.Init() // rtsp source, RTSP server
 	// webrtc.Init() // webrtc source, WebRTC server
-	// videonetics.Init(&ctx)
+	videonetics.Init(&ctx)
 
 	// 3. Main API
 
@@ -42,6 +44,7 @@ func main() {
 
 	// 6. Helper modules
 	// ngrok.Init() // ngrok module
+	debug.Init() // debug API
 
 	// 7. Go
 	log.Info().Msg("Waiting for ctx done")

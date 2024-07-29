@@ -11,14 +11,18 @@ import (
 	"strings"
 	"time"
 
+	"github.com/rs/zerolog"
+	"github.com/vtpl1/vrtc/internal/app"
 	"github.com/vtpl1/vrtc/pkg/core"
 	"github.com/vtpl1/vrtc/pkg/rtsp/websocket"
 	"github.com/vtpl1/vrtc/pkg/tcp"
 )
 
 var Timeout = time.Second * 5
+var log zerolog.Logger
 
 func NewClient(uri string) *Conn {
+	log = app.GetLogger("rtsp1")
 	return &Conn{
 		Connection: core.Connection{
 			ID:         core.NewID(),
@@ -29,6 +33,10 @@ func NewClient(uri string) *Conn {
 }
 
 func (c *Conn) Dial() (err error) {
+	log.Info().Msgf("[rtsp1] Dial start")
+	defer func() {
+		log.Info().Msgf("[rtsp1] Dial end")
+	}()
 	if c.URL, err = url.Parse(c.uri); err != nil {
 		return
 	}
@@ -122,6 +130,10 @@ func (c *Conn) Options() error {
 }
 
 func (c *Conn) Describe() error {
+	log.Info().Msgf("[rtsp1] Describe start")
+	defer func() {
+		log.Info().Msgf("[rtsp1] Describe end")
+	}()
 	// 5.3 Back channel connection
 	// https://www.onvif.org/specs/stream/ONVIF-Streaming-Spec.pdf
 	req := &tcp.Request{
@@ -215,6 +227,10 @@ func (c *Conn) Record() (err error) {
 }
 
 func (c *Conn) SetupMedia(media *core.Media) (byte, error) {
+	log.Info().Msgf("[rtsp1] SetupMedia start")
+	defer func() {
+		log.Info().Msgf("[rtsp1] SetupMedia end")
+	}()
 	var transport string
 
 	// try to use media position as channel number
@@ -311,11 +327,19 @@ func (c *Conn) SetupMedia(media *core.Media) (byte, error) {
 }
 
 func (c *Conn) Play() (err error) {
+	log.Info().Msgf("[rtsp1] Play start")
+	defer func() {
+		log.Info().Msgf("[rtsp1] Play end")
+	}()
 	req := &tcp.Request{Method: MethodPlay, URL: c.URL}
 	return c.WriteRequest(req)
 }
 
 func (c *Conn) Teardown() (err error) {
+	log.Info().Msgf("[rtsp1] Teardown start")
+	defer func() {
+		log.Info().Msgf("[rtsp1] Teardown end")
+	}()
 	// allow TEARDOWN from any state (ex. ANNOUNCE > SETUP)
 	req := &tcp.Request{Method: MethodTeardown, URL: c.URL}
 	return c.WriteRequest(req)

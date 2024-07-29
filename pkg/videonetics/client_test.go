@@ -30,11 +30,7 @@ func TestNewClient(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			got, err := NewClient(tt.args.uri, tt.args.ctx)
-			if (err != nil) != tt.wantErr {
-				t.Errorf("NewClient() error = %v, wantErr %v", err, tt.wantErr)
-				return
-			}
+			got := NewClient(tt.args.uri, tt.args.ctx)
 			go got.ReadFramePVA()
 			time.Sleep(30 * time.Second)
 			// if !reflect.DeepEqual(got, tt.want) {

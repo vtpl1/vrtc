@@ -1,19 +1,22 @@
 log:
-  level: info # default level
-  api: trace
-  # exec: debug
-  # ngrok: info
-  # rtsp: error
-  streams: trace
-  # webrtc: error
-  hls: trace
-  videonetics: trace
+  level: trace # default level
+  # api: trace
+  # # exec: debug
+  # # ngrok: info
+  rtsp: info
+  # rtsp1: trace
+  # streams: trace
+  # # webrtc: error
+  # hls: trace
+  # videonetics: trace
 streams:
   "1": rtsp://admin:AdmiN1234@172.16.0.55:554/live.sdp
   "2": rtsp://root:AdmiN1234@172.16.0.92/axis-media/media.amp?videocodec=h265
   "3": videonetics://172.16.1.146/1/1/1
+  "4": rtsp://admin:admin@172.16.1.146:8554/videos/1_h264.mp4
+  "5": rtsp://172.16.1.146:8554/videos/2_h265.mp4
 api:
   listen: ":1984"
   origin: "*"
-videonetics:
-  stream_addr: dns:///172.16.1.146:20003
+# videonetics:
+#   stream_addr: dns:///172.16.1.146:20003

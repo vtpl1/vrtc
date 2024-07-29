@@ -9,7 +9,10 @@ import (
 
 func (c *Conn) GetTrack(media *core.Media, codec *core.Codec) (*core.Receiver, error) {
 	core.Assert(media.Direction == core.DirectionRecvonly)
-
+	log.Info().Msgf("[rtsp1] GetTrack start")
+	defer func() {
+		log.Info().Msgf("[rtsp1] GetTrack end")
+	}()
 	for _, track := range c.Receivers {
 		if track.Codec == codec {
 			return track, nil
@@ -41,7 +44,10 @@ func (c *Conn) GetTrack(media *core.Media, codec *core.Codec) (*core.Receiver, e
 
 func (c *Conn) Start() (err error) {
 	core.Assert(c.mode == core.ModeActiveProducer || c.mode == core.ModePassiveProducer)
-
+	log.Info().Msgf("[rtsp1] Start start")
+	defer func() {
+		log.Info().Msgf("[rtsp1] Start end")
+	}()
 	for {
 		ok := false
 
@@ -76,11 +82,17 @@ func (c *Conn) Start() (err error) {
 		// 1. None after PLAY should exit without error
 		// 2. Play after PLAY should exit from Start with error
 		// 3. Setup after PLAY should Play once again
+		log.Info().Msgf("[rtsp1] Handle Start %v", err)
 		err = c.Handle()
+		log.Info().Msgf("[rtsp1] Handle Return %v", err)
 	}
 }
 
 func (c *Conn) Stop() (err error) {
+	log.Info().Msgf("[rtsp1] Stop start")
+	defer func() {
+		log.Info().Msgf("[rtsp1] Stop end")
+	}()
 	for _, receiver := range c.Receivers {
 		receiver.Close()
 	}
