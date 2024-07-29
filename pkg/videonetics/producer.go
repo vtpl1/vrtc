@@ -14,9 +14,12 @@ func getMedias() []*core.Media {
 			Kind:      core.KindVideo,
 			Direction: core.DirectionRecvonly,
 			Codecs: []*core.Codec{
-				{Name: core.CodecH264,
+				{
+					Name: core.CodecH265,
+					//Name: core.CodecH264,
 					ClockRate: 90000,
-					FmtpLine:  "fmtp:96 packetization-mode=1;profile-level-id=42C032;sprop-parameter-sets=Z0LAMtkAKAC1pqAgICgAAAMACAAAAwCgeMGSQA==,aMuDyyA="},
+					// FmtpLine:  "fmtp:96 packetization-mode=1;profile-level-id=42C032;sprop-parameter-sets=Z0LAMtkAKAC1pqAgICgAAAMACAAAAwCgeMGSQA==,aMuDyyA="},
+					FmtpLine: "fmtp:96 sprop-vps=QAEMAf//AUAAAAMAgAAAAwAAAwB4EwJA;sprop-sps=QgEBAUAAAAMAgAAAAwAAAwB4oAPAgBEHy55O5EoPKrm4CAgIIAUmXAAzf5gB;sprop-pps=RAHANzwEbJA="},
 			},
 		},
 	}
@@ -124,7 +127,7 @@ func (c *Conn) Describe1() (err error) {
 	}()
 	var channel = Channel{
 		SiteID:     1,
-		ChannelID:  1,
+		ChannelID:  3,
 		AppID:      0,
 		LiveOrRec:  1,
 		StreamType: 0,
@@ -194,7 +197,7 @@ func (c *Conn) Stop() (err error) {
 func (c *Conn) ReadFramePVA() {
 	var channel = Channel{
 		SiteID:     1,
-		ChannelID:  1,
+		ChannelID:  3,
 		AppID:      0,
 		LiveOrRec:  1,
 		StreamType: 0,

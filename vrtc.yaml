@@ -3,7 +3,7 @@ log:
   # api: trace
   # # exec: debug
   # # ngrok: info
-  rtsp: info
+  rtsp: trace
   # rtsp1: trace
   # streams: trace
   # # webrtc: error
