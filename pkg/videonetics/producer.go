@@ -114,58 +114,6 @@ func (c *Conn) Start() (err error) {
 	log.Info().Msgf("[videonetics] Handle Return %v", err)
 	return
 }
-func (c *Conn) Describe() (err error) {
-	return nil
-}
-func (c *Conn) Describe1() (err error) {
-	log.Info().Msgf("[videonetics] Describe start")
-	defer func() {
-		log.Info().Msgf("[videonetics] Describe end")
-	}()
-	var channel = Channel{
-		SiteID:     1,
-		ChannelID:  1,
-		AppID:      0,
-		LiveOrRec:  1,
-		StreamType: 0,
-		StartTS:    0,
-		SessionID:  "",
-	}
-	serviceClient := pb.NewStreamServiceClient(c.conn)
-	stream, err := serviceClient.ReadFramePVA(*c.ctx, &pb.ReadFramePVARequest{Channel: &pb.Channel{
-		SiteId:     channel.SiteID,
-		ChannelId:  channel.ChannelID,
-		AppId:      channel.AppID,
-		LiveOrRec:  channel.LiveOrRec,
-		StreamType: channel.StreamType,
-		StartTs:    channel.StartTS,
-		SessionId:  channel.SessionID,
-	}})
-	if err != nil {
-		log.Info().Msg("Failed to FrameRead 1: " + err.Error() + ", ")
-		serviceClient = nil
-		stream = nil
-		return
-	}
-	count := 0
-	for {
-		response, err := stream.Recv()
-		if err != nil || response == nil {
-			log.Info().Msg("Failed to FrameRead 2: " + err.Error() + ", ")
-			return err
-		}
-		if count < 2 {
-			count++
-		} else {
-			err = nil
-			break
-		}
-
-	}
-	log.Info().Msg("Here in Describe")
-	// c.stream = stream
-	return
-}
 
 // Stop implements core.Producer.
 // Subtle: this method shadows the method (Connection).Stop of Conn.Connection.
