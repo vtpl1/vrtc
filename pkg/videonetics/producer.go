@@ -281,7 +281,6 @@ func (c *Conn) Stop() (err error) {
 func (c *Conn) ReadFramePVA() (err error) {
 
 	var sequenceNumber uint16 = 1
-	var timestamp uint32 = 0
 	for {
 		response, err := c.stream.Recv()
 		if err != nil || response == nil {
@@ -299,11 +298,13 @@ func (c *Conn) ReadFramePVA() (err error) {
 		// 	SessionID:  response.GetFramePva().GetChannel().GetSessionId(),
 		// }
 		// fmt.Printf("Here: %d %d\n\n", response.GetFramePva().GetFrame().GetFrameId(), channel.StartTS)
+		if response.GetFramePva().GetFrame().FrameType > 2 {
+			continue
+		}
+		// fmt.Printf("Frame type %v\n", response.GetFramePva().GetFrame().FrameType)
 		size := len(response.GetFramePva().GetFrame().Buffer[4:])
 		c.Recv += int(size)
-		// const ClockRate = 90000
 		sequenceNumber++
-		timestamp += 80
 
 		packet := &rtp.Packet{
 			Header: rtp.Header{
@@ -312,7 +313,7 @@ func (c *Conn) ReadFramePVA() (err error) {
 				Marker:         true,
 				SSRC:           20,
 				SequenceNumber: sequenceNumber,
-				Timestamp:      timestamp * 90,
+				Timestamp:      core.TimeStamp90000(response.GetFramePva().GetFrame().Timestamp),
 			},
 		}
 		packet.Payload = response.GetFramePva().GetFrame().Buffer[4:]
