@@ -34,7 +34,7 @@ var ctx *context.Context
 func videoneticsHandler(rawURL string) (core.Producer, error) {
 	log.Info().Msgf("[videonetics] videoneticsHandler %s", rawURL)
 	conn := videonetics.NewClient(rawURL, ctx)
-	if err := conn.Dial(); err != nil {
+	if err := conn.Reconnect(); err != nil {
 		return nil, err
 	}
 	return conn, nil

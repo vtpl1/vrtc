@@ -6,8 +6,6 @@ import (
 	"github.com/rs/zerolog"
 	"github.com/vtpl1/vrtc/internal/app"
 	"github.com/vtpl1/vrtc/pkg/core"
-	"google.golang.org/grpc"
-	"google.golang.org/grpc/credentials/insecure"
 )
 
 type Channel struct {
@@ -33,28 +31,11 @@ func NewClient(uri string, ctx *context.Context) *Conn {
 		Connection: core.Connection{
 			ID:         core.NewID(),
 			FormatName: "videonetics",
-			Medias:     getMedias(),
+			// Medias:     getMedias(),
 		},
 		uri:     uri,
 		ctx:     ctx,
 		host:    host,
 		channel: channel,
 	}
-}
-
-func (c *Conn) Dial() (err error) {
-	var opts []grpc.DialOption
-	opts = append(opts, grpc.WithTransportCredentials(insecure.NewCredentials()))
-
-	conn, err := grpc.NewClient(c.host, opts...)
-	if err != nil {
-		log.Err(err).Msgf("[%v] failed to dial for %v", c.host, c.channel)
-		return
-	}
-	log.Info().Msgf("[%v] success to dial for %v", c.host, c.channel)
-	c.stateMu.Lock()
-	c.state = StateConn
-	c.stateMu.Unlock()
-	c.conn = conn
-	return
 }

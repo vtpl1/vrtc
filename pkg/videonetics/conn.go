@@ -6,6 +6,7 @@ import (
 	"sync"
 
 	"github.com/vtpl1/vrtc/pkg/core"
+	pb "github.com/vtpl1/vrtc/pkg/videonetics/service"
 	"google.golang.org/grpc"
 )
 
@@ -22,7 +23,7 @@ type Conn struct {
 
 	state   State
 	stateMu sync.Mutex
-	// stream  pb.StreamService_ReadFramePVAClient
+	stream  pb.StreamService_ReadFramePVAClient
 }
 
 const (
@@ -51,6 +52,5 @@ const (
 )
 
 func (c *Conn) Handle() (err error) {
-	c.ReadFramePVA()
-	return nil
+	return c.ReadFramePVA()
 }

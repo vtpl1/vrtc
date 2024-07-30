@@ -87,6 +87,10 @@ func (c *Codec) String() (s string) {
 	if c.Channels > 0 {
 		s += fmt.Sprintf("/%d", c.Channels)
 	}
+	// if len(c.FmtpLine) > 0 {
+	// 	s += fmt.Sprintf("/%s", c.FmtpLine)
+	// }
+
 	return
 }
 
