@@ -15,7 +15,8 @@ streams:
   "3": rtsp://admin:admin@172.16.1.146:8554/videos/1_h264.mp4
   "4": rtsp://172.16.1.146:8554/videos/2_h265.mp4
   "5": videonetics://172.16.1.146:20003/1/1/0
-  "6": videonetics://172.16.1.146:20003/1/3/0
+  "6": videonetics://172.16.1.146:20003/1/2/0
+  "7": videonetics://172.16.1.146:20003/1/3/0
 
 api:
   listen: ":1984"

@@ -94,6 +94,10 @@ func (c *Codec) String() (s string) {
 	return
 }
 
+func (c *Codec) IsMeta() bool {
+	return c.Kind() == KindMeta
+}
+
 func (c *Codec) IsRTP() bool {
 	return c.PayloadType != PayloadTypeRAW
 }

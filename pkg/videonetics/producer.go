@@ -43,9 +43,9 @@ func (c *Conn) GetMedias() []*core.Media {
 // Subtle: this method shadows the method (Connection).GetTrack of Conn.Connection.
 func (c *Conn) GetTrack(media *core.Media, codec *core.Codec) (*core.Receiver, error) {
 	core.Assert(media.Direction == core.DirectionRecvonly)
-	log.Info().Msgf("[videonetics] GetTrack start")
+	log.Info().Msgf("[videonetics] GetTrack start %v %v", media, codec)
 	defer func() {
-		log.Info().Msgf("[videonetics] GetTrack end")
+		log.Info().Msgf("[videonetics] GetTrack end %v %v", media, codec)
 	}()
 	for _, track := range c.Receivers {
 		if track.Codec == codec {
@@ -223,6 +223,14 @@ dd:
 			break
 		}
 	}
+
+	c.Medias = append(c.Medias, &core.Media{
+		Kind:      core.KindMeta,
+		Direction: core.DirectionRecvonly,
+		Codecs: []*core.Codec{
+			{Name: core.CodecAny},
+		},
+	})
 
 	return
 }

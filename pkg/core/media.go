@@ -96,6 +96,8 @@ func GetKind(name string) string {
 		return KindVideo
 	case CodecPCMU, CodecPCMA, CodecAAC, CodecOpus, CodecG722, CodecMP3, CodecPCM, CodecPCML, CodecELD, CodecFLAC:
 		return KindAudio
+	case CodecMeta:
+		return KindMeta
 	}
 	return ""
 }

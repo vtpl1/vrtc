@@ -11,6 +11,7 @@ const (
 const (
 	KindVideo = "video"
 	KindAudio = "audio"
+	KindMeta  = "meta"
 )
 
 const (
@@ -37,6 +38,8 @@ const (
 
 	CodecAll = "ALL"
 	CodecAny = "ANY"
+
+	CodecMeta = "META"
 )
 
 const PayloadTypeRAW byte = 255

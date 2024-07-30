@@ -67,6 +67,10 @@ func (c *Consumer) AddTrack(media *core.Media, _ *core.Codec, track *core.Receiv
 	handler := core.NewSender(media, codec)
 
 	switch track.Codec.Name {
+	case core.CodecMeta:
+		handler.Handler = func(packet *rtp.Packet) {
+			println("meta data called %v", packet)
+		}
 	case core.CodecH264:
 		handler.Handler = func(packet *rtp.Packet) {
 			if !c.start {
@@ -151,14 +155,14 @@ func (c *Consumer) AddTrack(media *core.Media, _ *core.Codec, track *core.Receiv
 	}
 
 	if handler.Handler == nil {
-		s := "mp4: unsupported codec: " + track.Codec.String()
+		s := "mp4: unsupported codec: " + track.Codec.String() + " , " + track.Codec.Kind()
 		println(s)
 		return errors.New(s)
 	}
-
-	c.muxer.AddTrack(codec)
-
-	handler.HandleRTP(track)
+	if !codec.IsMeta() {
+		c.muxer.AddTrack(codec)
+		handler.HandleRTP(track)
+	}
 	c.Senders = append(c.Senders, handler)
 
 	return nil
