@@ -14,9 +14,12 @@ func getMedias() []*core.Media {
 			Kind:      core.KindVideo,
 			Direction: core.DirectionRecvonly,
 			Codecs: []*core.Codec{
-				{Name: core.CodecH264,
+				{
+					// Name: core.CodecH265,
+					Name:      core.CodecH264,
 					ClockRate: 90000,
 					FmtpLine:  "fmtp:96 packetization-mode=1;profile-level-id=42C032;sprop-parameter-sets=Z0LAMtkAKAC1pqAgICgAAAMACAAAAwCgeMGSQA==,aMuDyyA="},
+				// FmtpLine: "fmtp:96 sprop-vps=QAEMAf//AUAAAAMAgAAAAwAAAwB4EwJA;sprop-sps=QgEBAUAAAAMAgAAAAwAAAwB4oAPAgBEHy55O5EoPKrm4CAgIIAUmXAAzf5gB;sprop-pps=RAHANzwEbJA="},
 			},
 		},
 	}
@@ -140,24 +143,16 @@ func (c *Conn) Stop() (err error) {
 }
 
 func (c *Conn) ReadFramePVA() {
-	var channel = Channel{
-		SiteID:     1,
-		ChannelID:  1,
-		AppID:      0,
-		LiveOrRec:  1,
-		StreamType: 0,
-		StartTS:    0,
-		SessionID:  "",
-	}
+
 	serviceClient := pb.NewStreamServiceClient(c.conn)
 	stream, err := serviceClient.ReadFramePVA(*c.ctx, &pb.ReadFramePVARequest{Channel: &pb.Channel{
-		SiteId:     channel.SiteID,
-		ChannelId:  channel.ChannelID,
-		AppId:      channel.AppID,
-		LiveOrRec:  channel.LiveOrRec,
-		StreamType: channel.StreamType,
-		StartTs:    channel.StartTS,
-		SessionId:  channel.SessionID,
+		SiteId:     c.channel.SiteID,
+		ChannelId:  c.channel.ChannelID,
+		AppId:      c.channel.AppID,
+		LiveOrRec:  c.channel.LiveOrRec,
+		StreamType: c.channel.StreamType,
+		StartTs:    c.channel.StartTS,
+		SessionId:  c.channel.SessionID,
 	}})
 	if err != nil {
 		log.Info().Msg("Failed to FrameRead 1: " + err.Error() + ", ")

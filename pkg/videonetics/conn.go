@@ -14,9 +14,11 @@ type Conn struct {
 	core.Listener
 
 	// internal
-	uri  string
-	ctx  *context.Context
-	conn *grpc.ClientConn
+	uri     string
+	ctx     *context.Context
+	conn    *grpc.ClientConn
+	host    string
+	channel Channel
 
 	state   State
 	stateMu sync.Mutex

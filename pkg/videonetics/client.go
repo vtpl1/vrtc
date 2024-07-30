@@ -23,29 +23,35 @@ type Channel struct {
 var log zerolog.Logger
 
 func NewClient(uri string, ctx *context.Context) *Conn {
+
 	log = app.GetLogger("videonetics")
+	host, channel, err := ParseVideoneticsUri(uri)
+	if err != nil {
+		return nil
+	}
 	return &Conn{
 		Connection: core.Connection{
 			ID:         core.NewID(),
 			FormatName: "videonetics",
 			Medias:     getMedias(),
 		},
-		uri: uri,
-		ctx: ctx,
+		uri:     uri,
+		ctx:     ctx,
+		host:    host,
+		channel: channel,
 	}
 }
 
 func (c *Conn) Dial() (err error) {
 	var opts []grpc.DialOption
 	opts = append(opts, grpc.WithTransportCredentials(insecure.NewCredentials()))
-	streamAddr := "dns:///172.16.1.146:20003"
 
-	conn, err := grpc.NewClient(streamAddr, opts...)
+	conn, err := grpc.NewClient(c.host, opts...)
 	if err != nil {
-		log.Info().Msg("[" + streamAddr + "] failed to dial: " + err.Error() + " for")
+		log.Err(err).Msgf("[%v] failed to dial for %v", c.host, c.channel)
 		return
 	}
-	log.Info().Msg("[" + streamAddr + "] success to dial for ")
+	log.Info().Msgf("[%v] success to dial for %v", c.host, c.channel)
 	c.stateMu.Lock()
 	c.state = StateConn
 	c.stateMu.Unlock()

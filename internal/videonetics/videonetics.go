@@ -37,6 +37,5 @@ func videoneticsHandler(rawURL string) (core.Producer, error) {
 	if err := conn.Dial(); err != nil {
 		return nil, err
 	}
-
 	return conn, nil
 }
