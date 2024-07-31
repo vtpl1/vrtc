@@ -1,6 +1,8 @@
 package core
 
-import "sync"
+import (
+	"sync"
+)
 
 // Waiter support:
 // - autotart on first Wait

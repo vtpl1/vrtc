@@ -6,11 +6,10 @@ import (
 	"strings"
 	"time"
 
-	"github.com/vtpl1/vrtc/pkg/core"
-
 	"github.com/pion/rtcp"
 	"github.com/pion/rtp"
 	"github.com/pion/webrtc/v3"
+	"github.com/vtpl1/vrtc/pkg/core"
 )
 
 type Conn struct {

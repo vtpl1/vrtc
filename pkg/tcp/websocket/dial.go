@@ -5,7 +5,6 @@ import (
 	"crypto/sha1"
 	"encoding/base64"
 	"errors"
-
 	"net"
 	"net/http"
 	"strings"

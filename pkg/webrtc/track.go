@@ -20,8 +20,8 @@ type Track struct {
 func NewTrack(kind string) *Track {
 	return &Track{
 		kind:     kind,
-		id:       "vrtc-" + kind,
-		streamID: "vrtc",
+		id:       "go2rtc-" + kind,
+		streamID: "go2rtc",
 	}
 }
 

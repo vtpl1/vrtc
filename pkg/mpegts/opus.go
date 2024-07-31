@@ -1,6 +1,8 @@
 package mpegts
 
-import "github.com/vtpl1/vrtc/pkg/bits"
+import (
+	"github.com/vtpl1/vrtc/pkg/bits"
+)
 
 // opusDT - each AU from FFmpeg has 5 OPUS packets. Each packet len = 960 in the 48000 clock.
 const opusDT = 960 * ClockRate / 48000

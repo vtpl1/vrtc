@@ -11,14 +11,13 @@ import (
 	"strings"
 	"time"
 
-	"github.com/rs/zerolog"
+	"github.com/vtpl1/vrtc/pkg/tcp/websocket"
+
 	"github.com/vtpl1/vrtc/pkg/core"
-	"github.com/vtpl1/vrtc/pkg/rtsp/websocket"
 	"github.com/vtpl1/vrtc/pkg/tcp"
 )
 
 var Timeout = time.Second * 5
-var log zerolog.Logger
 
 func NewClient(uri string) *Conn {
 	return &Conn{
