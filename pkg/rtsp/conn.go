@@ -239,7 +239,6 @@ func (c *Conn) Handle() (err error) {
 
 			for _, receiver := range c.Receivers {
 				if receiver.ID == channelID {
-					log.Info().Msgf("packet %v", packet)
 					receiver.WriteRTP(packet)
 					break
 				}

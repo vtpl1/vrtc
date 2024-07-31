@@ -14,7 +14,6 @@ import (
 
 func (c *Conn) GetMedias() []*core.Media {
 	//core.Assert(c.Medias != nil)
-	log.Info().Msgf("[rtsp1] Medias: %v", c.Medias)
 	return c.Medias
 }
 
@@ -163,6 +162,8 @@ func (c *Conn) packetWriter(codec *core.Codec, channel, payloadType uint8) core.
 		case core.CodecJPEG:
 			handlerFunc = mjpeg.RTPPay(handlerFunc)
 		}
+	} else if codec.Name == core.CodecPCML {
+		handlerFunc = pcm.LittleToBig(handlerFunc)
 	} else if c.PacketSize != 0 {
 		switch codec.Name {
 		case core.CodecH264:

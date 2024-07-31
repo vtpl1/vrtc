@@ -3,6 +3,8 @@ package core
 import (
 	"encoding/json"
 	"errors"
+
+	"github.com/pion/rtp"
 )
 
 var ErrCantGetTrack = errors.New("can't get track")
@@ -35,7 +37,7 @@ func NewReceiver(media *Media, codec *Codec) *Receiver {
 }
 
 // Deprecated: should be removed
-func (r *Receiver) WriteRTP(packet *Packet) {
+func (r *Receiver) WriteRTP(packet *rtp.Packet) {
 	r.Input(packet)
 }
 

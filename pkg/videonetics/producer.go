@@ -75,7 +75,6 @@ func (c *Conn) Reconnect() error {
 	defer func() {
 		log.Info().Msgf("[videonetics] Reconnect end")
 	}()
-	c.Fire("Videonetics reconnect")
 
 	// close current session
 	_ = c.Close()
@@ -224,14 +223,6 @@ dd:
 		}
 	}
 
-	c.Medias = append(c.Medias, &core.Media{
-		Kind:      core.KindMeta,
-		Direction: core.DirectionRecvonly,
-		Codecs: []*core.Codec{
-			{Name: core.CodecAny},
-		},
-	})
-
 	return
 }
 
@@ -332,7 +323,7 @@ func (c *Conn) ReadFramePVA() (err error) {
 		// }
 		var channelID byte = 0
 		for _, receiver := range c.Receivers {
-			// log.Info().Msgf("Receiver ID: %v  channelID %v", receiver.ID, channelID)
+			log.Info().Msgf("Receiver ID: %v  channelID %v", receiver.ID, channelID)
 			if receiver.ID == channelID {
 				// log.Info().Msgf("packet %v", packet)
 				receiver.WriteRTP(packet)

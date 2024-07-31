@@ -87,15 +87,7 @@ func (c *Codec) String() (s string) {
 	if c.Channels > 0 {
 		s += fmt.Sprintf("/%d", c.Channels)
 	}
-	// if len(c.FmtpLine) > 0 {
-	// 	s += fmt.Sprintf("/%s", c.FmtpLine)
-	// }
-
 	return
-}
-
-func (c *Codec) IsMeta() bool {
-	return c.Kind() == KindMeta
 }
 
 func (c *Codec) IsRTP() bool {
@@ -165,7 +157,12 @@ func UnmarshalCodec(md *sdp.MediaDescription, payloadType string) *Codec {
 		}
 	}
 
-	if c.Name == "" {
+	switch c.Name {
+	case "PCM":
+		// https://www.reddit.com/r/Hikvision/comments/17elxex/comment/k642g2r/
+		// check pkg/rtsp/rtsp_test.go TestHikvisionPCM
+		c.Name = CodecPCML
+	case "":
 		// https://en.wikipedia.org/wiki/RTP_payload_formats
 		switch payloadType {
 		case "0":

@@ -12,7 +12,6 @@ import (
 
 type Conn struct {
 	core.Connection
-	core.Listener
 
 	// internal
 	uri     string

@@ -48,7 +48,7 @@ func (s *Stream) AddConsumer(cons core.Consumer) (err error) {
 
 				switch prodMedia.Direction {
 				case core.DirectionRecvonly:
-					log.Trace().Msgf("[streams] match cons=%d <= prod=%d [prodMedia=%v, prodCodec=%v]", consN, prodN, prodMedia, prodCodec)
+					log.Trace().Msgf("[streams] match cons=%d <= prod=%d", consN, prodN)
 
 					// Step 4. Get recvonly track from producer
 					if track, err = prod.GetTrack(prodMedia, prodCodec); err != nil {
@@ -58,7 +58,7 @@ func (s *Stream) AddConsumer(cons core.Consumer) (err error) {
 					}
 					// Step 5. Add track to consumer
 					if err = cons.AddTrack(consMedia, consCodec, track); err != nil {
-						log.Info().Err(err).Msgf("[streams] can't add track to cons, consMedia: %v consCodec: %v track: %v", consMedia, consCodec, track)
+						log.Info().Err(err).Msg("[streams] can't add track")
 						continue
 					}
 
@@ -72,7 +72,7 @@ func (s *Stream) AddConsumer(cons core.Consumer) (err error) {
 					}
 					// Step 5. Add track to producer
 					if err = prod.AddTrack(prodMedia, prodCodec, track); err != nil {
-						log.Info().Err(err).Msg("[streams] can't add track to prod")
+						log.Info().Err(err).Msg("[streams] can't add track")
 						prodErrors[prodN] = err
 						continue
 					}

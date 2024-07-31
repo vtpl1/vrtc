@@ -21,13 +21,7 @@ func handlerWSMSE(tr *ws.Transport, msg *ws.Message) error {
 		log.Trace().Str("codecs", codecs).Msgf("[mp4] new WS/MSE consumer")
 		medias = mp4.ParseCodecs(codecs, true)
 	}
-	medias = append(medias, &core.Media{
-		Kind:      core.KindMeta,
-		Direction: core.DirectionSendonly,
-		Codecs: []*core.Codec{
-			{Name: core.CodecMeta},
-		},
-	})
+
 	cons := mp4.NewConsumer(medias)
 	cons.FormatName = "mse/fmp4"
 	cons.WithRequest(tr.Request)

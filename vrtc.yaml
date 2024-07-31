@@ -3,7 +3,7 @@ log:
   # api: trace
   # # exec: debug
   # # ngrok: info
-  rtsp: trace
+  rtsp: info
   # rtsp1: trace
   # streams: trace
   # # webrtc: error
@@ -11,12 +11,13 @@ log:
   # videonetics: trace
 streams:
   "1": rtsp://admin:AdmiN1234@172.16.0.55:554/live.sdp
-  "2": rtsp://root:AdmiN1234@172.16.0.92/axis-media/media.amp?videocodec=h265
-  "3": rtsp://admin:admin@172.16.1.146:8554/videos/1_h264.mp4
-  "4": rtsp://172.16.1.146:8554/videos/2_h265.mp4
-  "5": videonetics://172.16.1.146:20003/1/1/0
-  "6": videonetics://172.16.1.146:20003/1/2/0
-  "7": videonetics://172.16.1.146:20003/1/3/0
+  "2": rtsp://root:AdmiN1234@172.16.0.92/axis-media/media.amp
+  "3": rtsp://root:AdmiN1234@172.16.0.92/axis-media/media.amp?videocodec=h265
+  "4": rtsp://admin:admin@172.16.1.146:8554/videos/1_h264.mp4
+  "5": rtsp://172.16.1.146:8554/videos/2_h265.mp4
+  "6": videonetics://172.16.1.146:20003/1/1/0
+  "7": videonetics://172.16.1.146:20003/1/2/0
+  "8": videonetics://172.16.1.146:20003/1/3/0
 
 api:
   listen: ":1984"
