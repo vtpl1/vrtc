@@ -8,7 +8,6 @@ import (
 
 	"github.com/vtpl1/vrtc/internal/api"
 	"github.com/vtpl1/vrtc/internal/api/ws"
-	"github.com/vtpl1/vrtc/internal/app"
 	"github.com/vtpl1/vrtc/internal/debug"
 	"github.com/vtpl1/vrtc/internal/hls"
 	"github.com/vtpl1/vrtc/internal/mp4"
@@ -17,19 +16,20 @@ import (
 	"github.com/vtpl1/vrtc/internal/streams"
 	"github.com/vtpl1/vrtc/internal/videonetics"
 	"github.com/vtpl1/vrtc/internal/webrtc"
+	"github.com/vtpl1/vrtc/utils"
 )
 
 func main() {
-	app.Version = "1.9.4"
+	utils.Version = "1.9.4"
 
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
-	app.InternalTerminationRequest = make(chan int)
+	utils.InternalTerminationRequest = make(chan int)
 
 	// 1. Core modules: app, api/ws, streams
 
-	app.Init() // init config and logs
-	log := app.GetLogger("api")
+	utils.Init() // init config and logs
+	log := utils.GetLogger("api")
 
 	api.Init() // init API before all others
 	ws.Init()  // init WS API endpoint
@@ -66,7 +66,7 @@ func main() {
 		select {
 		case <-ctx.Done():
 			doShutdown = true
-		case <-app.InternalTerminationRequest:
+		case <-utils.InternalTerminationRequest:
 			stop()
 			doShutdown = true
 		}

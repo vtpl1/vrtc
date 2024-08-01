@@ -4,8 +4,8 @@ import (
 	"context"
 
 	"github.com/rs/zerolog"
-	"github.com/vtpl1/vrtc/internal/app"
 	"github.com/vtpl1/vrtc/pkg/core"
+	"github.com/vtpl1/vrtc/utils"
 )
 
 type Channel struct {
@@ -22,7 +22,7 @@ var log zerolog.Logger
 
 func NewClient(uri string, ctx *context.Context) *Conn {
 
-	log = app.GetLogger("videonetics")
+	log = utils.GetLogger("videonetics")
 	host, channel, err := ParseVideoneticsUri(uri)
 	if err != nil {
 		return nil

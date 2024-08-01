@@ -1,4 +1,5 @@
-package yaml
+// Package utils exposes different yaml utility functions
+package utils
 
 import (
 	"bytes"
@@ -7,6 +8,7 @@ import (
 	"gopkg.in/yaml.v3"
 )
 
+// Unmarshal converts bytes to required interface
 func Unmarshal(in []byte, out interface{}) (err error) {
 	return yaml.Unmarshal(in, out)
 }

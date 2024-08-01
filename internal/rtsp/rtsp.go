@@ -7,11 +7,11 @@ import (
 	"strings"
 
 	"github.com/rs/zerolog"
-	"github.com/vtpl1/vrtc/internal/app"
 	"github.com/vtpl1/vrtc/internal/streams"
 	"github.com/vtpl1/vrtc/pkg/core"
 	"github.com/vtpl1/vrtc/pkg/rtsp"
 	"github.com/vtpl1/vrtc/pkg/tcp"
+	"github.com/vtpl1/vrtc/utils"
 )
 
 func Init() {
@@ -29,10 +29,10 @@ func Init() {
 	conf.Mod.Listen = ":8554"
 	conf.Mod.DefaultQuery = "video&audio"
 
-	app.LoadConfig(&conf)
-	app.Info["rtsp"] = conf.Mod
+	utils.LoadConfig(&conf)
+	utils.Info["rtsp"] = conf.Mod
 
-	log = app.GetLogger("rtsp")
+	log = utils.GetLogger("rtsp")
 
 	// RTSP client support
 	streams.HandleFunc("rtsp", rtspHandler)
@@ -96,7 +96,7 @@ func rtspHandler(rawURL string) (core.Producer, error) {
 
 	conn := rtsp.NewClient(rawURL)
 	conn.Backchannel = true
-	conn.UserAgent = app.UserAgent
+	conn.UserAgent = utils.UserAgent
 
 	if rawQuery != "" {
 		query := streams.ParseQuery(rawQuery)
@@ -174,7 +174,7 @@ func tcpHandler(conn *rtsp.Conn) {
 
 			log.Debug().Str("stream", name).Msg("[rtsp] new consumer")
 
-			conn.SessionName = app.UserAgent
+			conn.SessionName = utils.UserAgent
 
 			query := conn.URL.Query()
 			conn.Medias = ParseQuery(query)

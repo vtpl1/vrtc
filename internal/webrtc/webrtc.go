@@ -8,10 +8,10 @@ import (
 	"github.com/rs/zerolog"
 	"github.com/vtpl1/vrtc/internal/api"
 	"github.com/vtpl1/vrtc/internal/api/ws"
-	"github.com/vtpl1/vrtc/internal/app"
 	"github.com/vtpl1/vrtc/internal/streams"
 	"github.com/vtpl1/vrtc/pkg/core"
 	"github.com/vtpl1/vrtc/pkg/webrtc"
+	"github.com/vtpl1/vrtc/utils"
 )
 
 func Init() {
@@ -29,9 +29,9 @@ func Init() {
 		{URLs: []string{"stun:stun.l.google.com:19302"}},
 	}
 
-	app.LoadConfig(&cfg)
+	utils.LoadConfig(&cfg)
 
-	log = app.GetLogger("webrtc")
+	log = utils.GetLogger("webrtc")
 
 	filters = cfg.Mod.Filters
 

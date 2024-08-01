@@ -6,13 +6,17 @@ import (
 	"github.com/vtpl1/vrtc/www"
 )
 
-func initStatic(staticDir string) {
+func initStatic(staticDir string) error {
 	var root http.FileSystem
-	if staticDir != "" {
+	if staticDir == "" {
+		staticFs, err := www.GetStaticFS()
+		if err != nil {
+			return err
+		}
+		root = http.FS(staticFs)
+	} else {
 		log.Info().Str("dir", staticDir).Msg("[api] serve static")
 		root = http.Dir(staticDir)
-	} else {
-		root = http.FS(www.GetStaticFS())
 	}
 
 	base := len(basePath)
@@ -24,4 +28,5 @@ func initStatic(staticDir string) {
 		}
 		fileServer.ServeHTTP(w, r)
 	})
+	return nil
 }

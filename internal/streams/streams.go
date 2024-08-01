@@ -9,7 +9,7 @@ import (
 
 	"github.com/rs/zerolog"
 	"github.com/vtpl1/vrtc/internal/api"
-	"github.com/vtpl1/vrtc/internal/app"
+	"github.com/vtpl1/vrtc/utils"
 )
 
 func Init() {
@@ -18,9 +18,9 @@ func Init() {
 		Publish map[string]any `yaml:"publish"`
 	}
 
-	app.LoadConfig(&cfg)
+	utils.LoadConfig(&cfg)
 
-	log = app.GetLogger("streams")
+	log = utils.GetLogger("streams")
 
 	for name, item := range cfg.Streams {
 		streams[name] = NewStream(item)

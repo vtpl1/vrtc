@@ -4,8 +4,8 @@ import (
 	"net/http"
 
 	"github.com/vtpl1/vrtc/internal/api"
-	"github.com/vtpl1/vrtc/internal/app"
 	"github.com/vtpl1/vrtc/pkg/probe"
+	"github.com/vtpl1/vrtc/utils"
 )
 
 func apiStreams(w http.ResponseWriter, r *http.Request) {
@@ -53,7 +53,7 @@ func apiStreams(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 
-		if err := app.PatchConfig(name, src, "streams"); err != nil {
+		if err := utils.PatchConfig(name, src, "streams"); err != nil {
 			http.Error(w, err.Error(), http.StatusBadRequest)
 		}
 
@@ -96,7 +96,7 @@ func apiStreams(w http.ResponseWriter, r *http.Request) {
 	case "DELETE":
 		delete(streams, src)
 
-		if err := app.PatchConfig(src, nil, "streams"); err != nil {
+		if err := utils.PatchConfig(src, nil, "streams"); err != nil {
 			http.Error(w, err.Error(), http.StatusBadRequest)
 		}
 	}

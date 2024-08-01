@@ -4,10 +4,10 @@ import (
 	"context"
 
 	"github.com/rs/zerolog"
-	"github.com/vtpl1/vrtc/internal/app"
 	"github.com/vtpl1/vrtc/internal/streams"
 	"github.com/vtpl1/vrtc/pkg/core"
 	"github.com/vtpl1/vrtc/pkg/videonetics"
+	"github.com/vtpl1/vrtc/utils"
 )
 
 func Init(ctx_ *context.Context) {
@@ -19,10 +19,10 @@ func Init(ctx_ *context.Context) {
 	}
 	// default config
 	// cfg.Mod.StreamAddr = "dns:///172.16.2.143:2003"
-	app.LoadConfig(&cfg)
-	app.Info["videonetics"] = cfg.Mod
+	utils.LoadConfig(&cfg)
+	utils.Info["videonetics"] = cfg.Mod
 
-	log = app.GetLogger("videonetics")
+	log = utils.GetLogger("videonetics")
 	ctx = ctx_
 	// videonetics client
 	streams.HandleFunc("videonetics", videoneticsHandler)

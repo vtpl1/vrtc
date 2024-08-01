@@ -1,18 +1,15 @@
-package app
+package utils
 
 import (
 	"errors"
 	"os"
 	"path/filepath"
 	"strings"
-
-	"github.com/vtpl1/vrtc/pkg/shell"
-	"github.com/vtpl1/vrtc/pkg/yaml"
 )
 
 func LoadConfig(v any) {
 	for _, data := range configs {
-		if err := yaml.Unmarshal(data, v); err != nil {
+		if err := Unmarshal(data, v); err != nil {
 			Logger.Warn().Err(err).Send()
 		}
 	}
@@ -26,7 +23,7 @@ func PatchConfig(key string, value any, path ...string) error {
 	// empty config is OK
 	b, _ := os.ReadFile(ConfigPath)
 
-	b, err := yaml.Patch(b, key, value, path...)
+	b, err := Patch(b, key, value, path...)
 	if err != nil {
 		return err
 	}
@@ -71,7 +68,7 @@ func initConfig(confs flagConfig) {
 				continue
 			}
 
-			data = []byte(shell.ReplaceEnvVars(string(data)))
+			data = []byte(ReplaceEnvVars(string(data)))
 			configs = append(configs, data)
 		}
 	}

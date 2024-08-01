@@ -11,7 +11,7 @@ import (
 	"github.com/gorilla/websocket"
 	"github.com/rs/zerolog"
 	"github.com/vtpl1/vrtc/internal/api"
-	"github.com/vtpl1/vrtc/internal/app"
+	"github.com/vtpl1/vrtc/utils"
 )
 
 func Init() {
@@ -21,9 +21,9 @@ func Init() {
 		} `yaml:"api"`
 	}
 
-	app.LoadConfig(&cfg)
+	utils.LoadConfig(&cfg)
 
-	log = app.GetLogger("api")
+	log = utils.GetLogger("api")
 
 	initWS(cfg.Mod.Origin)
 

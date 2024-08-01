@@ -14,7 +14,7 @@ import (
 	"time"
 
 	"github.com/rs/zerolog"
-	"github.com/vtpl1/vrtc/internal/app"
+	"github.com/vtpl1/vrtc/utils"
 )
 
 func Init() {
@@ -37,22 +37,22 @@ func Init() {
 	cfg.Mod.Listen = ":1984"
 
 	// load config from YAML
-	app.LoadConfig(&cfg)
+	utils.LoadConfig(&cfg)
 
 	if cfg.Mod.Listen == "" && cfg.Mod.UnixListen == "" && cfg.Mod.TLSListen == "" {
 		return
 	}
 
 	basePath = cfg.Mod.BasePath
-	log = app.GetLogger("api")
+	log = utils.GetLogger("api")
 
-	initStatic(cfg.Mod.StaticDir)
+	// initStatic(cfg.Mod.StaticDir)
 
 	HandleFunc("api", apiHandler)
-	HandleFunc("api/config", configHandler)
-	HandleFunc("api/exit", exitHandler)
-	HandleFunc("api/restart", restartHandler)
-	HandleFunc("api/log", logHandler)
+	// HandleFunc("api/config", configHandler)
+	// HandleFunc("api/exit", exitHandler)
+	// HandleFunc("api/restart", restartHandler)
+	// HandleFunc("api/log", logHandler)
 
 	Handler = http.DefaultServeMux // 4th
 
@@ -225,10 +225,10 @@ var mu sync.Mutex
 
 func apiHandler(w http.ResponseWriter, r *http.Request) {
 	mu.Lock()
-	app.Info["host"] = r.Host
+	utils.Info["host"] = r.Host
 	mu.Unlock()
 
-	ResponseJSON(w, app.Info)
+	ResponseJSON(w, utils.Info)
 }
 
 func exitHandler(w http.ResponseWriter, r *http.Request) {
@@ -251,7 +251,7 @@ func exitHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	log.Info().Msgf("[api] exit %s", path)
-	app.InternalTerminationRequest <- 1
+	utils.InternalTerminationRequest <- 1
 	// os.Exit(code)
 }
 
@@ -277,9 +277,9 @@ func logHandler(w http.ResponseWriter, r *http.Request) {
 	case "GET":
 		// Send current state of the log file immediately
 		w.Header().Set("Content-Type", "application/jsonlines")
-		_, _ = app.MemoryLog.WriteTo(w)
+		_, _ = utils.MemoryLog.WriteTo(w)
 	case "DELETE":
-		app.MemoryLog.Reset()
+		utils.MemoryLog.Reset()
 		Response(w, "OK", "text/plain")
 	default:
 		http.Error(w, "Method not allowed", http.StatusBadRequest)

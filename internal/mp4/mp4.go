@@ -10,14 +10,14 @@ import (
 	"github.com/rs/zerolog"
 	"github.com/vtpl1/vrtc/internal/api"
 	"github.com/vtpl1/vrtc/internal/api/ws"
-	"github.com/vtpl1/vrtc/internal/app"
 	"github.com/vtpl1/vrtc/internal/streams"
 	"github.com/vtpl1/vrtc/pkg/core"
 	"github.com/vtpl1/vrtc/pkg/mp4"
+	"github.com/vtpl1/vrtc/utils"
 )
 
 func Init() {
-	log = app.GetLogger("mp4")
+	log = utils.GetLogger("mp4")
 
 	ws.HandleFunc("mse", handlerWSMSE)
 	ws.HandleFunc("mp4", handlerWSMP4)

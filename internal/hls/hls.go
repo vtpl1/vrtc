@@ -8,15 +8,15 @@ import (
 	"github.com/rs/zerolog"
 	"github.com/vtpl1/vrtc/internal/api"
 	"github.com/vtpl1/vrtc/internal/api/ws"
-	"github.com/vtpl1/vrtc/internal/app"
 	"github.com/vtpl1/vrtc/internal/streams"
 	"github.com/vtpl1/vrtc/pkg/core"
 	"github.com/vtpl1/vrtc/pkg/mp4"
 	"github.com/vtpl1/vrtc/pkg/mpegts"
+	"github.com/vtpl1/vrtc/utils"
 )
 
 func Init() {
-	log = app.GetLogger("hls")
+	log = utils.GetLogger("hls")
 
 	api.HandleFunc("api/stream.m3u8", handlerStream)
 	api.HandleFunc("api/hls/playlist.m3u8", handlerPlaylist)

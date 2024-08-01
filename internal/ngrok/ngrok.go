@@ -6,9 +6,9 @@ import (
 	"strings"
 
 	"github.com/rs/zerolog"
-	"github.com/vtpl1/vrtc/internal/app"
 	"github.com/vtpl1/vrtc/internal/webrtc"
 	"github.com/vtpl1/vrtc/pkg/ngrok"
+	"github.com/vtpl1/vrtc/utils"
 )
 
 func Init() {
@@ -18,13 +18,13 @@ func Init() {
 		} `yaml:"ngrok"`
 	}
 
-	app.LoadConfig(&cfg)
+	utils.LoadConfig(&cfg)
 
 	if cfg.Mod.Cmd == "" {
 		return
 	}
 
-	log = app.GetLogger("ngrok")
+	log = utils.GetLogger("ngrok")
 
 	ngr, err := ngrok.NewNgrok(cfg.Mod.Cmd)
 	if err != nil {

@@ -1,3 +1,4 @@
+// Package www exposes static file hosting
 package www
 
 import (
@@ -6,16 +7,13 @@ import (
 )
 
 //go:embed dist_orig
-var embed_ui embed.FS
+var embedUI embed.FS
 
-func GetStaticFS() fs.FS {
-	//embedRoot, err := fs.Sub(embed_ui, "ui")
-	embedRoot, err := fs.Sub(embed_ui, "dist_orig")
+// GetStaticFS returns static UI files
+func GetStaticFS() (fs.FS, error) {
+	embedRoot, err := fs.Sub(embedUI, "dist_orig")
 	if err != nil {
-		// slog.Error("Unable to get root for web ui", slog.String("error", err.Error()))
-		// os.Exit(1)
-		panic("Unable to get root for web ui")
+		return nil, err
 	}
-	return embedRoot
-	// return http.FileServer(http.FS(embedRoot))
+	return embedRoot, nil
 }
