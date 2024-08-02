@@ -25,7 +25,6 @@ func apiStreams(w http.ResponseWriter, r *http.Request) {
 		if err != nil {
 			log.Error().Err(err).Send()
 		}
-		// api.ResponseJSON(w, streams)
 		return
 	}
 
@@ -109,7 +108,17 @@ func apiStreams(w http.ResponseWriter, r *http.Request) {
 				} else if err = stream.Play(src); err != nil {
 					http.Error(w, err.Error(), http.StatusInternalServerError)
 				} else {
-					api.ResponseJSON(w, stream)
+					w.Header().Set("Content-Type", api.MimeJSON)
+					body, err := json.Marshal(stream)
+					if err != nil {
+						log.Error().Err(err).Send()
+						http.Error(w, "Unable to marshal", http.StatusInternalServerError)
+					}
+					_, err = w.Write(body)
+					if err != nil {
+						log.Error().Err(err).Send()
+					}
+
 				}
 			} else if stream = Get(src); stream != nil {
 				if err := Validate(dst); err != nil {

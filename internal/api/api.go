@@ -176,22 +176,6 @@ func HandleFunc(pattern string, handler http.HandlerFunc) {
 	http.HandleFunc(pattern, handler)
 }
 
-// // ResponseJSON important always add Content-Type
-// // so go won't need to call http.DetectContentType
-// func ResponseJSON(w http.ResponseWriter, v map[string]string) {
-// 	w.Header().Set("Content-Type", MimeJSON)
-// 	body, _ := json.Marshal(v)
-// 	// _ = json.NewEncoder(w).Encode(v)
-// 	w.Write(body)
-// }
-
-// func ResponsePrettyJSON(w http.ResponseWriter, v any) {
-// 	w.Header().Set("Content-Type", MimeJSON)
-// 	enc := json.NewEncoder(w)
-// 	enc.SetIndent("", "  ")
-// 	_ = enc.Encode(v)
-// }
-
 // Response is a generic response writer
 func Response(w http.ResponseWriter, body any, contentType string) {
 	w.Header().Set("Content-Type", contentType)
@@ -261,8 +245,6 @@ func apiHandler(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		log.Error().Err(err).Send()
 	}
-
-	// ResponseJSON(w, utils.Info)
 }
 
 func exitHandler(w http.ResponseWriter, r *http.Request) {
@@ -332,23 +314,6 @@ type Source struct {
 	URL      string `json:"url,omitempty"`
 	Location string `json:"location,omitempty"`
 }
-
-// // ResponseSources writes sources over http
-// func ResponseSources(w http.ResponseWriter, sources []*Source) {
-// 	if len(sources) == 0 {
-// 		http.Error(w, "no sources", http.StatusNotFound)
-// 		return
-// 	}
-
-// 	response := struct {
-// 		Sources []*Source `json:"sources"`
-// 	}{
-// 		Sources: sources,
-// 	}
-// 	body, _ := json.Marshal(response)
-// 	w.Write(body)
-// 	// ResponseJSON(w, response)
-// }
 
 // Error writes error over http
 func Error(w http.ResponseWriter, err error) {
