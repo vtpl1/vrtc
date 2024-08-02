@@ -1,8 +1,10 @@
+// Package api holds utility functions
 package api
 
 import (
 	"crypto/tls"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net"
 	"net/http"
@@ -17,19 +19,22 @@ import (
 	"github.com/vtpl1/vrtc/utils"
 )
 
-func Init() {
+var errListenPortNotDefined = errors.New("listen port not defined")
+
+// Init is the entrypoint for the api
+func Init() error {
 	var cfg struct {
 		Mod struct {
 			Listen     string `yaml:"listen"`
 			Username   string `yaml:"username"`
 			Password   string `yaml:"password"`
-			BasePath   string `yaml:"base_path"`
-			StaticDir  string `yaml:"static_dir"`
+			BasePath   string `yaml:"basePath"`
+			StaticDir  string `yaml:"staticDir"`
 			Origin     string `yaml:"origin"`
-			TLSListen  string `yaml:"tls_listen"`
-			TLSCert    string `yaml:"tls_cert"`
-			TLSKey     string `yaml:"tls_key"`
-			UnixListen string `yaml:"unix_listen"`
+			TLSListen  string `yaml:"tlsListen"`
+			TLSCert    string `yaml:"tlsCert"`
+			TLSKey     string `yaml:"tlsKey"`
+			UnixListen string `yaml:"unixListen"`
 		} `yaml:"api"`
 	}
 
@@ -40,13 +45,16 @@ func Init() {
 	utils.LoadConfig(&cfg)
 
 	if cfg.Mod.Listen == "" && cfg.Mod.UnixListen == "" && cfg.Mod.TLSListen == "" {
-		return
+		return errListenPortNotDefined
 	}
 
 	basePath = cfg.Mod.BasePath
 	log = utils.GetLogger("api")
 
-	initStatic(cfg.Mod.StaticDir)
+	err := initStatic(cfg.Mod.StaticDir)
+	if err != nil {
+		return err
+	}
 
 	HandleFunc("api", apiHandler)
 	HandleFunc("api/config", configHandler)
@@ -81,19 +89,24 @@ func Init() {
 	if cfg.Mod.TLSListen != "" && cfg.Mod.TLSCert != "" && cfg.Mod.TLSKey != "" {
 		go tlsListen("tcp", cfg.Mod.TLSListen, cfg.Mod.TLSCert, cfg.Mod.TLSKey)
 	}
+	return nil
 }
 
 func listen(network, address string) {
 	ln, err := net.Listen(network, address)
 	if err != nil {
 		log.Error().Err(err).Msg("[api] listen")
+		utils.InternalTerminationRequest <- 1
 		return
 	}
 
 	log.Info().Str("addr", address).Msg("[api] listen")
 
 	if network == "tcp" {
-		Port = ln.Addr().(*net.TCPAddr).Port
+		tcpPort, ok := ln.Addr().(*net.TCPAddr)
+		if ok {
+			Port = tcpPort.Port
+		}
 	}
 
 	server := http.Server{
@@ -101,7 +114,9 @@ func listen(network, address string) {
 		ReadHeaderTimeout: 5 * time.Second, // Example: Set to 5 seconds
 	}
 	if err = server.Serve(ln); err != nil {
-		log.Fatal().Err(err).Msg("[api] serve")
+		log.Error().Err(err).Msg("[api] serve")
+		utils.InternalTerminationRequest <- 1
+		return
 	}
 }
 
@@ -134,17 +149,20 @@ func tlsListen(network, address, certFile, keyFile string) {
 		ReadHeaderTimeout: 5 * time.Second,
 	}
 	if err = server.ServeTLS(ln, "", ""); err != nil {
-		log.Fatal().Err(err).Msg("[api] tls serve")
+		log.Error().Err(err).Msg("[api] tls serve")
+		utils.InternalTerminationRequest <- 1
 	}
 }
 
+// Port holds the http port number
 var Port int
 
 const (
-	MimeJSON = "application/json"
-	MimeText = "text/plain"
+	MimeJSON = "application/json" // MimeJSON global mime value
+	MimeText = "text/plain"       // MimeText global mime value
 )
 
+// Handler hold global http handlers
 var Handler http.Handler
 
 // HandleFunc handle pattern with relative path:
@@ -158,20 +176,23 @@ func HandleFunc(pattern string, handler http.HandlerFunc) {
 	http.HandleFunc(pattern, handler)
 }
 
-// ResponseJSON important always add Content-Type
-// so go won't need to call http.DetectContentType
-func ResponseJSON(w http.ResponseWriter, v any) {
-	w.Header().Set("Content-Type", MimeJSON)
-	_ = json.NewEncoder(w).Encode(v)
-}
+// // ResponseJSON important always add Content-Type
+// // so go won't need to call http.DetectContentType
+// func ResponseJSON(w http.ResponseWriter, v map[string]string) {
+// 	w.Header().Set("Content-Type", MimeJSON)
+// 	body, _ := json.Marshal(v)
+// 	// _ = json.NewEncoder(w).Encode(v)
+// 	w.Write(body)
+// }
 
-func ResponsePrettyJSON(w http.ResponseWriter, v any) {
-	w.Header().Set("Content-Type", MimeJSON)
-	enc := json.NewEncoder(w)
-	enc.SetIndent("", "  ")
-	_ = enc.Encode(v)
-}
+// func ResponsePrettyJSON(w http.ResponseWriter, v any) {
+// 	w.Header().Set("Content-Type", MimeJSON)
+// 	enc := json.NewEncoder(w)
+// 	enc.SetIndent("", "  ")
+// 	_ = enc.Encode(v)
+// }
 
+// Response is a generic response writer
 func Response(w http.ResponseWriter, body any, contentType string) {
 	w.Header().Set("Content-Type", contentType)
 
@@ -185,6 +206,7 @@ func Response(w http.ResponseWriter, body any, contentType string) {
 	}
 }
 
+// StreamNotFound global string
 const StreamNotFound = "stream not found"
 
 var (
@@ -229,12 +251,22 @@ func apiHandler(w http.ResponseWriter, r *http.Request) {
 	mu.Lock()
 	utils.Info["host"] = r.Host
 	mu.Unlock()
+	w.Header().Set("Content-Type", MimeJSON)
+	body, err := json.Marshal(utils.Info)
+	if err != nil {
+		log.Error().Err(err).Send()
+		http.Error(w, "Unable to marshal", http.StatusInternalServerError)
+	}
+	_, err = w.Write(body)
+	if err != nil {
+		log.Error().Err(err).Send()
+	}
 
-	ResponseJSON(w, utils.Info)
+	// ResponseJSON(w, utils.Info)
 }
 
 func exitHandler(w http.ResponseWriter, r *http.Request) {
-	if r.Method != "POST" {
+	if r.Method != http.MethodPost {
 		http.Error(w, "", http.StatusBadRequest)
 		return
 	}
@@ -258,7 +290,7 @@ func exitHandler(w http.ResponseWriter, r *http.Request) {
 }
 
 func restartHandler(w http.ResponseWriter, r *http.Request) {
-	if r.Method != "POST" {
+	if r.Method != http.MethodPost {
 		http.Error(w, "", http.StatusBadRequest)
 		return
 	}
@@ -271,7 +303,11 @@ func restartHandler(w http.ResponseWriter, r *http.Request) {
 
 	log.Debug().Msgf("[api] restart %s", path)
 
-	go syscall.Exec(path, os.Args, os.Environ())
+	go func() {
+		err := syscall.Exec(path, os.Args, os.Environ())
+		log.Error().Err(err).Msg("Restart failed")
+	}()
+	utils.InternalTerminationRequest <- 1
 }
 
 func logHandler(w http.ResponseWriter, r *http.Request) {
@@ -288,6 +324,7 @@ func logHandler(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
+// Source structure
 type Source struct {
 	ID       string `json:"id,omitempty"`
 	Name     string `json:"name,omitempty"`
@@ -296,20 +333,24 @@ type Source struct {
 	Location string `json:"location,omitempty"`
 }
 
-func ResponseSources(w http.ResponseWriter, sources []*Source) {
-	if len(sources) == 0 {
-		http.Error(w, "no sources", http.StatusNotFound)
-		return
-	}
+// // ResponseSources writes sources over http
+// func ResponseSources(w http.ResponseWriter, sources []*Source) {
+// 	if len(sources) == 0 {
+// 		http.Error(w, "no sources", http.StatusNotFound)
+// 		return
+// 	}
 
-	response := struct {
-		Sources []*Source `json:"sources"`
-	}{
-		Sources: sources,
-	}
-	ResponseJSON(w, response)
-}
+// 	response := struct {
+// 		Sources []*Source `json:"sources"`
+// 	}{
+// 		Sources: sources,
+// 	}
+// 	body, _ := json.Marshal(response)
+// 	w.Write(body)
+// 	// ResponseJSON(w, response)
+// }
 
+// Error writes error over http
 func Error(w http.ResponseWriter, err error) {
 	log.Error().Err(err).Caller(1).Send()
 

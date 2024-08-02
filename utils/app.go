@@ -11,10 +11,10 @@ import (
 )
 
 var (
-	Version    string                 // Version of the application
-	UserAgent  string                 // UserAgent of the application
-	ConfigPath string                 // ConfigPath is the configuration file path to be supplied from outside
-	Info       = make(map[string]any) // Info holds some global configuration
+	Version    string                    // Version of the application
+	UserAgent  string                    // UserAgent of the application
+	ConfigPath string                    // ConfigPath is the configuration file path to be supplied from outside
+	Info       = make(map[string]string) // Info holds some global configuration
 )
 
 const usage = `Usage of vrtc:

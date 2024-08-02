@@ -1,3 +1,4 @@
+// Package api configuration handler
 package api
 
 import (
@@ -85,11 +86,15 @@ func merge(dst, src map[string]any) map[string]any {
 		if vv, ok := dst[k]; ok {
 			switch vv := vv.(type) {
 			case map[string]any:
-				v := v.(map[string]any)
-				dst[k] = merge(vv, v)
+				v, ok := v.(map[string]any)
+				if ok {
+					dst[k] = merge(vv, v)
+				}
 			case []any:
-				v := v.([]any)
-				dst[k] = v
+				v, ok := v.([]any)
+				if ok {
+					dst[k] = v
+				}
 			default:
 				dst[k] = v
 			}

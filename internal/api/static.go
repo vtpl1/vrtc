@@ -1,3 +1,4 @@
+// Package api support static files as well
 package api
 
 import (

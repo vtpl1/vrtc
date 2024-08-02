@@ -1,6 +1,7 @@
 package streams
 
 import (
+	"encoding/json"
 	"net/http"
 
 	"github.com/vtpl1/vrtc/internal/api"
@@ -13,8 +14,18 @@ func apiStreams(w http.ResponseWriter, r *http.Request) {
 	src := query.Get("src")
 
 	// without source - return all streams list
-	if src == "" && r.Method != "POST" {
-		api.ResponseJSON(w, streams)
+	if src == "" && r.Method != http.MethodPost {
+		w.Header().Set("Content-Type", api.MimeJSON)
+		body, err := json.Marshal(streams)
+		if err != nil {
+			log.Error().Err(err).Send()
+			http.Error(w, "Unable to marshal", http.StatusInternalServerError)
+		}
+		_, err = w.Write(body)
+		if err != nil {
+			log.Error().Err(err).Send()
+		}
+		// api.ResponseJSON(w, streams)
 		return
 	}
 
@@ -34,12 +45,32 @@ func apiStreams(w http.ResponseWriter, r *http.Request) {
 				http.Error(w, err.Error(), http.StatusInternalServerError)
 				return
 			}
-
-			api.ResponsePrettyJSON(w, stream)
+			w.Header().Set("Content-Type", api.MimeJSON)
+			body, err := json.Marshal(stream)
+			if err != nil {
+				log.Error().Err(err).Send()
+				http.Error(w, "Unable to marshal", http.StatusInternalServerError)
+			}
+			_, err = w.Write(body)
+			if err != nil {
+				log.Error().Err(err).Send()
+			}
+			// api.ResponsePrettyJSON(w, stream)
 
 			stream.RemoveConsumer(cons)
 		} else {
-			api.ResponsePrettyJSON(w, streams[src])
+			w.Header().Set("Content-Type", api.MimeJSON)
+			body, err := json.Marshal(streams[src])
+			if err != nil {
+				log.Error().Err(err).Send()
+				http.Error(w, "Unable to marshal", http.StatusInternalServerError)
+			}
+			_, err = w.Write(body)
+			if err != nil {
+				log.Error().Err(err).Send()
+			}
+
+			// api.ResponsePrettyJSON(w, streams[src])
 		}
 
 	case "PUT":

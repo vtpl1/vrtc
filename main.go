@@ -10,14 +10,6 @@ import (
 
 	"github.com/vtpl1/vrtc/internal/api"
 	"github.com/vtpl1/vrtc/internal/api/ws"
-	"github.com/vtpl1/vrtc/internal/debug"
-	"github.com/vtpl1/vrtc/internal/hls"
-	"github.com/vtpl1/vrtc/internal/mp4"
-	"github.com/vtpl1/vrtc/internal/ngrok"
-	"github.com/vtpl1/vrtc/internal/rtsp"
-	"github.com/vtpl1/vrtc/internal/streams"
-	"github.com/vtpl1/vrtc/internal/videonetics"
-	"github.com/vtpl1/vrtc/internal/webrtc"
 	"github.com/vtpl1/vrtc/utils"
 )
 
@@ -40,30 +32,30 @@ func main() {
 	api.Init() // init API before all others
 	ws.Init()  // init WS API endpoint
 
-	streams.Init() // streams module
+	// streams.Init() // streams module
 
-	// 2. Main sources and servers
+	// // 2. Main sources and servers
 
-	rtsp.Init()   // rtsp source, RTSP server
-	webrtc.Init() // webrtc source, WebRTC server
+	// rtsp.Init()   // rtsp source, RTSP server
+	// webrtc.Init() // webrtc source, WebRTC server
 
-	// 3. Main API
+	// // 3. Main API
 
-	mp4.Init() // MP4 API
-	hls.Init() // HLS API
-	// mjpeg.Init() // MJPEG API
+	// mp4.Init() // MP4 API
+	// hls.Init() // HLS API
+	// // mjpeg.Init() // MJPEG API
 
-	// 4. Other sources and servers
+	// // 4. Other sources and servers
 
-	videonetics.Init(&ctx)
+	// videonetics.Init(&ctx)
 
-	// 5. Other sources
+	// // 5. Other sources
 
-	// 6. Helper modules
+	// // 6. Helper modules
 
-	ngrok.Init() // ngrok module
+	// ngrok.Init() // ngrok module
 
-	debug.Init() // debug API
+	// debug.Init() // debug API
 
 	// 7. Go
 	log.Info().Msg("Waiting for ctx done")
