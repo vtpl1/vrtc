@@ -1,5 +1,10 @@
 {
   "editor.formatOnSave": true,
   "go.lintTool": "golangci-lint",
-  "go.lintFlags": ["--fast"]
+  "go.lintFlags": [
+    "--fast"
+  ],
+  "gopls": {
+    "formatting.gofumpt": true,
+  },
 }

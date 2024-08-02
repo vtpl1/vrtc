@@ -13,6 +13,7 @@ func Unmarshal(in []byte, out interface{}) (err error) {
 	return yaml.Unmarshal(in, out)
 }
 
+// Encode converts any object to array of bytes
 func Encode(v any, indent int) ([]byte, error) {
 	b := bytes.NewBuffer(nil)
 	e := yaml.NewEncoder(b)
@@ -27,7 +28,7 @@ func Encode(v any, indent int) ([]byte, error) {
 
 // Patch - change key/value pair in YAML file without break formatting
 func Patch(src []byte, key string, value any, path ...string) ([]byte, error) {
-	nodeParent, err := FindParent(src, path...)
+	nodeParent, err := findParent(src, path...)
 	if err != nil {
 		return nil, err
 	}
@@ -35,9 +36,13 @@ func Patch(src []byte, key string, value any, path ...string) ([]byte, error) {
 	var dst []byte
 
 	if nodeParent != nil {
-		dst, err = AddOrReplace(src, key, value, nodeParent)
+		if dst, err = addOrReplace(src, key, value, nodeParent); err != nil {
+			return nil, err
+		}
 	} else {
-		dst, err = AddToEnd(src, key, value, path...)
+		if dst, err = addToEnd(src, key, value, path...); err != nil {
+			return nil, err
+		}
 	}
 
 	if err = yaml.Unmarshal(dst, map[string]any{}); err != nil {
@@ -48,9 +53,9 @@ func Patch(src []byte, key string, value any, path ...string) ([]byte, error) {
 }
 
 // FindParent - return YAML Node from path of keys (tree)
-func FindParent(src []byte, path ...string) (*yaml.Node, error) {
+func findParent(src []byte, path ...string) (*yaml.Node, error) {
 	if len(src) == 0 {
-		return nil, nil
+		return nil, nil //nolint:nilnil
 	}
 
 	var root yaml.Node
@@ -59,7 +64,7 @@ func FindParent(src []byte, path ...string) (*yaml.Node, error) {
 	}
 
 	if root.Content == nil {
-		return nil, nil
+		return nil, nil //nolint:nilnil
 	}
 
 	parent := root.Content[0] // yaml.DocumentNode
@@ -67,13 +72,13 @@ func FindParent(src []byte, path ...string) (*yaml.Node, error) {
 		if parent == nil {
 			break
 		}
-		_, parent = FindChild(parent, name)
+		_, parent = findChild(parent, name)
 	}
 	return parent, nil
 }
 
 // FindChild - search and return YAML key/value pair for current Node
-func FindChild(node *yaml.Node, name string) (key, value *yaml.Node) {
+func findChild(node *yaml.Node, name string) (key, value *yaml.Node) {
 	for i, child := range node.Content {
 		if child.Value != name {
 			continue
@@ -84,32 +89,32 @@ func FindChild(node *yaml.Node, name string) (key, value *yaml.Node) {
 	return nil, nil
 }
 
-func FirstChild(node *yaml.Node) *yaml.Node {
+func firstChild(node *yaml.Node) *yaml.Node {
 	if node.Content == nil {
 		return node
 	}
 	return node.Content[0]
 }
 
-func LastChild(node *yaml.Node) *yaml.Node {
+func lastChild(node *yaml.Node) *yaml.Node {
 	if node.Content == nil {
 		return node
 	}
-	return LastChild(node.Content[len(node.Content)-1])
+	return lastChild(node.Content[len(node.Content)-1])
 }
 
-func AddOrReplace(src []byte, key string, value any, nodeParent *yaml.Node) ([]byte, error) {
+func addOrReplace(src []byte, key string, value any, nodeParent *yaml.Node) ([]byte, error) {
 	v := map[string]any{key: value}
 	put, err := Encode(v, 2)
 	if err != nil {
 		return nil, err
 	}
 
-	if nodeKey, nodeValue := FindChild(nodeParent, key); nodeKey != nil {
-		put = AddIndent(put, nodeKey.Column-1)
+	if nodeKey, nodeValue := findChild(nodeParent, key); nodeKey != nil {
+		put = addIndent(put, nodeKey.Column-1)
 
-		i0 := LineOffset(src, nodeKey.Line)
-		i1 := LineOffset(src, LastChild(nodeValue).Line+1)
+		i0 := lineOffset(src, nodeKey.Line)
+		i1 := lineOffset(src, lastChild(nodeValue).Line+1)
 
 		if i1 < 0 { // no new line on the end of file
 			if value != nil {
@@ -126,9 +131,9 @@ func AddOrReplace(src []byte, key string, value any, nodeParent *yaml.Node) ([]b
 		return append(dst, src[i1:]...), nil
 	}
 
-	put = AddIndent(put, FirstChild(nodeParent).Column-1)
+	put = addIndent(put, firstChild(nodeParent).Column-1)
 
-	i := LineOffset(src, LastChild(nodeParent).Line+1)
+	i := lineOffset(src, lastChild(nodeParent).Line+1)
 
 	if i < 0 { // no new line on the end of file
 		src = append(src, '\n')
@@ -146,9 +151,11 @@ func AddOrReplace(src []byte, key string, value any, nodeParent *yaml.Node) ([]b
 	return append(dst, src[i:]...), nil
 }
 
-func AddToEnd(src []byte, key string, value any, path ...string) ([]byte, error) {
+var errPathNotExist = errors.New("config: path not exist")
+
+func addToEnd(src []byte, key string, value any, path ...string) ([]byte, error) {
 	if len(path) > 1 || value == nil {
-		return nil, errors.New("config: path not exist")
+		return nil, errPathNotExist
 	}
 
 	v := map[string]map[string]any{
@@ -167,7 +174,7 @@ func AddToEnd(src []byte, key string, value any, path ...string) ([]byte, error)
 	return append(dst, put...), nil
 }
 
-func AddPrefix(src, pre []byte) (dst []byte) {
+func addPrefix(src, pre []byte) (dst []byte) {
 	for len(src) > 0 {
 		dst = append(dst, pre...)
 		i := bytes.IndexByte(src, '\n') + 1
@@ -182,15 +189,15 @@ func AddPrefix(src, pre []byte) (dst []byte) {
 	return
 }
 
-func AddIndent(src []byte, indent int) (dst []byte) {
+func addIndent(src []byte, indent int) (dst []byte) {
 	pre := make([]byte, indent)
 	for i := 0; i < indent; i++ {
 		pre[i] = ' '
 	}
-	return AddPrefix(src, pre)
+	return addPrefix(src, pre)
 }
 
-func LineOffset(b []byte, line int) (offset int) {
+func lineOffset(b []byte, line int) (offset int) {
 	for l := 1; ; l++ {
 		if l == line {
 			return offset

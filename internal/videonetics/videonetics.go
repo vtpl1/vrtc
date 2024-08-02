@@ -28,8 +28,10 @@ func Init(ctx_ *context.Context) {
 	streams.HandleFunc("videonetics", videoneticsHandler)
 }
 
-var log zerolog.Logger
-var ctx *context.Context
+var (
+	log zerolog.Logger
+	ctx *context.Context
+)
 
 func videoneticsHandler(rawURL string) (core.Producer, error) {
 	log.Info().Msgf("[videonetics] videoneticsHandler %s", rawURL)

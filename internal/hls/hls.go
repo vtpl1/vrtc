@@ -36,8 +36,10 @@ var log zerolog.Logger
 const keepalive = 5 * time.Second
 
 // once I saw 404 on MP4 segment, so better to use mutex
-var sessions = map[string]*Session{}
-var sessionsMu sync.RWMutex
+var (
+	sessions   = map[string]*Session{}
+	sessionsMu sync.RWMutex
+)
 
 func handlerStream(w http.ResponseWriter, r *http.Request) {
 	// CORS important for Chromecast

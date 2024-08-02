@@ -60,7 +60,6 @@ func Init() {
 			log.Error().Err(err).Msg("[ngrok] run")
 		}
 	}()
-
 }
 
 var log zerolog.Logger

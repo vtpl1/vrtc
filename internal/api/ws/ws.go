@@ -10,6 +10,7 @@ import (
 
 	"github.com/gorilla/websocket"
 	"github.com/rs/zerolog"
+
 	"github.com/vtpl1/vrtc/internal/api"
 	"github.com/vtpl1/vrtc/utils"
 )

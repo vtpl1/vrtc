@@ -46,13 +46,13 @@ func Init() {
 	basePath = cfg.Mod.BasePath
 	log = utils.GetLogger("api")
 
-	// initStatic(cfg.Mod.StaticDir)
+	initStatic(cfg.Mod.StaticDir)
 
 	HandleFunc("api", apiHandler)
-	// HandleFunc("api/config", configHandler)
-	// HandleFunc("api/exit", exitHandler)
-	// HandleFunc("api/restart", restartHandler)
-	// HandleFunc("api/log", logHandler)
+	HandleFunc("api/config", configHandler)
+	HandleFunc("api/exit", exitHandler)
+	HandleFunc("api/restart", restartHandler)
+	HandleFunc("api/log", logHandler)
 
 	Handler = http.DefaultServeMux // 4th
 
@@ -187,8 +187,10 @@ func Response(w http.ResponseWriter, body any, contentType string) {
 
 const StreamNotFound = "stream not found"
 
-var basePath string
-var log zerolog.Logger
+var (
+	basePath string
+	log      zerolog.Logger
+)
 
 func middlewareLog(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -300,7 +302,7 @@ func ResponseSources(w http.ResponseWriter, sources []*Source) {
 		return
 	}
 
-	var response = struct {
+	response := struct {
 		Sources []*Source `json:"sources"`
 	}{
 		Sources: sources,

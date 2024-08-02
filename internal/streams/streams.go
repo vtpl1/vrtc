@@ -143,6 +143,8 @@ func Delete(id string) {
 	delete(streams, id)
 }
 
-var log zerolog.Logger
-var streams = map[string]*Stream{}
-var streamsMu sync.Mutex
+var (
+	log       zerolog.Logger
+	streams   = map[string]*Stream{}
+	streamsMu sync.Mutex
+)

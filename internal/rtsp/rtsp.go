@@ -87,9 +87,11 @@ var Port string
 
 // internal
 
-var log zerolog.Logger
-var handlers []Handler
-var defaultMedias []*core.Media
+var (
+	log           zerolog.Logger
+	handlers      []Handler
+	defaultMedias []*core.Media
+)
 
 func rtspHandler(rawURL string) (core.Producer, error) {
 	rawURL, rawQuery, _ := strings.Cut(rawURL, "#")

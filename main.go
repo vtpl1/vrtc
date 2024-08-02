@@ -1,7 +1,9 @@
+// Package main is the entrypoint
 package main
 
 import (
 	"context"
+	"fmt"
 	"os"
 	"os/signal"
 	"syscall"
@@ -28,7 +30,11 @@ func main() {
 
 	// 1. Core modules: app, api/ws, streams
 
-	utils.Init() // init config and logs
+	err := utils.Init() // init config and logs
+	if err != nil {
+		fmt.Println("Error: ", err)
+		return
+	}
 	log := utils.GetLogger("api")
 
 	api.Init() // init API before all others

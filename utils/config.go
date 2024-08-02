@@ -7,6 +7,7 @@ import (
 	"strings"
 )
 
+// LoadConfig loads configuration
 func LoadConfig(v any) {
 	for _, data := range configs {
 		if err := Unmarshal(data, v); err != nil {
@@ -15,9 +16,12 @@ func LoadConfig(v any) {
 	}
 }
 
+var errConfigFileDisabled = errors.New("config file disabled")
+
+// PatchConfig loads configuration
 func PatchConfig(key string, value any, path ...string) error {
 	if ConfigPath == "" {
-		return errors.New("config file disabled")
+		return errConfigFileDisabled
 	}
 
 	// empty config is OK
@@ -28,7 +32,7 @@ func PatchConfig(key string, value any, path ...string) error {
 		return err
 	}
 
-	return os.WriteFile(ConfigPath, b, 0644)
+	return os.WriteFile(ConfigPath, b, 0o644) //nolint:gosec
 }
 
 type flagConfig []string
@@ -64,7 +68,7 @@ func initConfig(confs flagConfig) {
 				ConfigPath = conf
 			}
 
-			if data, _ = os.ReadFile(conf); data == nil {
+			if data, _ = os.ReadFile(conf); data == nil { //nolint:gosec
 				continue
 			}
 
@@ -96,7 +100,7 @@ func parseConfString(s string) []byte {
 
 	// `log.level=trace` => `{log: {level: trace}}`
 	var pre string
-	var suf = s[i+1:]
+	suf := s[i+1:]
 	for _, item := range items {
 		pre += "{" + item + ": "
 		suf += "}"

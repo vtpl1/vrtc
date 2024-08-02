@@ -8,8 +8,10 @@ import (
 	"github.com/rs/zerolog"
 )
 
+// MemoryLog to view logs from API
 var MemoryLog = newBuffer(16)
 
+// GetLogger returns specific module logger or the global Logger
 func GetLogger(module string) zerolog.Logger {
 	if s, ok := modules[module]; ok {
 		lvl, err := zerolog.ParseLevel(s)
@@ -57,9 +59,13 @@ func initLogger() {
 			case "color":
 				console.NoColor = false // useless, but anyway
 			default:
+				console.NoColor = true
 				// autodetection if output support color
 				// go-isatty - dependency for go-colorable - dependency for ConsoleWriter
-				console.NoColor = !isatty.IsTerminal(writer.(*os.File).Fd())
+				f, ok := writer.(*os.File)
+				if ok {
+					console.NoColor = !isatty.IsTerminal(f.Fd())
+				}
 			}
 
 			if timeFormat != "" {
@@ -89,6 +95,7 @@ func initLogger() {
 	}
 }
 
+// Logger is global logger
 var Logger zerolog.Logger
 
 // modules log levels

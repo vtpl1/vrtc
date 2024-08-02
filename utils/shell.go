@@ -8,6 +8,7 @@ import (
 	"syscall"
 )
 
+// QuoteSplit returns array of string
 func QuoteSplit(s string) []string {
 	var a []string
 
@@ -63,8 +64,9 @@ func ReplaceEnvVars(text string) string {
 	})
 }
 
+// RunUntilSignal waits till SIGINT or SIGTERM is received
 func RunUntilSignal() {
 	sigs := make(chan os.Signal, 1)
 	signal.Notify(sigs, syscall.SIGINT, syscall.SIGTERM)
-	println("exit with signal:", (<-sigs).String())
+	<-sigs
 }
