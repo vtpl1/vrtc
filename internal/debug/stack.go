@@ -33,7 +33,7 @@ var stackSkip = [][]byte{
 	[]byte("created by github.com/pion/ice/v2.NewUDPMuxDefault"),
 }
 
-func stackHandler(w http.ResponseWriter, r *http.Request) {
+func stackHandler(w http.ResponseWriter, _ *http.Request) {
 	sep := []byte("\n\n")
 	buf := make([]byte, 65535)
 	i := 0
