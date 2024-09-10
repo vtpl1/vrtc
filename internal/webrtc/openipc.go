@@ -8,8 +8,8 @@ import (
 
 	"github.com/gorilla/websocket"
 	pion "github.com/pion/webrtc/v3"
-	"github.com/vtpl1/vrtc/pkg/core"
-	"github.com/vtpl1/vrtc/pkg/webrtc"
+	"github.com/vtpl1/vrtc3/pkg/core"
+	"github.com/vtpl1/vrtc3/pkg/webrtc"
 )
 
 func openIPCClient(rawURL string, query url.Values) (core.Producer, error) {

@@ -4,7 +4,7 @@ import (
 	"testing"
 
 	"github.com/stretchr/testify/require"
-	v2 "github.com/vtpl1/vrtc/pkg/pcm"
+	v2 "github.com/vtpl1/vrtc3/pkg/pcm"
 )
 
 func TestPCMUtoPCM(t *testing.T) {

@@ -14,7 +14,7 @@ import (
 	"github.com/pion/sdp/v3"
 	"github.com/pion/stun"
 	"github.com/pion/webrtc/v3"
-	"github.com/vtpl1/vrtc/pkg/core"
+	"github.com/vtpl1/vrtc3/pkg/core"
 )
 
 func UnmarshalMedias(descriptions []*sdp.MediaDescription) (medias []*core.Media) {

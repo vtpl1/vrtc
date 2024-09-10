@@ -3,11 +3,11 @@ package mp4
 import (
 	"errors"
 
-	"github.com/vtpl1/vrtc/internal/api"
-	"github.com/vtpl1/vrtc/internal/api/ws"
-	"github.com/vtpl1/vrtc/internal/streams"
-	"github.com/vtpl1/vrtc/pkg/core"
-	"github.com/vtpl1/vrtc/pkg/mp4"
+	"github.com/vtpl1/vrtc3/internal/api"
+	"github.com/vtpl1/vrtc3/internal/api/ws"
+	"github.com/vtpl1/vrtc3/internal/streams"
+	"github.com/vtpl1/vrtc3/pkg/core"
+	"github.com/vtpl1/vrtc3/pkg/mp4"
 )
 
 func handlerWSMSE(tr *ws.Transport, msg *ws.Message) error {

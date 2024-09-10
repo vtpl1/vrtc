@@ -1,8 +1,8 @@
 package mp4
 
 import (
-	"github.com/vtpl1/vrtc/pkg/core"
-	"github.com/vtpl1/vrtc/pkg/h264"
+	"github.com/vtpl1/vrtc3/pkg/core"
+	"github.com/vtpl1/vrtc3/pkg/h264"
 )
 
 const (

@@ -1,8 +1,8 @@
 package iso
 
 import (
-	"github.com/vtpl1/vrtc/pkg/core"
-	"github.com/vtpl1/vrtc/pkg/pcm"
+	"github.com/vtpl1/vrtc3/pkg/core"
+	"github.com/vtpl1/vrtc3/pkg/pcm"
 )
 
 func (m *Movie) WriteVideo(codec string, width, height uint16, conf []byte) {

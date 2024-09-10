@@ -12,9 +12,8 @@ import (
 	"time"
 
 	"github.com/pion/rtcp"
-	"github.com/pion/rtp"
-	"github.com/vtpl1/vrtc/pkg/core"
-	"github.com/vtpl1/vrtc/pkg/tcp"
+	"github.com/vtpl1/vrtc3/pkg/core"
+	"github.com/vtpl1/vrtc3/pkg/tcp"
 )
 
 type Conn struct {
@@ -106,7 +105,7 @@ func (c *Conn) Handle() (err error) {
 
 			if len(c.Receivers) == 0 {
 				// if we only send audio to camera
-				// https://github.com/AlexxIT/go2rtc/issues/659
+				// https://github.com/vtpl1/vrtc3/issues/659
 				timeout += keepaliveDT
 			}
 		} else {
@@ -232,7 +231,7 @@ func (c *Conn) Handle() (err error) {
 		c.Recv += int(size)
 
 		if channelID&1 == 0 {
-			packet := &rtp.Packet{}
+			packet := &core.Packet{}
 			if err = packet.Unmarshal(buf); err != nil {
 				return
 			}
@@ -282,7 +281,7 @@ func (c *Conn) WriteRequest(req *tcp.Request) error {
 
 	c.sequence++
 	// important to send case sensitive CSeq
-	// https://github.com/AlexxIT/go2rtc/issues/7
+	// https://github.com/vtpl1/vrtc3/issues/7
 	req.Header["CSeq"] = []string{strconv.Itoa(c.sequence)}
 
 	c.auth.Write(req)

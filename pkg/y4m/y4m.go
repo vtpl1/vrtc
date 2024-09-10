@@ -4,7 +4,7 @@ import (
 	"bytes"
 	"image"
 
-	"github.com/vtpl1/vrtc/pkg/core"
+	"github.com/vtpl1/vrtc3/pkg/core"
 )
 
 const FourCC = "YUV4"

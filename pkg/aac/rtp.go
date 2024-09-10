@@ -4,7 +4,7 @@ import (
 	"encoding/binary"
 
 	"github.com/pion/rtp"
-	"github.com/vtpl1/vrtc/pkg/core"
+	"github.com/vtpl1/vrtc3/pkg/core"
 )
 
 const RTPPacketVersionAAC = 0
@@ -13,7 +13,7 @@ const ADTSHeaderSize = 7
 func RTPDepay(handler core.HandlerFunc) core.HandlerFunc {
 	var timestamp uint32
 
-	return func(packet *rtp.Packet) {
+	return func(packet *core.Packet) {
 		// support ONLY 2 bytes header size!
 		// streamtype=5;profile-level-id=1;mode=AAC-hbr;sizelength=13;indexlength=3;indexdeltalength=3;config=1408
 		// https://datatracker.ietf.org/doc/html/rfc3640
@@ -22,6 +22,15 @@ func RTPDepay(handler core.HandlerFunc) core.HandlerFunc {
 		//log.Printf("[RTP/AAC] units: %d, size: %4d, ts: %10d, %t", headersSize/2, len(packet.Payload), packet.Timestamp, packet.Marker)
 
 		if len(packet.Payload) < int(2+headersSize) {
+			// In very rare cases noname cameras may send data not according to the standard
+			// https://github.com/vtpl1/vrtc3/issues/1328
+			if IsADTS(packet.Payload) {
+				clone := *packet
+				clone.Version = RTPPacketVersionAAC
+				clone.Timestamp = timestamp
+				clone.Payload = clone.Payload[ADTSHeaderSize:]
+				handler(&clone)
+			}
 			return
 		}
 
@@ -58,7 +67,7 @@ func RTPDepay(handler core.HandlerFunc) core.HandlerFunc {
 func RTPPay(handler core.HandlerFunc) core.HandlerFunc {
 	sequencer := rtp.NewRandomSequencer()
 
-	return func(packet *rtp.Packet) {
+	return func(packet *core.Packet) {
 		if packet.Version != RTPPacketVersionAAC {
 			handler(packet)
 			return
@@ -72,7 +81,7 @@ func RTPPay(handler core.HandlerFunc) core.HandlerFunc {
 		binary.BigEndian.PutUint16(payload[2:], auSize<<3)
 		copy(payload[4:], packet.Payload)
 
-		clone := rtp.Packet{
+		clone := core.Packet{
 			Header: rtp.Header{
 				Version:        2,
 				Marker:         true,
@@ -106,7 +115,7 @@ func RTPTimeSize(b []byte) uint32 {
 func RTPToADTS(codec *core.Codec, handler core.HandlerFunc) core.HandlerFunc {
 	adts := CodecToADTS(codec)
 
-	return func(packet *rtp.Packet) {
+	return func(packet *core.Packet) {
 		src := packet.Payload
 		dst := make([]byte, 0, len(src))
 

@@ -5,7 +5,7 @@ import (
 	"testing"
 
 	"github.com/stretchr/testify/require"
-	"github.com/vtpl1/vrtc/pkg/core"
+	"github.com/vtpl1/vrtc3/pkg/core"
 )
 
 func TestConfigToCodec(t *testing.T) {

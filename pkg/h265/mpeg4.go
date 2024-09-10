@@ -6,7 +6,7 @@ import (
 	"encoding/base64"
 	"encoding/binary"
 
-	"github.com/vtpl1/vrtc/pkg/core"
+	"github.com/vtpl1/vrtc3/pkg/core"
 )
 
 func DecodeConfig(conf []byte) (profile, vps, sps, pps []byte) {

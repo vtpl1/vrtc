@@ -5,8 +5,8 @@ import (
 	"strconv"
 	"sync"
 
-	"github.com/vtpl1/vrtc/pkg/core"
-	pb "github.com/vtpl1/vrtc/pkg/videonetics/service"
+	"github.com/vtpl1/vrtc3/pkg/core"
+	pb "github.com/vtpl1/vrtc3/pkg/videonetics/service"
 	"google.golang.org/grpc"
 )
 
@@ -19,18 +19,25 @@ type Conn struct {
 	conn    *grpc.ClientConn
 	host    string
 	channel Channel
+	stream  pb.StreamService_ReadFrameClient
 
 	state   State
 	stateMu sync.Mutex
-	stream  pb.StreamService_ReadFramePVAClient
+	handler core.HandlerFunc
 }
+
+type State byte
+
+const (
+	StateNone State = iota
+	StateConn
+	StatePlay
+)
 
 const (
 	MethodSetup = "SETUP"
 	MethodPlay  = "PLAY"
 )
-
-type State byte
 
 func (s State) String() string {
 	switch s {
@@ -42,14 +49,4 @@ func (s State) String() string {
 		return MethodPlay
 	}
 	return strconv.Itoa(int(s))
-}
-
-const (
-	StateNone State = iota
-	StateConn
-	StatePlay
-)
-
-func (c *Conn) Handle() (err error) {
-	return c.ReadFramePVA()
 }

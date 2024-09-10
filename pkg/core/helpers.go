@@ -5,7 +5,6 @@ import (
 	"runtime"
 	"strconv"
 	"strings"
-	"sync/atomic"
 	"time"
 )
 
@@ -15,12 +14,6 @@ const (
 	ConnDeadline    = time.Second * 5
 	ProbeTimeout    = time.Second * 3
 )
-
-var id atomic.Uint32
-
-func NewID() uint32 {
-	return id.Add(1)
-}
 
 // Now90000 - timestamp for Video (clock rate = 90000 samples per second)
 func Now90000() uint32 {

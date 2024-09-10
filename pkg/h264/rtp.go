@@ -5,8 +5,8 @@ import (
 
 	"github.com/pion/rtp"
 	"github.com/pion/rtp/codecs"
-	"github.com/vtpl1/vrtc/pkg/core"
-	"github.com/vtpl1/vrtc/pkg/h264/annexb"
+	"github.com/vtpl1/vrtc3/pkg/core"
+	"github.com/vtpl1/vrtc3/pkg/h264/annexb"
 )
 
 const RTPPacketVersionAVC = 0
@@ -21,7 +21,7 @@ func RTPDepay(codec *core.Codec, handler core.HandlerFunc) core.HandlerFunc {
 
 	buf := make([]byte, 0, 512*1024) // 512K
 
-	return func(packet *rtp.Packet) {
+	return func(packet *core.Packet) {
 		//log.Printf("[RTP] codec: %s, nalu: %2d, size: %6d, ts: %10d, pt: %2d, ssrc: %d, seq: %d, %v", track.Codec.Name, packet.Payload[0]&0x1F, len(packet.Payload), packet.Timestamp, packet.PayloadType, packet.SSRC, packet.SequenceNumber, packet.Marker)
 
 		payload, err := depack.Unmarshal(packet.Payload)
@@ -30,7 +30,7 @@ func RTPDepay(codec *core.Codec, handler core.HandlerFunc) core.HandlerFunc {
 		}
 
 		// Memory overflow protection. Can happen if we miss a lot of packets with the marker.
-		// https://github.com/AlexxIT/go2rtc/issues/675
+		// https://github.com/vtpl1/vrtc3/issues/675
 		if len(buf) > 5*1024*1024 {
 			buf = buf[: 0 : 512*1024]
 		}
@@ -43,7 +43,7 @@ func RTPDepay(codec *core.Codec, handler core.HandlerFunc) core.HandlerFunc {
 				buf = append(buf, payload...)
 				return
 			case NALUTypeSEI:
-				// RtspServer https://github.com/AlexxIT/go2rtc/issues/244
+				// RtspServer https://github.com/vtpl1/vrtc3/issues/244
 				// sends, marked SPS, marked PPS, marked SEI, marked IFrame
 				return
 			}
@@ -87,8 +87,8 @@ func RTPDepay(codec *core.Codec, handler core.HandlerFunc) core.HandlerFunc {
 		// should not be that huge SPS
 		if NALUType(payload) == NALUTypeSPS && binary.BigEndian.Uint32(payload) >= PSMaxSize {
 			// some Chinese buggy cameras has single packet with SPS+PPS+IFrame separated by 00 00 00 01
-			// https://github.com/AlexxIT/WebRTC/issues/391
-			// https://github.com/AlexxIT/WebRTC/issues/392
+			// https://github.com/vtpl1/WebRTC/issues/391
+			// https://github.com/vtpl1/WebRTC/issues/392
 			payload = annexb.FixAnnexBInAVCC(payload)
 		}
 
@@ -110,7 +110,7 @@ func RTPPay(mtu uint16, handler core.HandlerFunc) core.HandlerFunc {
 	sequencer := rtp.NewRandomSequencer()
 	mtu -= 12 // rtp.Header size
 
-	return func(packet *rtp.Packet) {
+	return func(packet *core.Packet) {
 		if packet.Version != RTPPacketVersionAVC {
 			handler(packet)
 			return
@@ -119,10 +119,12 @@ func RTPPay(mtu uint16, handler core.HandlerFunc) core.HandlerFunc {
 		payloads := payloader.Payload(mtu, packet.Payload)
 		last := len(payloads) - 1
 		for i, payload := range payloads {
-			clone := rtp.Packet{
+			clone := core.Packet{
 				Header: rtp.Header{
 					Version:        2,
 					Marker:         i == last,
+					PayloadType:    96,
+					SSRC:           packet.SSRC,
 					SequenceNumber: sequencer.NextSequenceNumber(),
 					Timestamp:      packet.Timestamp,
 				},

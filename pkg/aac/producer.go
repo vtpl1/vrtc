@@ -6,7 +6,7 @@ import (
 	"io"
 
 	"github.com/pion/rtp"
-	"github.com/vtpl1/vrtc/pkg/core"
+	"github.com/vtpl1/vrtc3/pkg/core"
 )
 
 type Producer struct {
@@ -62,7 +62,7 @@ func (c *Producer) Start() error {
 		payload[1] = 16 // header size in bits
 		binary.BigEndian.PutUint16(payload[2:], auSize<<3)
 
-		pkt := &rtp.Packet{
+		pkt := &core.Packet{
 			Header:  rtp.Header{Timestamp: core.Now90000()},
 			Payload: payload,
 		}

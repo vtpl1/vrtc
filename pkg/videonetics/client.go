@@ -3,9 +3,7 @@ package videonetics
 import (
 	"context"
 
-	"github.com/rs/zerolog"
-	"github.com/vtpl1/vrtc/internal/app"
-	"github.com/vtpl1/vrtc/pkg/core"
+	"github.com/vtpl1/vrtc3/pkg/core"
 )
 
 type Channel struct {
@@ -18,11 +16,8 @@ type Channel struct {
 	SessionID  string `json:"session_id"`
 }
 
-var log zerolog.Logger
-
 func NewClient(uri string, ctx *context.Context) *Conn {
 
-	log = app.GetLogger("videonetics")
 	host, channel, err := ParseVideoneticsUri(uri)
 	if err != nil {
 		return nil

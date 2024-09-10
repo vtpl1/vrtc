@@ -6,8 +6,8 @@ import (
 	"path/filepath"
 	"strings"
 
-	"github.com/vtpl1/vrtc/pkg/shell"
-	"github.com/vtpl1/vrtc/pkg/yaml"
+	"github.com/vtpl1/vrtc3/pkg/shell"
+	"github.com/vtpl1/vrtc3/pkg/yaml"
 )
 
 func LoadConfig(v any) {
@@ -49,7 +49,7 @@ var configs [][]byte
 
 func initConfig(confs flagConfig) {
 	if confs == nil {
-		confs = []string{"vrtc.yaml"}
+		confs = []string{"vrtc3.yaml"}
 	}
 
 	for _, conf := range confs {

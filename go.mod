@@ -1,22 +1,27 @@
-module github.com/vtpl1/vrtc
+module github.com/vtpl1/vrtc3
 
-go 1.22.0
+go 1.23
 
 require (
-	github.com/gorilla/websocket v1.5.3
+	github.com/expr-lang/expr v1.16.9
+	github.com/gorilla/websocket v1.5.1
 	github.com/mattn/go-isatty v0.0.20
-	github.com/pion/ice/v2 v2.3.29
+	github.com/miekg/dns v1.1.59
+	github.com/pion/ice/v2 v2.3.24
 	github.com/pion/interceptor v0.1.29
 	github.com/pion/rtcp v1.2.14
-	github.com/pion/rtp v1.8.7
+	github.com/pion/rtp v1.8.6
 	github.com/pion/sdp/v3 v3.0.9
+	github.com/pion/srtp/v2 v2.0.18
 	github.com/pion/stun v0.6.1
-	github.com/pion/webrtc/v3 v3.2.47
+	github.com/pion/webrtc/v3 v3.2.40
 	github.com/rs/zerolog v1.33.0
 	github.com/sigurn/crc16 v0.0.0-20240131213347-83fcde1e29d1
 	github.com/sigurn/crc8 v0.0.0-20220107193325-2243fe600f9f
 	github.com/stretchr/testify v1.9.0
-	google.golang.org/grpc v1.65.0
+	github.com/tadglines/go-pkgs v0.0.0-20210623144937-b983b20f54f9
+	golang.org/x/crypto v0.24.0
+	google.golang.org/grpc v1.66.0
 	google.golang.org/protobuf v1.34.2
 	gopkg.in/yaml.v3 v3.0.1
 )
@@ -32,13 +37,16 @@ require (
 	github.com/pion/mdns v0.0.12 // indirect
 	github.com/pion/randutil v0.1.0 // indirect
 	github.com/pion/sctp v1.8.16 // indirect
-	github.com/pion/srtp/v2 v2.0.18 // indirect
 	github.com/pion/transport/v2 v2.2.5 // indirect
 	github.com/pion/turn/v2 v2.1.6 // indirect
 	github.com/pmezard/go-difflib v1.0.0 // indirect
-	golang.org/x/crypto v0.24.0 // indirect
+	golang.org/x/mod v0.18.0 // indirect
 	golang.org/x/net v0.26.0 // indirect
+	golang.org/x/sync v0.7.0 // indirect
 	golang.org/x/sys v0.21.0 // indirect
 	golang.org/x/text v0.16.0 // indirect
-	google.golang.org/genproto/googleapis/rpc v0.0.0-20240528184218-531527333157 // indirect
+	golang.org/x/tools v0.22.0 // indirect
+	google.golang.org/genproto/googleapis/rpc v0.0.0-20240604185151-ef581f913117 // indirect
 )
+
+replace github.com/vtpl1/vrtc3 => ./

@@ -6,16 +6,15 @@ import (
 	"encoding/base64"
 	"encoding/binary"
 
-	"github.com/pion/rtp"
-	"github.com/vtpl1/vrtc/pkg/core"
-	"github.com/vtpl1/vrtc/pkg/h264"
+	"github.com/vtpl1/vrtc3/pkg/core"
+	"github.com/vtpl1/vrtc3/pkg/h264"
 )
 
 func RepairAVCC(codec *core.Codec, handler core.HandlerFunc) core.HandlerFunc {
 	vds, sps, pps := GetParameterSet(codec.FmtpLine)
 	ps := h264.JoinNALU(vds, sps, pps)
 
-	return func(packet *rtp.Packet) {
+	return func(packet *core.Packet) {
 		switch NALUType(packet.Payload) {
 		case NALUTypeIFrame, NALUTypeIFrame2, NALUTypeIFrame3:
 			clone := *packet

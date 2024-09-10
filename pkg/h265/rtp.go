@@ -4,8 +4,8 @@ import (
 	"encoding/binary"
 
 	"github.com/pion/rtp"
-	"github.com/vtpl1/vrtc/pkg/core"
-	"github.com/vtpl1/vrtc/pkg/h264"
+	"github.com/vtpl1/vrtc3/pkg/core"
+	"github.com/vtpl1/vrtc3/pkg/h264"
 )
 
 func RTPDepay(codec *core.Codec, handler core.HandlerFunc) core.HandlerFunc {
@@ -15,7 +15,7 @@ func RTPDepay(codec *core.Codec, handler core.HandlerFunc) core.HandlerFunc {
 	buf := make([]byte, 0, 512*1024) // 512K
 	var nuStart int
 
-	return func(packet *rtp.Packet) {
+	return func(packet *core.Packet) {
 		data := packet.Payload
 		if len(data) < 3 {
 			return
@@ -24,7 +24,7 @@ func RTPDepay(codec *core.Codec, handler core.HandlerFunc) core.HandlerFunc {
 		nuType := (data[0] >> 1) & 0x3F
 		//log.Printf("[RTP] codec: %s, nalu: %2d, size: %6d, ts: %10d, pt: %2d, ssrc: %d, seq: %d, %v", track.Codec.Name, nuType, len(packet.Payload), packet.Timestamp, packet.PayloadType, packet.SSRC, packet.SequenceNumber, packet.Marker)
 
-		// Fix for RtspServer https://github.com/AlexxIT/go2rtc/issues/244
+		// Fix for RtspServer https://github.com/vtpl1/vrtc3/issues/244
 		if packet.Marker && len(data) < h264.PSMaxSize {
 			switch nuType {
 			case NALUTypeVPS, NALUTypeSPS, NALUTypePPS:
@@ -97,7 +97,7 @@ func RTPPay(mtu uint16, handler core.HandlerFunc) core.HandlerFunc {
 	sequencer := rtp.NewRandomSequencer()
 	mtu -= 12 // rtp.Header size
 
-	return func(packet *rtp.Packet) {
+	return func(packet *core.Packet) {
 		if packet.Version != h264.RTPPacketVersionAVC {
 			handler(packet)
 			return
@@ -106,9 +106,11 @@ func RTPPay(mtu uint16, handler core.HandlerFunc) core.HandlerFunc {
 		payloads := payloader.Payload(mtu, packet.Payload)
 		last := len(payloads) - 1
 		for i, payload := range payloads {
-			clone := rtp.Packet{
+			clone := core.Packet{
 				Header: rtp.Header{
 					Version:        2,
+					PayloadType:    99,
+					SSRC:           packet.SSRC,
 					Marker:         i == last,
 					SequenceNumber: sequencer.NextSequenceNumber(),
 					Timestamp:      packet.Timestamp,
@@ -121,12 +123,12 @@ func RTPPay(mtu uint16, handler core.HandlerFunc) core.HandlerFunc {
 }
 
 // SafariPay - generate Safari friendly payload for H265
-// https://github.com/AlexxIT/Blog/issues/5
+// https://github.com/vtpl1/Blog/issues/5
 func SafariPay(mtu uint16, handler core.HandlerFunc) core.HandlerFunc {
 	sequencer := rtp.NewRandomSequencer()
 	size := int(mtu - 12) // rtp.Header size
 
-	return func(packet *rtp.Packet) {
+	return func(packet *core.Packet) {
 		if packet.Version != h264.RTPPacketVersionAVC {
 			handler(packet)
 			return
@@ -159,7 +161,7 @@ func SafariPay(mtu uint16, handler core.HandlerFunc) core.HandlerFunc {
 			i += size
 		}
 
-		// rtp.Packet payload
+		// core.Packet payload
 		b := make([]byte, 1, size)
 		size-- // minus header byte
 
@@ -178,7 +180,7 @@ func SafariPay(mtu uint16, handler core.HandlerFunc) core.HandlerFunc {
 				au = nil
 			}
 
-			clone := rtp.Packet{
+			clone := core.Packet{
 				Header: rtp.Header{
 					Version:        2,
 					Marker:         au == nil,

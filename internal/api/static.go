@@ -3,7 +3,7 @@ package api
 import (
 	"net/http"
 
-	"github.com/vtpl1/vrtc/www"
+	"github.com/vtpl1/vrtc3/www"
 )
 
 func initStatic(staticDir string) {

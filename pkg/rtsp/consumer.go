@@ -4,12 +4,12 @@ import (
 	"time"
 
 	"github.com/pion/rtp"
-	"github.com/vtpl1/vrtc/pkg/aac"
-	"github.com/vtpl1/vrtc/pkg/core"
-	"github.com/vtpl1/vrtc/pkg/h264"
-	"github.com/vtpl1/vrtc/pkg/h265"
-	"github.com/vtpl1/vrtc/pkg/mjpeg"
-	"github.com/vtpl1/vrtc/pkg/pcm"
+	"github.com/vtpl1/vrtc3/pkg/aac"
+	"github.com/vtpl1/vrtc3/pkg/core"
+	"github.com/vtpl1/vrtc3/pkg/h264"
+	"github.com/vtpl1/vrtc3/pkg/h265"
+	"github.com/vtpl1/vrtc3/pkg/mjpeg"
+	"github.com/vtpl1/vrtc3/pkg/pcm"
 )
 
 func (c *Conn) GetMedias() []*core.Media {
@@ -55,7 +55,7 @@ func (c *Conn) AddTrack(media *core.Media, codec *core.Codec, track *core.Receiv
 	sender.Handler = c.packetWriter(track.Codec, channel, codec.PayloadType)
 
 	if c.mode == core.ModeActiveProducer && track.Codec.Name == core.CodecPCMA {
-		// Fix Reolink Doorbell https://github.com/AlexxIT/go2rtc/issues/331
+		// Fix Reolink Doorbell https://github.com/vtpl1/vrtc3/issues/331
 		sender.Handler = pcm.RepackG711(true, sender.Handler)
 	}
 
@@ -95,12 +95,12 @@ func (c *Conn) packetWriter(codec *core.Codec, channel, payloadType uint8) core.
 		n = 0
 	}
 
-	handlerFunc := func(packet *rtp.Packet) {
+	handlerFunc := func(packet *core.Packet) {
 		if c.state == StateNone {
 			return
 		}
 
-		clone := rtp.Packet{
+		clone := core.Packet{
 			Header: rtp.Header{
 				Version:        2,
 				Marker:         packet.Marker,

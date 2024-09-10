@@ -9,10 +9,10 @@ import (
 	"time"
 
 	pion "github.com/pion/webrtc/v3"
-	"github.com/vtpl1/vrtc/internal/api"
-	"github.com/vtpl1/vrtc/internal/streams"
-	"github.com/vtpl1/vrtc/pkg/core"
-	"github.com/vtpl1/vrtc/pkg/webrtc"
+	"github.com/vtpl1/vrtc3/internal/api"
+	"github.com/vtpl1/vrtc3/internal/streams"
+	"github.com/vtpl1/vrtc3/pkg/core"
+	"github.com/vtpl1/vrtc3/pkg/webrtc"
 )
 
 const MimeSDP = "application/sdp"

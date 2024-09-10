@@ -7,7 +7,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/vtpl1/vrtc/pkg/core"
+	"github.com/vtpl1/vrtc3/pkg/core"
 )
 
 type state byte

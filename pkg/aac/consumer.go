@@ -3,8 +3,7 @@ package aac
 import (
 	"io"
 
-	"github.com/pion/rtp"
-	"github.com/vtpl1/vrtc/pkg/core"
+	"github.com/vtpl1/vrtc3/pkg/core"
 )
 
 type Consumer struct {
@@ -37,7 +36,7 @@ func NewConsumer() *Consumer {
 func (c *Consumer) AddTrack(media *core.Media, codec *core.Codec, track *core.Receiver) error {
 	sender := core.NewSender(media, track.Codec)
 
-	sender.Handler = func(pkt *rtp.Packet) {
+	sender.Handler = func(pkt *core.Packet) {
 		if n, err := c.wr.Write(pkt.Payload); err == nil {
 			c.Send += n
 		}

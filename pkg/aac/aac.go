@@ -4,8 +4,8 @@ import (
 	"encoding/hex"
 	"fmt"
 
-	"github.com/vtpl1/vrtc/pkg/bits"
-	"github.com/vtpl1/vrtc/pkg/core"
+	"github.com/vtpl1/vrtc3/pkg/bits"
+	"github.com/vtpl1/vrtc3/pkg/core"
 )
 
 const (

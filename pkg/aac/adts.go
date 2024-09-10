@@ -3,13 +3,11 @@ package aac
 import (
 	"encoding/hex"
 
-	"github.com/pion/rtp"
-	"github.com/vtpl1/vrtc/pkg/bits"
-	"github.com/vtpl1/vrtc/pkg/core"
+	"github.com/vtpl1/vrtc3/pkg/bits"
+	"github.com/vtpl1/vrtc3/pkg/core"
 )
 
 func IsADTS(b []byte) bool {
-	_ = b[1]
 	return len(b) > 7 && b[0] == 0xFF && b[1]&0xF6 == 0xF0
 }
 
@@ -114,7 +112,7 @@ func CodecToADTS(codec *core.Codec) []byte {
 func EncodeToADTS(codec *core.Codec, handler core.HandlerFunc) core.HandlerFunc {
 	adts := CodecToADTS(codec)
 
-	return func(packet *rtp.Packet) {
+	return func(packet *core.Packet) {
 		if !IsADTS(packet.Payload) {
 			b := make([]byte, ADTSHeaderSize+len(packet.Payload))
 			copy(b, adts)

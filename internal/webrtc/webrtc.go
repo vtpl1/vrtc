@@ -6,12 +6,12 @@ import (
 
 	pion "github.com/pion/webrtc/v3"
 	"github.com/rs/zerolog"
-	"github.com/vtpl1/vrtc/internal/api"
-	"github.com/vtpl1/vrtc/internal/api/ws"
-	"github.com/vtpl1/vrtc/internal/app"
-	"github.com/vtpl1/vrtc/internal/streams"
-	"github.com/vtpl1/vrtc/pkg/core"
-	"github.com/vtpl1/vrtc/pkg/webrtc"
+	"github.com/vtpl1/vrtc3/internal/api"
+	"github.com/vtpl1/vrtc3/internal/api/ws"
+	"github.com/vtpl1/vrtc3/internal/app"
+	"github.com/vtpl1/vrtc3/internal/streams"
+	"github.com/vtpl1/vrtc3/pkg/core"
+	"github.com/vtpl1/vrtc3/pkg/webrtc"
 )
 
 func Init() {

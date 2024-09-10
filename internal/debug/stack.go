@@ -6,7 +6,7 @@ import (
 	"net/http"
 	"runtime"
 
-	"github.com/vtpl1/vrtc/internal/api"
+	"github.com/vtpl1/vrtc3/internal/api"
 )
 
 var stackSkip = [][]byte{
@@ -15,18 +15,18 @@ var stackSkip = [][]byte{
 	[]byte("created by os/signal.Notify"),
 
 	// api/stack.go
-	[]byte("github.com/vtpl1/vrtc/internal/api.stackHandler"),
+	[]byte("github.com/vtpl1/vrtc3/internal/api.stackHandler"),
 
 	// api/api.go
-	[]byte("created by github.com/vtpl1/vrtc/internal/api.Init"),
+	[]byte("created by github.com/vtpl1/vrtc3/internal/api.Init"),
 	[]byte("created by net/http.(*connReader).startBackgroundRead"),
 	[]byte("created by net/http.(*Server).Serve"), // TODO: why two?
 
-	[]byte("created by github.com/vtpl1/vrtc/internal/rtsp.Init"),
-	[]byte("created by github.com/vtpl1/vrtc/internal/srtp.Init"),
+	[]byte("created by github.com/vtpl1/vrtc3/internal/rtsp.Init"),
+	[]byte("created by github.com/vtpl1/vrtc3/internal/srtp.Init"),
 
 	// homekit
-	[]byte("created by github.com/vtpl1/vrtc/internal/homekit.Init"),
+	[]byte("created by github.com/vtpl1/vrtc3/internal/homekit.Init"),
 
 	// webrtc/api.go
 	[]byte("created by github.com/pion/ice/v2.NewTCPMuxDefault"),

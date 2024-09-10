@@ -7,11 +7,11 @@ import (
 	"strings"
 
 	"github.com/rs/zerolog"
-	"github.com/vtpl1/vrtc/internal/app"
-	"github.com/vtpl1/vrtc/internal/streams"
-	"github.com/vtpl1/vrtc/pkg/core"
-	"github.com/vtpl1/vrtc/pkg/rtsp"
-	"github.com/vtpl1/vrtc/pkg/tcp"
+	"github.com/vtpl1/vrtc3/internal/app"
+	"github.com/vtpl1/vrtc3/internal/streams"
+	"github.com/vtpl1/vrtc3/pkg/core"
+	"github.com/vtpl1/vrtc3/pkg/rtsp"
+	"github.com/vtpl1/vrtc3/pkg/tcp"
 )
 
 func Init() {

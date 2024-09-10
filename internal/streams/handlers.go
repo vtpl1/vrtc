@@ -4,7 +4,7 @@ import (
 	"errors"
 	"strings"
 
-	"github.com/vtpl1/vrtc/pkg/core"
+	"github.com/vtpl1/vrtc3/pkg/core"
 )
 
 type Handler func(source string) (core.Producer, error)

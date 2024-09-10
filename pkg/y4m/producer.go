@@ -6,7 +6,7 @@ import (
 	"io"
 
 	"github.com/pion/rtp"
-	"github.com/vtpl1/vrtc/pkg/core"
+	"github.com/vtpl1/vrtc3/pkg/core"
 )
 
 func Open(r io.Reader) (*Producer, error) {
@@ -74,7 +74,7 @@ func (c *Producer) Start() error {
 			continue
 		}
 
-		pkt := &rtp.Packet{
+		pkt := &core.Packet{
 			Header:  rtp.Header{Timestamp: core.Now90000()},
 			Payload: frame,
 		}

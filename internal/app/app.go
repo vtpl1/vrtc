@@ -14,9 +14,11 @@ var (
 	UserAgent  string
 	ConfigPath string
 	Info       = make(map[string]any)
+	// InternalTerminationRequest is a channel to signal termination
+	InternalTerminationRequest chan int
 )
 
-const usage = `Usage of vrtc:
+const usage = `Usage of vrtc3:
 
   -c, --config   Path to config file or config string as YAML or JSON, support multiple
   -d, --daemon   Run in background
@@ -41,7 +43,7 @@ func Init() {
 	revision, vcsTime := readRevisionTime()
 
 	if version {
-		fmt.Printf("vrtc version %s (%s) %s/%s\n", Version, revision, runtime.GOOS, runtime.GOARCH)
+		fmt.Printf("vrtc3 version %s (%s) %s/%s\n", Version, revision, runtime.GOOS, runtime.GOARCH)
 		os.Exit(0)
 	}
 
@@ -61,7 +63,7 @@ func Init() {
 		os.Exit(0)
 	}
 
-	UserAgent = "vrtc/" + Version
+	UserAgent = "vrtc3/" + Version
 
 	Info["version"] = Version
 	Info["revision"] = revision
@@ -70,15 +72,13 @@ func Init() {
 	initLogger()
 
 	platform := fmt.Sprintf("%s/%s", runtime.GOOS, runtime.GOARCH)
-	Logger.Info().Str("version", Version).Str("platform", platform).Str("revision", revision).Msg("vrtc")
+	Logger.Info().Str("version", Version).Str("platform", platform).Str("revision", revision).Msg("vrtc3")
 	Logger.Debug().Str("version", runtime.Version()).Str("vcs.time", vcsTime).Msg("build")
 
 	if ConfigPath != "" {
 		Logger.Info().Str("path", ConfigPath).Msg("config")
 	}
 }
-
-var InternalTerminationRequest chan int
 
 func readRevisionTime() (revision, vcsTime string) {
 	if info, ok := debug.ReadBuildInfo(); ok {

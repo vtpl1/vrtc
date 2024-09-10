@@ -4,7 +4,7 @@ import (
 	"errors"
 	"time"
 
-	"github.com/vtpl1/vrtc/pkg/core"
+	"github.com/vtpl1/vrtc3/pkg/core"
 )
 
 func (s *Stream) Play(source string) error {

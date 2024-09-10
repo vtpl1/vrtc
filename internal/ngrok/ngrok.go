@@ -6,9 +6,9 @@ import (
 	"strings"
 
 	"github.com/rs/zerolog"
-	"github.com/vtpl1/vrtc/internal/app"
-	"github.com/vtpl1/vrtc/internal/webrtc"
-	"github.com/vtpl1/vrtc/pkg/ngrok"
+	"github.com/vtpl1/vrtc3/internal/app"
+	"github.com/vtpl1/vrtc3/internal/webrtc"
+	"github.com/vtpl1/vrtc3/pkg/ngrok"
 )
 
 func Init() {

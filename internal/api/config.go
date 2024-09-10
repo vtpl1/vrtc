@@ -5,7 +5,7 @@ import (
 	"net/http"
 	"os"
 
-	"github.com/vtpl1/vrtc/internal/app"
+	"github.com/vtpl1/vrtc3/internal/app"
 	"gopkg.in/yaml.v3"
 )
 

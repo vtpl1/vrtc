@@ -14,7 +14,7 @@ import (
 	"time"
 
 	"github.com/rs/zerolog"
-	"github.com/vtpl1/vrtc/internal/app"
+	"github.com/vtpl1/vrtc3/internal/app"
 )
 
 func Init() {
@@ -202,7 +202,7 @@ func middlewareAuth(username, password string, next http.Handler) http.Handler {
 		if !strings.HasPrefix(r.RemoteAddr, "127.") && !strings.HasPrefix(r.RemoteAddr, "[::1]") && r.RemoteAddr != "@" {
 			user, pass, ok := r.BasicAuth()
 			if !ok || user != username || pass != password {
-				w.Header().Set("Www-Authenticate", `Basic realm="vrtc"`)
+				w.Header().Set("Www-Authenticate", `Basic realm="vrtc3"`)
 				http.Error(w, "Unauthorized", http.StatusUnauthorized)
 				return
 			}
@@ -245,12 +245,6 @@ func exitHandler(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "Code must be in the range [0, 125]", http.StatusBadRequest)
 		return
 	}
-	path, err := os.Executable()
-	if err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
-		return
-	}
-	log.Info().Msgf("[api] exit %s", path)
 	app.InternalTerminationRequest <- 1
 	// os.Exit(code)
 }
@@ -269,7 +263,11 @@ func restartHandler(w http.ResponseWriter, r *http.Request) {
 
 	log.Debug().Msgf("[api] restart %s", path)
 
-	go syscall.Exec(path, os.Args, os.Environ())
+	go func() {
+		err := syscall.Exec(path, os.Args, os.Environ())
+		log.Error().Err(err).Msg("Restart failed")
+	}()
+	app.InternalTerminationRequest <- 1
 }
 
 func logHandler(w http.ResponseWriter, r *http.Request) {

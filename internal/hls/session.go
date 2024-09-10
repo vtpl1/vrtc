@@ -7,8 +7,8 @@ import (
 	"sync"
 	"time"
 
-	"github.com/vtpl1/vrtc/pkg/core"
-	"github.com/vtpl1/vrtc/pkg/mp4"
+	"github.com/vtpl1/vrtc3/pkg/core"
+	"github.com/vtpl1/vrtc3/pkg/mp4"
 )
 
 type Session struct {

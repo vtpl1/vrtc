@@ -3,8 +3,8 @@ package mpegts
 import (
 	"encoding/binary"
 
-	"github.com/vtpl1/vrtc/pkg/bits"
-	"github.com/vtpl1/vrtc/pkg/h264/annexb"
+	"github.com/vtpl1/vrtc3/pkg/bits"
+	"github.com/vtpl1/vrtc3/pkg/h264/annexb"
 )
 
 type Muxer struct {

@@ -7,7 +7,7 @@ import (
 	"encoding/binary"
 	"encoding/hex"
 
-	"github.com/vtpl1/vrtc/pkg/core"
+	"github.com/vtpl1/vrtc3/pkg/core"
 )
 
 // DecodeConfig - extract profile, SPS and PPS from MPEG4 config
