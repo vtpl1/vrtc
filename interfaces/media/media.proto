@@ -1,0 +1,65 @@
+syntax = "proto3";
+
+package media;
+
+option go_package = "github.com/vtpl1/vrtc/gen/media";
+
+message StreamID {
+  int64  site_id    = 1;
+  int64  channel_id = 2;
+  int64  app_id     = 3;
+  string session_id = 4;
+}
+
+enum MediaType {
+  MEDIA_TYPE_UNSPECIFIED = 0;
+  MEDIA_TYPE_H264 = 1;
+  MEDIA_TYPE_H265 = 2;
+  MEDIA_TYPE_AAC  = 3;
+  MEDIA_TYPE_OPUS = 4;
+  MEDIA_TYPE_AV1  = 5;
+}
+
+enum FrameType {
+  FRAME_TYPE_UNSPECIFIED = 0;
+  FRAME_TYPE_KEY   = 1;
+  FRAME_TYPE_DELTA = 2;
+}
+
+// MediaFrame is the unified packet for all pipeline elements.
+message MediaFrame {
+  StreamID   stream_id        = 1;
+  MediaType  media_type       = 2;
+  FrameType  frame_type       = 3;
+
+  // Wall-clock timing (recording, HLS manifest)
+  int64      wall_clock_us    = 4;   // µs since Unix epoch
+
+  // RTP timing (RTSP passthrough, WebRTC relay)
+  uint32     rtp_timestamp    = 5;   // 90kHz clock for video
+  uint32     ssrc             = 6;
+  uint32     sequence_number  = 7;
+  bool       marker           = 8;
+
+  // Decode/Presentation timestamps (HLS fMP4 muxing)
+  int64      dts_us           = 9;
+  int64      pts_us           = 10;
+  int64      duration_us      = 11;
+
+  // Media content
+  bytes      payload          = 12;  // raw NAL units / AAC / Opus bytes
+  bytes      extra_data       = 13;  // SPS+PPS (H264), AudioSpecificConfig
+
+  // Video metadata
+  int32      width    = 14;
+  int32      height   = 15;
+  int32      fps      = 16;
+  int32      bitrate  = 17;
+
+  // Audio metadata
+  int32      sample_rate = 18;
+  int32      channels    = 19;
+
+  // Track index within the stream
+  int32      track_index = 20;
+}
