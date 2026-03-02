@@ -13,7 +13,11 @@ HOST_ARCH := $(shell go env GOARCH)
 
 OUTPUT_DIR := bin
 APPS := \
-	vrtc
+	avftomp4 \
+	cloud \
+	edge \
+	liverecservice
+
 
 PLATFORMS := \
 	windows/amd64 \
@@ -31,7 +35,6 @@ prerequisite:
 
 fmt:
 	gofumpt -l -w -extra .
-	goimports -w .
 
 lint:
 	golangci-lint run --fix ./...

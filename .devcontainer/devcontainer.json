@@ -1,0 +1,23 @@
+{
+  "name": "Go 1.26 + Buf + Protoc",
+  "build": {
+    "dockerfile": "../dev.Dockerfile",
+    "context": ".."
+  },
+  "remoteUser": "vscode",
+  "customizations": {
+    "vscode": {
+      "extensions": [
+        "golang.Go",
+        "bufbuild.vscode-buf",
+        "ms-azuretools.vscode-docker",
+        "DrBlury.protobuf-vsc"
+      ],
+      "settings": {
+        "go.useLanguageServer": true,
+        "editor.formatOnSave": true
+      }
+    }
+  },
+  // "postCreateCommand": "go version && buf --version && protoc --version"
+}

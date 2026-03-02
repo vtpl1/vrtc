@@ -8,6 +8,6 @@ var (
 	BuildDate = "unknown" //nolint:gochecknoglobals
 )
 
-func String() string {
+func GetVersion() string {
 	return fmt.Sprintf("%s (commit=%s, built=%s)", Version, GitCommit, BuildDate)
 }
