@@ -9,21 +9,51 @@ linters:
     - wsl
     - wrapcheck
     - mnd
+    - paralleltest  # project does not require t.Parallel() in all tests
+    - testpackage   # white-box tests in the same package are valid
+    - ireturn       # codec factory functions intentionally return interfaces
+    - noinlineerr   # inline error handling (if err := ...; err != nil) is valid Go
   settings:
+    cyclop:
+      max-complexity: 30  # codec String() and bitstream parsers legitimately exceed 10
     exhaustruct:
       exclude:
         - 'github\.com/spf13/cobra\.Command'
         - 'github\.com/rs/zerolog\.ConsoleWriter'
         - 'gopkg\.in/natefinch/lumberjack\.v2\.Logger'
         - 'net/url\.URL'
+        - 'github\.com/pion/sdp/v3\.SessionDescription'  # third-party; too many fields
+        - 'github\.com/vtpl1/vrtc/pkg/av/codec/h264parser\.AVCDecoderConfRecord'
+        - 'github\.com/vtpl1/vrtc/pkg/av/codec/h265parser\.AVCDecoderConfRecord'        
     lll:
-      line-length: 160
+      line-length: 180
     varnamelen:
-      ignore-names:
-        - v
-        - u
-        - ok
+      ignore-names:        
+        - a
+        - b
+        - b    # byte buffer / single byte
+        - br   # bit reader
+        - bw   # bit writer
+        - cf   # chroma format
+        - e
         - i
+        - in
+        - j    # secondary loop index
+        - k    # scale factor
+        - n    # loop counter and byte offset
+        - ok
+        - p    # byte-slice parameter
+        - r    # reader
+        - s    # struct receiver or writer
+        - sd
+        - sr   # sample-rate code byte
+        - t    # temporary bit value
+        - tt
+        - u
+        - U8
+        - v
+        - w
+        - _b   # byte buffer in NALU parser
   exclusions:
     generated: lax
     warn-unused: true
@@ -36,6 +66,33 @@ linters:
       - linters:
           - revive
         text: 'avoid package names that conflict with Go standard library package names'
+      - linters:
+          - gochecknoglobals
+        path: 'pkg/av/av\.go'  # codec-type constants are intentionally package-level vars
+      - linters:
+          - gosec
+        text: 'G115'  # integer overflow conversions are intentional in codec/protocol code
+      - linters:
+          - revive
+        text: 'var-naming: don''t use ALL_CAPS'  # C-header constant names kept verbatim
+      - linters:
+          - revive
+        text: 'exported:.*stutters'  # pcm.PCM* type names match the established API
+      - linters:
+          - gocognit
+          - nestif
+          - funlen
+        path: 'pkg/av/codec/(h264|h265)parser'  # SPS/PPS parsing is inherently complex        
+      - linters:
+          - funcorder
+        path: 'pkg/av'  # constructor placement follows original file organisation
+      - linters:
+          - funlen
+        path: '_test\.go'  # test functions may be legitimately long
+      - linters:
+          - exhaustruct
+          - forbidigo
+        path: '_test\.go'  # test struct literals do not need every field explicit
 
 formatters:
   enable:
