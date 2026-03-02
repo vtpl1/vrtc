@@ -33,3 +33,4 @@ recordings/
 hls/
 logs/
 session/
+.claude/

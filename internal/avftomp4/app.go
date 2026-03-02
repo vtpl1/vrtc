@@ -4,7 +4,7 @@ import (
 	"context"
 
 	"github.com/rs/zerolog/log"
-	"github.com/vtpl1/vrtc/pkg/signal"
+	"github.com/vtpl1/vrtc/pkg/lifecycle"
 )
 
 const AppName = "avf_to_mp4"
@@ -53,7 +53,7 @@ func Run(cfg Config) error {
 	// 	}
 	// }(ctx, errChan)
 
-	signal.WaitForTerminationRequest(errChan)
+	lifecycle.WaitForTerminationRequest(errChan)
 	cancel()
 
 	return nil

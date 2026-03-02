@@ -71,7 +71,7 @@ func readNALULength(b []byte) int {
 // SplitNALUs optimizes AnnexB parsing by performing direct byte checks for start codes
 // within the main loop to avoid repeated slicing and function call overhead.
 //
-//nolint:nestif,gocognit,funlen
+//nolint:nestif
 func SplitNALUs(b []byte) ([][]byte, NALUAvccOrAnnexb) {
 	annexBOrAvccOrRaw := IsAnnexBOrAVCC(b)
 	if annexBOrAvccOrRaw == NALUAnnexb {

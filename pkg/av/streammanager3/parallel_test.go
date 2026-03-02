@@ -1,0 +1,1253 @@
+package streammanager3_test
+
+import (
+	"context"
+	"errors"
+	"fmt"
+	"sync"
+	"sync/atomic"
+	"testing"
+	"time"
+
+	"github.com/vtpl1/vrtc/pkg/av"
+	"github.com/vtpl1/vrtc/pkg/av/streammanager3"
+)
+
+// errWritePacketFailed is the sentinel returned by failingMuxer.
+var errWritePacketFailed = errors.New("write packet intentionally failed")
+
+// =============================================================================
+// Mock demuxers
+// =============================================================================
+
+// mockDemuxer produces packets immediately on each ReadPacket call.
+// Rate limiting is handled by the producer's internal ticker (maxFps).
+// Context cancellation is respected via ctx.Err() before each packet.
+type mockDemuxer struct {
+	streams []av.Stream
+	pktIdx  atomic.Int64
+}
+
+func (d *mockDemuxer) GetCodecs(_ context.Context) ([]av.Stream, error) {
+	return d.streams, nil
+}
+
+func (d *mockDemuxer) ReadPacket(ctx context.Context) (av.Packet, error) {
+	if err := ctx.Err(); err != nil {
+		return av.Packet{}, err
+	}
+
+	n := d.pktIdx.Add(1)
+
+	return av.Packet{
+		KeyFrame: n%30 == 0,
+		DTS:      time.Duration(n) * (time.Second / 250),
+	}, nil
+}
+
+func (d *mockDemuxer) Close() error { return nil }
+
+// pausableMockDemuxer wraps mockDemuxer and additionally implements av.Pauser.
+// ReadPacket blocks while paused, honouring context cancellation.
+type pausableMockDemuxer struct {
+	mockDemuxer
+
+	mu      sync.Mutex
+	paused  bool
+	unpause chan struct{} // closed-and-replaced on Resume
+}
+
+func newPausableMockDemuxer(streams []av.Stream) *pausableMockDemuxer {
+	d := &pausableMockDemuxer{}
+	d.streams = streams
+	d.unpause = make(chan struct{})
+	close(d.unpause) // initially not paused → immediately readable
+
+	return d
+}
+
+func (d *pausableMockDemuxer) Pause(_ context.Context) error {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+
+	if !d.paused {
+		d.paused = true
+		d.unpause = make(chan struct{})
+	}
+
+	return nil
+}
+
+func (d *pausableMockDemuxer) Resume(_ context.Context) error {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+
+	if d.paused {
+		d.paused = false
+		close(d.unpause) // unblock any waiting ReadPacket
+	}
+
+	return nil
+}
+
+func (d *pausableMockDemuxer) IsPaused() bool {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+
+	return d.paused
+}
+
+func (d *pausableMockDemuxer) ReadPacket(ctx context.Context) (av.Packet, error) {
+	// Wait until not paused or context cancelled.
+	for {
+		d.mu.Lock()
+		gate := d.unpause
+		d.mu.Unlock()
+
+		select {
+		case <-ctx.Done():
+			return av.Packet{}, ctx.Err()
+		case <-gate:
+		}
+		// Double-check under lock to avoid a race where Pause is called
+		// immediately after Resume signals the gate.
+		d.mu.Lock()
+		stillPaused := d.paused
+		d.mu.Unlock()
+
+		if !stillPaused {
+			break
+		}
+	}
+
+	return d.mockDemuxer.ReadPacket(ctx)
+}
+
+// =============================================================================
+// Mock muxers
+// =============================================================================
+
+// mockMuxer counts the packets it receives. All lifecycle methods are no-ops.
+type mockMuxer struct {
+	packetsRecv atomic.Int64
+}
+
+func (m *mockMuxer) WriteHeader(_ context.Context, _ []av.Stream) error { return nil }
+func (m *mockMuxer) WritePacket(_ context.Context, _ av.Packet) error {
+	m.packetsRecv.Add(1)
+
+	return nil
+}
+func (m *mockMuxer) WriteTrailer(_ context.Context, _ error) error { return nil }
+func (m *mockMuxer) Close() error                                  { return nil }
+
+// failingMuxer writes packets successfully up to failAfter, then returns an error.
+type failingMuxer struct {
+	packetsRecv atomic.Int64
+	failAfter   int64
+}
+
+func (m *failingMuxer) WriteHeader(_ context.Context, _ []av.Stream) error { return nil }
+func (m *failingMuxer) WritePacket(_ context.Context, _ av.Packet) error {
+	n := m.packetsRecv.Add(1)
+	if n > m.failAfter {
+		return errWritePacketFailed
+	}
+
+	return nil
+}
+func (m *failingMuxer) WriteTrailer(_ context.Context, _ error) error { return nil }
+func (m *failingMuxer) Close() error                                  { return nil }
+
+// =============================================================================
+// Test helpers
+// =============================================================================
+
+func testStreams() []av.Stream { return []av.Stream{{Idx: 0}} }
+
+func makeDemuxerFactory(streams []av.Stream) av.DemuxerFactory {
+	return func(_ context.Context, _ string) (av.DemuxCloser, error) {
+		return &mockDemuxer{streams: streams}, nil
+	}
+}
+
+// makePausableDemuxerFactory returns a DemuxerFactory that produces
+// pausableMockDemuxers and exposes the most-recently created instance.
+func makePausableDemuxerFactory(
+	streams []av.Stream,
+) (av.DemuxerFactory, *atomic.Pointer[pausableMockDemuxer]) {
+	var latest atomic.Pointer[pausableMockDemuxer]
+
+	factory := func(_ context.Context, _ string) (av.DemuxCloser, error) {
+		d := newPausableMockDemuxer(streams)
+		latest.Store(d)
+
+		return d, nil
+	}
+
+	return factory, &latest
+}
+
+// makeMuxerFactory returns a MuxerFactory and a sync.Map registry of every
+// mockMuxer it creates, keyed by consumerID.
+func makeMuxerFactory() (av.MuxerFactory, *sync.Map) {
+	registry := new(sync.Map)
+
+	return func(_ context.Context, consumerID string) (av.MuxCloser, error) {
+		m := &mockMuxer{}
+		registry.Store(consumerID, m)
+
+		return m, nil
+	}, registry
+}
+
+// startedSM creates and starts a StreamManager backed by mockDemuxer.
+// t.Cleanup calls Stop() so no explicit teardown is needed in each test.
+func startedSM(t *testing.T, ctx context.Context) *streammanager3.StreamManager {
+	t.Helper()
+
+	sm := streammanager3.New(makeDemuxerFactory(testStreams()), nil)
+	if err := sm.Start(ctx); err != nil {
+		t.Fatal(err)
+	}
+
+	t.Cleanup(func() { _ = sm.Stop() })
+
+	return sm
+}
+
+// removeConsumer calls RemoveConsumer and tolerates ErrProducerNotFound,
+// which can occur legitimately if the producer was already auto-cleaned-up
+// by the StreamManager's idle ticker.
+func removeConsumer(
+	t *testing.T,
+	sm *streammanager3.StreamManager,
+	ctx context.Context,
+	producerID, consumerID string,
+) {
+	t.Helper()
+
+	if err := sm.RemoveConsumer(ctx, producerID, consumerID); err != nil &&
+		!errors.Is(err, streammanager3.ErrProducerNotFound) {
+		t.Errorf("RemoveConsumer(%s, %s): %v", producerID, consumerID, err)
+	}
+}
+
+// =============================================================================
+// Tests — StreamManager lifecycle
+// =============================================================================
+
+// TestDoubleStartReturnsError verifies that a second call to Start returns
+// ErrStreamManagerAlreadyStarted rather than silently leaking a goroutine.
+func TestDoubleStartReturnsError(t *testing.T) {
+	t.Parallel()
+
+	ctx := t.Context()
+
+	sm := streammanager3.New(makeDemuxerFactory(testStreams()), nil)
+	if err := sm.Start(ctx); err != nil {
+		t.Fatalf("first Start: %v", err)
+	}
+
+	defer func() { _ = sm.Stop() }()
+
+	if err := sm.Start(ctx); !errors.Is(err, streammanager3.ErrStreamManagerAlreadyStarted) {
+		t.Errorf("second Start returned %v, want ErrStreamManagerAlreadyStarted", err)
+	}
+}
+
+// TestMultipleStopCalls verifies that calling Stop multiple times is safe and
+// always returns nil — idempotency is required because callers often defer Stop
+// without checking whether it was already invoked.
+func TestMultipleStopCalls(t *testing.T) {
+	t.Parallel()
+
+	ctx := context.Background()
+
+	sm := streammanager3.New(makeDemuxerFactory(testStreams()), nil)
+	if err := sm.Start(ctx); err != nil {
+		t.Fatal(err)
+	}
+
+	for i := range 5 {
+		if err := sm.Stop(); err != nil {
+			t.Errorf("Stop() call %d returned %v, want nil", i+1, err)
+		}
+	}
+}
+
+// TestAddConsumerAfterStop verifies that AddConsumer returns ErrStreamManagerClosing
+// once Stop has been called, regardless of whether the producer previously existed.
+func TestAddConsumerAfterStop(t *testing.T) {
+	t.Parallel()
+
+	ctx := context.Background()
+
+	sm := streammanager3.New(makeDemuxerFactory(testStreams()), nil)
+	if err := sm.Start(ctx); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := sm.Stop(); err != nil {
+		t.Fatal(err)
+	}
+
+	factory, _ := makeMuxerFactory()
+
+	err := sm.AddConsumer(ctx, "producer-1", "consumer-1", factory, nil, nil)
+	if !errors.Is(err, streammanager3.ErrStreamManagerClosing) {
+		t.Errorf("AddConsumer after Stop returned %v, want ErrStreamManagerClosing", err)
+	}
+}
+
+// =============================================================================
+// Tests — Consumer and producer management
+// =============================================================================
+
+// TestConsumerAlreadyExists verifies that adding the same consumerID twice to
+// the same producer returns ErrConsumerAlreadyExists on the second call.
+func TestConsumerAlreadyExists(t *testing.T) {
+	t.Parallel()
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	sm := startedSM(t, ctx)
+	factory, _ := makeMuxerFactory()
+
+	if err := sm.AddConsumer(ctx, "producer-1", "consumer-1", factory, nil, nil); err != nil {
+		t.Fatal(err)
+	}
+
+	err := sm.AddConsumer(ctx, "producer-1", "consumer-1", factory, nil, nil)
+	if !errors.Is(err, streammanager3.ErrConsumerAlreadyExists) {
+		t.Errorf("duplicate AddConsumer: got %v, want ErrConsumerAlreadyExists", err)
+	}
+}
+
+// TestRemoveNonExistentConsumer verifies that RemoveConsumer with an unknown
+// producerID returns ErrProducerNotFound rather than panicking or returning nil.
+func TestRemoveNonExistentConsumer(t *testing.T) {
+	t.Parallel()
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	sm := startedSM(t, ctx)
+
+	err := sm.RemoveConsumer(ctx, "ghost-producer", "ghost-consumer")
+	if !errors.Is(err, streammanager3.ErrProducerNotFound) {
+		t.Errorf("RemoveConsumer unknown producer: got %v, want ErrProducerNotFound", err)
+	}
+}
+
+// TestProducerAutoStopsWhenIdle verifies that a producer with no remaining
+// consumers is automatically removed within the cleanup ticker period (~1 s
+// for the producer ticker + ~1 s for the StreamManager ticker = ≤ 2 s).
+func TestProducerAutoStopsWhenIdle(t *testing.T) {
+	t.Parallel()
+
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+
+	sm := startedSM(t, ctx)
+	factory, _ := makeMuxerFactory()
+
+	if err := sm.AddConsumer(ctx, "producer-1", "consumer-1", factory, nil, nil); err != nil {
+		t.Fatal(err)
+	}
+
+	if n := sm.GetActiveProducersCount(ctx); n != 1 {
+		t.Fatalf("expected 1 active producer after add, got %d", n)
+	}
+
+	if err := sm.RemoveConsumer(ctx, "producer-1", "consumer-1"); err != nil {
+		t.Fatal(err)
+	}
+
+	// Two ticker intervals can elapse before the producer is gone:
+	//   1. Producer's ticker removes the inactive consumer from its map.
+	//   2. StreamManager's ticker sees ConsumerCount() == 0 and removes the producer.
+	deadline := time.Now().Add(3 * time.Second)
+	for time.Now().Before(deadline) {
+		if sm.GetActiveProducersCount(ctx) == 0 {
+			return
+		}
+
+		time.Sleep(50 * time.Millisecond)
+	}
+
+	t.Errorf("producer still active 3 s after all consumers left (count=%d)",
+		sm.GetActiveProducersCount(ctx))
+}
+
+// =============================================================================
+// Tests — Error propagation
+// =============================================================================
+
+// TestDemuxerFactoryErrorPropagatesToCaller verifies that when the demuxer
+// factory returns an error the AddConsumer call eventually surfaces that error
+// to the caller (via the producer's LastError).
+func TestDemuxerFactoryErrorPropagatesToCaller(t *testing.T) {
+	t.Parallel()
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	errDemuxFail := errors.New("demuxer factory failed")
+	failFactory := func(_ context.Context, _ string) (av.DemuxCloser, error) {
+		return nil, errDemuxFail
+	}
+
+	sm := streammanager3.New(failFactory, nil)
+	if err := sm.Start(ctx); err != nil {
+		t.Fatal(err)
+	}
+
+	t.Cleanup(func() { _ = sm.Stop() })
+
+	factory, _ := makeMuxerFactory()
+
+	err := sm.AddConsumer(ctx, "producer-1", "consumer-1", factory, nil, nil)
+	if err == nil {
+		t.Fatal("expected an error from AddConsumer when demuxer factory fails, got nil")
+	}
+
+	if !errors.Is(err, errDemuxFail) {
+		t.Errorf("expected errDemuxFail in chain, got: %v", err)
+	}
+}
+
+// TestMuxerErrorPropagatedToErrChan creates a muxer that fails after 5 packets
+// and verifies that the error is delivered to the errChan provided to AddConsumer.
+func TestMuxerErrorPropagatedToErrChan(t *testing.T) {
+	t.Parallel()
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	sm := startedSM(t, ctx)
+
+	fm := &failingMuxer{failAfter: 5}
+	muxFactory := func(_ context.Context, _ string) (av.MuxCloser, error) {
+		return fm, nil
+	}
+
+	errChan := make(chan error, 1)
+	if err := sm.AddConsumer(
+		ctx,
+		"producer-1",
+		"failing-consumer",
+		muxFactory,
+		nil,
+		errChan,
+	); err != nil {
+		t.Fatal(err)
+	}
+
+	select {
+	case <-ctx.Done():
+		t.Fatal("timed out waiting for muxer error on errChan")
+	case err := <-errChan:
+		if !errors.Is(err, errWritePacketFailed) {
+			t.Errorf("errChan got %v, want errWritePacketFailed", err)
+		}
+	}
+}
+
+// =============================================================================
+// Tests — Concurrency and stress
+// =============================================================================
+
+// TestContextCancellationDuringJoins cancels the context while 50 goroutines
+// are mid-AddConsumer. Verifies that all goroutines exit cleanly with no
+// deadlocks or panics regardless of which stage of AddConsumer they are in.
+func TestContextCancellationDuringJoins(t *testing.T) {
+	t.Parallel()
+
+	const numJoiners = 50
+
+	ctx, cancel := context.WithCancel(context.Background())
+
+	sm := startedSM(t, ctx)
+	factory, _ := makeMuxerFactory()
+
+	var wg sync.WaitGroup
+	for i := range numJoiners {
+		wg.Add(1)
+
+		go func(i int) {
+			defer wg.Done()
+
+			_ = sm.AddConsumer(ctx, "producer-1", fmt.Sprintf("consumer-%d", i), factory, nil, nil)
+		}(i)
+	}
+
+	// Cancel while goroutines are in various stages of AddConsumer.
+	time.Sleep(5 * time.Millisecond)
+	cancel()
+	wg.Wait()
+}
+
+// TestMassiveParallelConsumers spawns 100 goroutines that each add a unique
+// consumer to one shared producer concurrently. Each goroutine holds its
+// consumer for a staggered duration then removes it. Intended to be run with
+// -race to catch synchronisation defects.
+func TestMassiveParallelConsumers(t *testing.T) {
+	t.Parallel()
+
+	const numConsumers = 100
+
+	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+	defer cancel()
+
+	sm := startedSM(t, ctx)
+	factory, _ := makeMuxerFactory()
+
+	var wg sync.WaitGroup
+
+	errs := make(chan error, numConsumers)
+
+	for i := range numConsumers {
+		wg.Add(1)
+
+		go func(i int) {
+			defer wg.Done()
+
+			id := fmt.Sprintf("consumer-%d", i)
+			if err := sm.AddConsumer(ctx, "producer-1", id, factory, nil, nil); err != nil {
+				errs <- fmt.Errorf("add %s: %w", id, err)
+
+				return
+			}
+
+			time.Sleep(time.Duration(i%50+1) * time.Millisecond)
+			removeConsumer(t, sm, ctx, "producer-1", id)
+		}(i)
+	}
+
+	wg.Wait()
+	close(errs)
+
+	for err := range errs {
+		t.Error(err)
+	}
+}
+
+// TestConsumerChurn runs 20 workers that continuously add and remove their own
+// consumer from a shared producer for 2 seconds. Stress-tests the consumer-map
+// locking, the ticker cleanup path, and the AddConsumer retry loop under
+// sustained join/leave pressure.
+func TestConsumerChurn(t *testing.T) {
+	t.Parallel()
+
+	const numWorkers = 20
+
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+
+	sm := startedSM(t, ctx)
+	factory, _ := makeMuxerFactory()
+
+	var wg sync.WaitGroup
+	for w := range numWorkers {
+		wg.Add(1)
+
+		go func(w int) {
+			defer wg.Done()
+
+			holdFor := time.Duration(w%10+1) * time.Millisecond
+			for iter := 0; ctx.Err() == nil; iter++ {
+				id := fmt.Sprintf("worker-%d-iter-%d", w, iter)
+				if err := sm.AddConsumer(ctx, "producer-1", id, factory, nil, nil); err != nil {
+					return
+				}
+
+				timer := time.NewTimer(holdFor)
+				select {
+				case <-ctx.Done():
+					timer.Stop()
+					removeConsumer(t, sm, ctx, "producer-1", id)
+
+					return
+				case <-timer.C:
+				}
+
+				removeConsumer(t, sm, ctx, "producer-1", id)
+			}
+		}(w)
+	}
+
+	wg.Wait()
+}
+
+// TestMultipleProducersParallel launches 10×10 goroutines: each pair of
+// (producer, consumer) indices gets its own goroutine that adds a consumer,
+// holds briefly, then removes it. Stress-tests the StreamManager's producer
+// map locking with simultaneous access across many producer keys.
+func TestMultipleProducersParallel(t *testing.T) {
+	t.Parallel()
+
+	const (
+		numProducers = 10
+		numConsumers = 10
+	)
+
+	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+	defer cancel()
+
+	sm := startedSM(t, ctx)
+	factory, _ := makeMuxerFactory()
+
+	var wg sync.WaitGroup
+
+	errs := make(chan error, numProducers*numConsumers)
+
+	for p := range numProducers {
+		for c := range numConsumers {
+			wg.Add(1)
+
+			go func(p, c int) {
+				defer wg.Done()
+
+				pid := fmt.Sprintf("producer-%d", p)
+
+				cid := fmt.Sprintf("consumer-%d-%d", p, c)
+				if err := sm.AddConsumer(ctx, pid, cid, factory, nil, nil); err != nil {
+					errs <- fmt.Errorf("add %s/%s: %w", pid, cid, err)
+
+					return
+				}
+
+				time.Sleep(time.Duration((p+c)%20+1) * time.Millisecond)
+				removeConsumer(t, sm, ctx, pid, cid)
+			}(p, c)
+		}
+	}
+
+	wg.Wait()
+	close(errs)
+
+	for err := range errs {
+		t.Error(err)
+	}
+}
+
+// =============================================================================
+// Tests — Packet delivery
+// =============================================================================
+
+// TestConsumerJoinsDuringPacketFlood adds one consumer and lets it accumulate
+// packets, then adds 50 more consumers concurrently while the producer is
+// actively streaming. Verifies:
+//   - The first (sole) consumer receives packets via the blocking write path.
+//   - Late-joining consumers receive packets via the leaky write path without
+//     interfering with the first consumer.
+//   - No races occur during concurrent joins against an active readWriteLoop.
+func TestConsumerJoinsDuringPacketFlood(t *testing.T) {
+	t.Parallel()
+
+	const numLateJoiners = 50
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	factory, registry := makeMuxerFactory()
+	sm := startedSM(t, ctx)
+
+	if err := sm.AddConsumer(ctx, "producer-1", "first", factory, nil, nil); err != nil {
+		t.Fatal(err)
+	}
+
+	// Let the first consumer receive packets before others join.
+	// While it is the only consumer the producer uses blocking WritePacket,
+	// so every packet is guaranteed to be delivered.
+	time.Sleep(100 * time.Millisecond)
+
+	var wg sync.WaitGroup
+	for i := range numLateJoiners {
+		wg.Add(1)
+
+		go func(i int) {
+			defer wg.Done()
+
+			id := fmt.Sprintf("late-%d", i)
+			if err := sm.AddConsumer(ctx, "producer-1", id, factory, nil, nil); err != nil {
+				return
+			}
+
+			time.Sleep(50 * time.Millisecond)
+			removeConsumer(t, sm, ctx, "producer-1", id)
+		}(i)
+	}
+
+	wg.Wait()
+
+	// Verify the first consumer received packets throughout the flood.
+	v, ok := registry.Load("first")
+	if !ok {
+		t.Fatal("first consumer muxer not found in registry")
+	}
+
+	if n := v.(*mockMuxer).packetsRecv.Load(); n == 0 {
+		t.Error("first consumer received no packets")
+	} else {
+		t.Logf("first consumer received %d packets", n)
+	}
+}
+
+// TestBaselineConsumerUnaffectedByJoinsAndLeaves verifies that an existing
+// consumer continues to receive packets throughout join/leave storms that
+// repeatedly cross the 1→N→1 boundary in the delivery policy:
+//
+//   - While it is the sole consumer the producer uses a blocking write
+//     (WritePacket), guaranteeing delivery.
+//   - When other consumers join, the producer switches to leaky writes
+//     (WritePacketLeaky) for all consumers. The baseline consumer must still
+//     keep making forward progress — its queue drains fast enough that the
+//     leaky path almost never drops packets for a well-behaved receiver.
+//   - After all storm consumers leave, the producer reverts to blocking writes
+//     and the baseline consumer's throughput must recover.
+//
+// The test samples packet counts at three points (before, mid-storm, after)
+// and asserts strict monotone growth at each transition.
+func TestBaselineConsumerUnaffectedByJoinsAndLeaves(t *testing.T) {
+	t.Parallel()
+
+	const (
+		producerID  = "producer-1"
+		baselineID  = "baseline"
+		numWorkers  = 20
+		stormDur    = 1 * time.Second
+		warmupDur   = 100 * time.Millisecond
+		recoveryDur = 200 * time.Millisecond
+	)
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	factory, registry := makeMuxerFactory()
+	sm := startedSM(t, ctx)
+
+	if err := sm.AddConsumer(ctx, producerID, baselineID, factory, nil, nil); err != nil {
+		t.Fatal(err)
+	}
+
+	// snapshot returns the packet count for the baseline consumer.
+	snapshot := func(label string) int64 {
+		v, ok := registry.Load(baselineID)
+		if !ok {
+			t.Fatalf("baseline muxer missing at %s", label)
+		}
+
+		return v.(*mockMuxer).packetsRecv.Load()
+	}
+
+	// Warm-up: let the baseline consumer receive packets alone (blocking writes).
+	time.Sleep(warmupDur)
+
+	beforeStorm := snapshot("before-storm")
+	if beforeStorm == 0 {
+		t.Fatal("baseline consumer received no packets before storm")
+	}
+
+	// Launch join/leave storm. Workers continuously add a consumer, hold it
+	// briefly, then remove it, keeping multiple consumers alive at all times
+	// and forcing the producer into leaky-write mode.
+	stormCtx, stormCancel := context.WithTimeout(ctx, stormDur)
+	defer stormCancel()
+
+	var wg sync.WaitGroup
+	for w := range numWorkers {
+		wg.Add(1)
+
+		go func(w int) {
+			defer wg.Done()
+
+			holdFor := time.Duration(w%5+1) * time.Millisecond
+			for iter := 0; stormCtx.Err() == nil; iter++ {
+				id := fmt.Sprintf("storm-%d-%d", w, iter)
+				if err := sm.AddConsumer(ctx, producerID, id, factory, nil, nil); err != nil {
+					return
+				}
+
+				timer := time.NewTimer(holdFor)
+				select {
+				case <-stormCtx.Done():
+					timer.Stop()
+					removeConsumer(t, sm, ctx, producerID, id)
+
+					return
+				case <-timer.C:
+				}
+
+				removeConsumer(t, sm, ctx, producerID, id)
+			}
+		}(w)
+	}
+
+	// Sample mid-storm: baseline must still be making forward progress
+	// even though the producer is now using leaky writes.
+	time.Sleep(stormDur / 2)
+
+	midStorm := snapshot("mid-storm")
+
+	// Let the storm run to completion, then wait for all workers to exit.
+	<-stormCtx.Done()
+	wg.Wait()
+
+	// Recovery: storm consumers are gone; producer reverts to blocking writes.
+	// Give the producer one scheduling cycle to observe the single-consumer state.
+	time.Sleep(recoveryDur)
+
+	afterStorm := snapshot("after-storm")
+
+	t.Logf("baseline packets — before: %d  mid-storm: %d  after: %d",
+		beforeStorm, midStorm, afterStorm)
+
+	if midStorm <= beforeStorm {
+		t.Errorf("baseline consumer stalled during storm: count did not increase "+
+			"(before=%d, mid=%d)", beforeStorm, midStorm)
+	}
+
+	if afterStorm <= midStorm {
+		t.Errorf("baseline consumer stalled after storm recovery: count did not increase "+
+			"(mid=%d, after=%d)", midStorm, afterStorm)
+	}
+}
+
+// =============================================================================
+// Tests — Pause and Resume
+// =============================================================================
+
+// TestPauseResumeNonExistentProducer verifies that PauseProducer and
+// ResumeProducer return ErrProducerNotFound when no producer with that ID exists.
+func TestPauseResumeNonExistentProducer(t *testing.T) {
+	t.Parallel()
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	sm := startedSM(t, ctx)
+
+	if err := sm.PauseProducer(
+		ctx,
+		"no-such-producer",
+	); !errors.Is(
+		err,
+		streammanager3.ErrProducerNotFound,
+	) {
+		t.Errorf("PauseProducer: got %v, want ErrProducerNotFound", err)
+	}
+
+	if err := sm.ResumeProducer(
+		ctx,
+		"no-such-producer",
+	); !errors.Is(
+		err,
+		streammanager3.ErrProducerNotFound,
+	) {
+		t.Errorf("ResumeProducer: got %v, want ErrProducerNotFound", err)
+	}
+}
+
+// TestPauseResumeDuringConsumerChurn exercises the Pause/Resume paths on a
+// pausable demuxer while consumers are simultaneously churning. This directly
+// validates the m.mu.Lock() fix on m.demuxer = demuxer (producer.go) — the
+// race detector will catch it if the write is not properly protected.
+func TestPauseResumeDuringConsumerChurn(t *testing.T) {
+	t.Parallel()
+
+	const numWorkers = 10
+
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+	defer cancel()
+
+	pausableFactory, latestDemuxer := makePausableDemuxerFactory(testStreams())
+
+	sm := streammanager3.New(pausableFactory, nil)
+	if err := sm.Start(ctx); err != nil {
+		t.Fatal(err)
+	}
+
+	t.Cleanup(func() { _ = sm.Stop() })
+
+	factory, _ := makeMuxerFactory()
+
+	// Seed the producer so it exists before the churn begins.
+	if err := sm.AddConsumer(ctx, "producer-1", "seed", factory, nil, nil); err != nil {
+		t.Fatal(err)
+	}
+
+	// Churn goroutines: continuously join and leave.
+	var wg sync.WaitGroup
+	for w := range numWorkers {
+		wg.Add(1)
+
+		go func(w int) {
+			defer wg.Done()
+
+			for iter := 0; ctx.Err() == nil; iter++ {
+				id := fmt.Sprintf("churn-%d-%d", w, iter)
+				if err := sm.AddConsumer(ctx, "producer-1", id, factory, nil, nil); err != nil {
+					return
+				}
+
+				time.Sleep(time.Duration(w%5+1) * time.Millisecond)
+				removeConsumer(t, sm, ctx, "producer-1", id)
+			}
+		}(w)
+	}
+
+	// Pause/Resume goroutine: rapidly toggles the demuxer while churn runs.
+
+	wg.Go(func() {
+		for ctx.Err() == nil {
+			if latestDemuxer.Load() == nil {
+				time.Sleep(time.Millisecond)
+
+				continue
+			}
+
+			_ = sm.PauseProducer(ctx, "producer-1")
+
+			time.Sleep(2 * time.Millisecond)
+
+			_ = sm.ResumeProducer(ctx, "producer-1")
+
+			time.Sleep(2 * time.Millisecond)
+		}
+	})
+
+	wg.Wait()
+}
+
+// =============================================================================
+// Additional mocks for new test cases
+// =============================================================================
+
+// codecChangingDemuxer emits a normal stream of packets and embeds a
+// NewCodecs field in the packet at index changeAfter, simulating a mid-stream
+// codec renegotiation.
+type codecChangingDemuxer struct {
+	streams     []av.Stream
+	newStreams   []av.Stream
+	changeAfter int64
+	pktIdx      atomic.Int64
+}
+
+func (d *codecChangingDemuxer) GetCodecs(_ context.Context) ([]av.Stream, error) {
+	return d.streams, nil
+}
+
+func (d *codecChangingDemuxer) ReadPacket(ctx context.Context) (av.Packet, error) {
+	if err := ctx.Err(); err != nil {
+		return av.Packet{}, err
+	}
+
+	n := d.pktIdx.Add(1)
+	pkt := av.Packet{DTS: time.Duration(n) * (time.Second / 250)}
+
+	if n == d.changeAfter {
+		pkt.NewCodecs = d.newStreams
+	}
+
+	return pkt, nil
+}
+
+func (d *codecChangingDemuxer) Close() error { return nil }
+
+// codecChangingMuxer is a mockMuxer that also implements av.CodecChanger.
+// It counts how many times WriteCodecChange is called.
+type codecChangingMuxer struct {
+	mockMuxer
+	codecChanges atomic.Int64
+}
+
+func (m *codecChangingMuxer) WriteCodecChange(_ context.Context, _ []av.Stream) error {
+	m.codecChanges.Add(1)
+
+	return nil
+}
+
+// =============================================================================
+// Tests — Lifecycle preconditions
+// =============================================================================
+
+// TestAddConsumerBeforeStart verifies that AddConsumer returns
+// ErrStreamManagerNotStartedYet when Start has not yet been called.
+func TestAddConsumerBeforeStart(t *testing.T) {
+	t.Parallel()
+
+	ctx := t.Context()
+
+	sm := streammanager3.New(makeDemuxerFactory(testStreams()), nil)
+	factory, _ := makeMuxerFactory()
+
+	err := sm.AddConsumer(ctx, "producer-1", "consumer-1", factory, nil, nil)
+	if !errors.Is(err, streammanager3.ErrStreamManagerNotStartedYet) {
+		t.Errorf("AddConsumer before Start: got %v, want ErrStreamManagerNotStartedYet", err)
+	}
+}
+
+// TestSignalStopIdempotency verifies that SignalStop returns true on the first
+// call and false on every subsequent call.
+func TestSignalStopIdempotency(t *testing.T) {
+	t.Parallel()
+
+	ctx := t.Context()
+
+	sm := streammanager3.New(makeDemuxerFactory(testStreams()), nil)
+	if err := sm.Start(ctx); err != nil {
+		t.Fatal(err)
+	}
+
+	if !sm.SignalStop() {
+		t.Error("first SignalStop() returned false, want true")
+	}
+
+	for i := range 5 {
+		if sm.SignalStop() {
+			t.Errorf("SignalStop() call %d returned true, want false", i+2)
+		}
+	}
+
+	_ = sm.WaitStop()
+}
+
+// TestStopCleansUpAllProducers verifies that after Stop() returns,
+// GetActiveProducersCount is zero regardless of how many producers were active.
+func TestStopCleansUpAllProducers(t *testing.T) {
+	t.Parallel()
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	sm := startedSM(t, ctx)
+	factory, _ := makeMuxerFactory()
+
+	for i := range 5 {
+		pid := fmt.Sprintf("producer-%d", i)
+		cid := fmt.Sprintf("consumer-%d", i)
+
+		if err := sm.AddConsumer(ctx, pid, cid, factory, nil, nil); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	if err := sm.Stop(); err != nil {
+		t.Fatal(err)
+	}
+
+	if n := sm.GetActiveProducersCount(ctx); n != 0 {
+		t.Errorf("GetActiveProducersCount after Stop: got %d, want 0", n)
+	}
+}
+
+// =============================================================================
+// Tests — Additional error paths
+// =============================================================================
+
+// TestMuxerFactoryErrorPropagatedToErrChan verifies that when the MuxerFactory
+// itself returns an error (not WritePacket), the error is delivered
+// asynchronously to errChan and AddConsumer still returns nil.
+func TestMuxerFactoryErrorPropagatedToErrChan(t *testing.T) {
+	t.Parallel()
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	sm := startedSM(t, ctx)
+
+	errMuxFactory := errors.New("muxer factory intentionally failed")
+	badFactory := func(_ context.Context, _ string) (av.MuxCloser, error) {
+		return nil, errMuxFactory
+	}
+
+	errChan := make(chan error, 1)
+	if err := sm.AddConsumer(ctx, "producer-1", "consumer-1", badFactory, nil, errChan); err != nil {
+		t.Fatalf("AddConsumer: unexpected synchronous error: %v", err)
+	}
+
+	select {
+	case <-ctx.Done():
+		t.Fatal("timed out waiting for mux factory error on errChan")
+	case err := <-errChan:
+		if !errors.Is(err, errMuxFactory) {
+			t.Errorf("errChan got %v, want errMuxFactory in chain", err)
+		}
+	}
+}
+
+// TestRemoveConsumerUnknownConsumerID verifies that removing a consumerID that
+// does not exist on a valid producer is a no-op and returns nil (not an error).
+func TestRemoveConsumerUnknownConsumerID(t *testing.T) {
+	t.Parallel()
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	sm := startedSM(t, ctx)
+	factory, _ := makeMuxerFactory()
+
+	if err := sm.AddConsumer(ctx, "producer-1", "consumer-1", factory, nil, nil); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := sm.RemoveConsumer(ctx, "producer-1", "nonexistent-consumer"); err != nil {
+		t.Errorf("RemoveConsumer unknown consumerID: got %v, want nil", err)
+	}
+}
+
+// =============================================================================
+// Tests — Callbacks
+// =============================================================================
+
+// TestDemuxerRemoverCalledOnShutdown verifies that the DemuxerRemover callback
+// is invoked for every producer when Stop() completes.
+func TestDemuxerRemoverCalledOnShutdown(t *testing.T) {
+	t.Parallel()
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	var mu sync.Mutex
+
+	removedIDs := map[string]bool{}
+	demuxerRemover := func(_ context.Context, producerID string) error {
+		mu.Lock()
+		removedIDs[producerID] = true
+		mu.Unlock()
+
+		return nil
+	}
+
+	sm := streammanager3.New(makeDemuxerFactory(testStreams()), demuxerRemover)
+	if err := sm.Start(ctx); err != nil {
+		t.Fatal(err)
+	}
+
+	factory, _ := makeMuxerFactory()
+
+	for _, pid := range []string{"producer-1", "producer-2"} {
+		if err := sm.AddConsumer(ctx, pid, pid+"-c", factory, nil, nil); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	// Stop is synchronous: by the time it returns all producer goroutines have
+	// completed their defers, including the demuxerRemover call.
+	if err := sm.Stop(); err != nil {
+		t.Fatal(err)
+	}
+
+	mu.Lock()
+	defer mu.Unlock()
+
+	for _, pid := range []string{"producer-1", "producer-2"} {
+		if !removedIDs[pid] {
+			t.Errorf("DemuxerRemover was not called for %q", pid)
+		}
+	}
+}
+
+// TestMuxerRemoverCalledOnConsumerClose verifies that the MuxerRemover callback
+// is invoked after an explicit RemoveConsumer call.
+func TestMuxerRemoverCalledOnConsumerClose(t *testing.T) {
+	t.Parallel()
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	removed := make(chan string, 1)
+	muxRemover := func(_ context.Context, consumerID string) error {
+		select {
+		case removed <- consumerID:
+		default:
+		}
+
+		return nil
+	}
+
+	factory, registry := makeMuxerFactory()
+	sm := startedSM(t, ctx)
+
+	if err := sm.AddConsumer(ctx, "producer-1", "consumer-1", factory, muxRemover, nil); err != nil {
+		t.Fatal(err)
+	}
+
+	// Wait until the consumer goroutine is running (evidenced by receiving ≥1 packet).
+	deadline := time.Now().Add(2 * time.Second)
+	for time.Now().Before(deadline) {
+		v, ok := registry.Load("consumer-1")
+		if ok && v.(*mockMuxer).packetsRecv.Load() > 0 {
+			break
+		}
+
+		time.Sleep(5 * time.Millisecond)
+	}
+
+	if err := sm.RemoveConsumer(ctx, "producer-1", "consumer-1"); err != nil {
+		t.Fatal(err)
+	}
+
+	select {
+	case id := <-removed:
+		if id != "consumer-1" {
+			t.Errorf("MuxerRemover called with %q, want %q", id, "consumer-1")
+		}
+	case <-time.After(2 * time.Second):
+		t.Error("MuxerRemover was not called within 2 s after RemoveConsumer")
+	}
+}
+
+// =============================================================================
+// Tests — Codec change forwarding
+// =============================================================================
+
+// TestCodecChangeForwardedToCodecChanger verifies that when the demuxer emits a
+// packet with non-nil NewCodecs, the stream manager forwards it via
+// WriteCodecChange to any muxer that implements av.CodecChanger.
+func TestCodecChangeForwardedToCodecChanger(t *testing.T) {
+	t.Parallel()
+
+	const changeAfter = int64(10)
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	demuxFactory := func(_ context.Context, _ string) (av.DemuxCloser, error) {
+		return &codecChangingDemuxer{
+			streams:     testStreams(),
+			newStreams:   []av.Stream{{Idx: 0}, {Idx: 1}},
+			changeAfter: changeAfter,
+		}, nil
+	}
+
+	sm := streammanager3.New(demuxFactory, nil)
+	if err := sm.Start(ctx); err != nil {
+		t.Fatal(err)
+	}
+
+	t.Cleanup(func() { _ = sm.Stop() })
+
+	mux := &codecChangingMuxer{}
+	muxFactory := func(_ context.Context, _ string) (av.MuxCloser, error) {
+		return mux, nil
+	}
+
+	if err := sm.AddConsumer(ctx, "producer-1", "consumer-1", muxFactory, nil, nil); err != nil {
+		t.Fatal(err)
+	}
+
+	deadline := time.Now().Add(3 * time.Second)
+	for time.Now().Before(deadline) {
+		if mux.codecChanges.Load() > 0 {
+			return
+		}
+
+		time.Sleep(10 * time.Millisecond)
+	}
+
+	t.Errorf("WriteCodecChange was not called on the CodecChanger muxer within 3 s (changeAfter=%d)", changeAfter)
+}

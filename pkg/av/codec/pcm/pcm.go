@@ -80,7 +80,6 @@ func FlipEndian(src []byte) (dst []byte) { //nolint:nonamedreturns
 	return
 }
 
-//nolint:funlen,gocognit
 func Transcode(dst, src av.AudioCodecData) func([]byte) []byte {
 	var (
 		reader  func([]byte) []int16
