@@ -1,0 +1,10 @@
+syntax = "proto3";
+
+// buf:lint:ignore PACKAGE_VERSION_SUFFIX
+package fsb_q;
+
+option go_package = "github.com/vtpl1/vrtc/gen/fsbq";
+
+message SeekInfo {
+  int32 offset = 1;
+}

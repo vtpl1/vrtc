@@ -1,0 +1,21 @@
+syntax = "proto3";
+
+// buf:lint:ignore PACKAGE_VERSION_SUFFIX
+package central_service_frs;
+
+import "data_models/data_models.proto";
+
+option go_package = "github.com/vtpl1/vrtc/gen/centralservicefrs";
+
+service CentralService {
+  rpc ReadEngines(ReadEnginesRequest) returns (stream ReadEnginesResponse) {}
+}
+
+message ReadEnginesRequest {
+  string node_id = 1;
+}
+
+message ReadEnginesResponse {
+  repeated string engine_ids = 1;
+  data_models.Error err = 2;
+}

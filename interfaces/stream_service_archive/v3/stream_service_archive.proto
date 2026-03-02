@@ -1,0 +1,31 @@
+syntax = "proto3";
+
+package stream_service_archive.v3;
+
+import "data_models/data_models.proto";
+
+option cc_enable_arenas = true;
+option go_package = "github.com/vtpl1/vrtc/gen/streamservicearchive";
+
+service StreamService {
+  rpc WriteFramePVA(stream WriteFramePVARequest) returns (WriteFramePVAResponse) {}
+  rpc ReadFramePVA(ReadFramePVARequest) returns (stream ReadFramePVAResponse) {}
+}
+
+message WriteFramePVARequest {
+  data_models.FramePVA frame_pva = 1;
+}
+
+message WriteFramePVAResponse {
+  data_models.Channel channel = 1;
+  data_models.Error error = 2;
+}
+
+message ReadFramePVARequest {
+  data_models.Channel channel = 1;
+}
+
+message ReadFramePVAResponse {
+  data_models.FramePVA frame_pva = 1;
+  data_models.Error error = 2;
+}

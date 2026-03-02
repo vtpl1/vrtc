@@ -4,6 +4,8 @@ run:
 
 linters:
   default: all
+  disable:
+    - wsl
   exclusions:
     generated: lax
     warn-unused: true

@@ -2,15 +2,26 @@ syntax = "proto3";
 
 package streaming;
 
-option go_package = "github.com/vtpl1/vrtc/gen/streaming";
-
 import "media/media.proto";
 
-message ForwardRequest  { media.MediaFrame frame = 1; }
-message ForwardResponse { int64 sequence = 1; string error = 2; }
+option go_package = "github.com/vtpl1/vrtc/gen/streaming";
 
-message SubscribeRequest  { media.StreamID stream_id = 1; string node_id = 2; }
-message SubscribeResponse { media.MediaFrame frame = 1; string error = 2; }
+message ForwardRequest {
+  media.MediaFrame frame = 1;
+}
+message ForwardResponse {
+  int64 sequence = 1;
+  string error = 2;
+}
+
+message SubscribeRequest {
+  media.StreamID stream_id = 1;
+  string node_id = 2;
+}
+message SubscribeResponse {
+  media.MediaFrame frame = 1;
+  string error = 2;
+}
 
 service StreamForwarder {
   // Forward: push frames from source to destination (client streaming).

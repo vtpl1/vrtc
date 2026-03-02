@@ -1,0 +1,73 @@
+syntax = "proto3";
+
+// buf:lint:ignore PACKAGE_VERSION_SUFFIX
+package stream_service_frs;
+
+import "data_models/data_models.proto";
+
+option go_package = "github.com/vtpl1/vrtc/gen/streamservicefrs";
+
+service StreamService {
+  rpc ReadFrame(ReadFrameRequest) returns (stream ReadFrameResponse) {}
+  rpc WritePva(stream WritePvaRequest) returns (WritePvaResponse) {}
+  rpc ReadFramePva(ReadFramePvaRequest) returns (stream ReadFramePvaResponse) {}
+  rpc WriteFramePva(stream WriteFramePvaRequest) returns (WriteFramePvaResponse) {}
+  rpc RecvJpegFrames(RecvJpegFramesRequest) returns (RecvJpegFramesResponse) {}
+}
+
+message ReadFrameRequest {
+  string node_id = 1;
+  string engine_id = 2;
+}
+
+message ReadFrameResponse {
+  string node_id = 1;
+  string engine_id = 2;
+  data_models.Frame frame = 3;
+  data_models.Error err = 4;
+}
+
+message WritePvaRequest {
+  string node_id = 1;
+  string engine_id = 2;
+  data_models.PVAData pva = 3;
+}
+
+message WritePvaResponse {
+  string node_id = 1;
+  string engine_id = 2;
+  data_models.Error err = 3;
+}
+
+message ReadFramePvaRequest {
+  string node_id = 1;
+  string engine_id = 2;
+}
+
+message ReadFramePvaResponse {
+  string node_id = 1;
+  string engine_id = 2;
+  data_models.FramePVA frame_pva = 3;
+  data_models.Error err = 4;
+}
+
+message WriteFramePvaRequest {
+  string node_id = 1;
+  string engine_id = 2;
+  data_models.FramePVA frame_pva = 3;
+}
+
+message WriteFramePvaResponse {
+  string node_id = 1;
+  string engine_id = 2;
+  data_models.Error error = 3;
+}
+
+message RecvJpegFramesRequest {
+  string node_id = 1;
+  string engine_id = 2;
+}
+
+message RecvJpegFramesResponse {
+  data_models.Error err = 1;
+}

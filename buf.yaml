@@ -1,6 +1,14 @@
 version: v2
 modules:
   - path: interfaces
+    excludes:
+      - interfaces/central_service
+      - interfaces/central_service_frs
+      - interfaces/face_service
+      - interfaces/fsb_q
+      - interfaces/seperate_recording_service
+      - interfaces/streaming_controller
+      - interfaces/vms_api_service
 lint:
   use:
     - STANDARD

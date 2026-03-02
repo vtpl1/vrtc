@@ -1,0 +1,107 @@
+syntax = "proto3";
+
+// buf:lint:ignore PACKAGE_VERSION_SUFFIX
+package vms_api_service;
+
+option go_package = "github.com/vtpl1/vrtc/gen/vmsapiservice";
+
+service VMSApiService {
+  // buf:lint:ignore RPC_PASCAL_CASE
+  rpc getVMSServerId(GetVMSServerIdRequest) returns (GetVMSServerIdResponse) {}
+  // buf:lint:ignore RPC_PASCAL_CASE
+  rpc getChannelMediaServerRelations(GetChannelMediaServerRelationsRequest) returns (GetChannelMediaServerRelationsResponse) {}
+  // buf:lint:ignore RPC_PASCAL_CASE
+  rpc getCurrentMediaServers(GetCurrentMediaServersRequest) returns (GetCurrentMediaServersResponse) {}
+  // buf:lint:ignore RPC_PASCAL_CASE
+  rpc getSiteId(GetSiteIdRequest) returns (GetSiteIdResponse) {}
+  // buf:lint:ignore RPC_PASCAL_CASE
+  rpc getScheduleByChannelId(GetScheduleByChannelIdRequest) returns (GetScheduleByChannelIdResponse) {}
+}
+
+message GetVMSServerIdRequest {
+  int64 session_id = 1;
+}
+
+message GetVMSServerIdResponse {
+  int64 error_code = 1;
+  string vms_server_id = 2;
+}
+
+message GetChannelMediaServerRelationsRequest {
+  int64 session_id = 1;
+}
+
+message GetChannelMediaServerRelationsResponse {
+  int64 error_code = 1;
+  repeated ChannelMediaServerRelation channel_media_server_relation = 2;
+}
+
+message ChannelMediaServerRelation {
+  int32 ch_id = 1;
+  string media_server_id = 2;
+}
+
+message GetCurrentMediaServersRequest {
+  int64 session_id = 1;
+}
+
+message GetCurrentMediaServersResponse {
+  int64 error_code = 1;
+  // buf:lint:ignore FIELD_LOWER_SNAKE_CASE
+  repeated MediaServer mediaServer = 2;
+}
+
+message GetSiteIdRequest {
+  int64 session_id = 1;
+}
+
+message GetSiteIdResponse {
+  int64 error_code = 1;
+  int64 site_id = 2;
+}
+
+message MediaServer {
+  int64 error_code = 1;
+  string id = 2;
+  string name = 3;
+  string ip = 4;
+  // buf:lint:ignore FIELD_LOWER_SNAKE_CASE
+  string publicIp = 5;
+  int32 capacity = 6;
+  // buf:lint:ignore FIELD_LOWER_SNAKE_CASE
+  int64 lastUpdateTime = 7;
+  int32 type = 8;
+}
+
+message GetScheduleByChannelIdRequest {
+  int64 session_id = 1;
+  int32 channel_id = 2;
+}
+
+message GetScheduleByChannelIdResponse {
+  int64 error_code = 1;
+  VEdgeSchedule edge_schedule = 2;
+}
+
+message VEdgeSchedule {
+  int64 site_id = 1;
+  int32 channel_id = 2;
+  repeated VEdgeScheduleData edge_schedule_data = 3;
+  int32 motion_recording = 4;
+}
+
+message VEdgeScheduleData {
+  int32 day_of_the_week = 1;
+  repeated VEdgeScheduleCombinedTime rec_duration = 2;
+  repeated int32 streaming_type = 3;
+}
+
+message VEdgeScheduleCombinedTime {
+  VScheduleTime start = 1;
+  VScheduleTime end = 2;
+}
+
+message VScheduleTime {
+  int32 hour = 1;
+  int32 minute = 2;
+}

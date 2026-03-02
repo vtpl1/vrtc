@@ -1,0 +1,44 @@
+syntax = "proto3";
+
+// buf:lint:ignore PACKAGE_VERSION_SUFFIX
+package fsb_q;
+
+import "fsb_q/opencv.proto";
+
+option go_package = "github.com/vtpl1/vrtc/gen/fsbq";
+
+message Rect {
+  int32 left = 1;
+  int32 top = 2;
+  int32 width = 3;
+  int32 height = 4;
+}
+
+message ListRect {
+  repeated Rect rect = 1;
+}
+
+message ChannelDetails {
+  string my_id = 1;
+  string engine_name = 2;
+  string engine_type = 3;
+  string channel_name = 4;
+  string camera_ip = 5;
+  float latitude = 6;
+  float longitude = 7;
+}
+
+message ObjectInfo {
+  int32 message_id = 1;
+  Rect face_rect = 2;
+  string gender = 3;
+  string race = 4;
+  int32 capture_resolution = 5;
+  float capture_time = 6;
+  int32 auto_registration_tag = 7;
+  bool spoof_tag = 8;
+  ChannelDetails channel_details = 9;
+  OcvMat face_chip = 10;
+  OcvMat extended_face_chip = 11;
+  OcvMat full_image = 12;
+}

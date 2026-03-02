@@ -1,0 +1,20 @@
+syntax = "proto3";
+
+// buf:lint:ignore PACKAGE_VERSION_SUFFIX
+package fsb_q;
+
+option go_package = "github.com/vtpl1/vrtc/gen/fsbq";
+
+enum FunctionTypesEnum {
+  FUNCTION_TYPES_ENUM_UNKNOWN_UNSPECIFIED = 0;
+  FUNCTION_TYPES_ENUM_FINISH = 1; // Finish
+  FUNCTION_TYPES_ENUM_DATA = 2; // Data
+  FUNCTION_TYPES_ENUM_START = 3; // Start
+  FUNCTION_TYPES_ENUM_LOAD = 4; // Load
+  FUNCTION_TYPES_ENUM_GET_RESULT = 5; // GetResult
+  FUNCTION_TYPES_ENUM_STOP = 6; // Stop
+}
+
+message FunctionTypes {
+  FunctionTypesEnum function_types = 1;
+}
