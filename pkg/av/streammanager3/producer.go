@@ -56,14 +56,12 @@ func (m *Producer) Start(ctx context.Context) error {
 
 	m.mu.Lock()
 	m.cancel = cancel
-	m.wg.Add(1)
 	m.mu.Unlock()
 
-	go func(ctx context.Context, cancel context.CancelFunc) {
-		defer m.wg.Done()
+	m.wg.Go(func() {
 		defer cancel()
 
-		demuxer, err := m.demuxerFactory(ctx, m.id)
+		demuxer, err := m.demuxerFactory(sctx, m.id)
 		if err != nil {
 			m.setLastCodecError(errors.Join(ErrProducerDemuxFactory, err))
 
@@ -84,7 +82,7 @@ func (m *Producer) Start(ctx context.Context) error {
 
 				_ = m.demuxerRemover(ctxTimeout, m.id)
 			}
-		}(ctx)
+		}(sctx)
 		defer func() {
 			m.mu.RLock()
 
@@ -104,7 +102,7 @@ func (m *Producer) Start(ctx context.Context) error {
 			m.mu.Unlock()
 		}()
 
-		streams, err := m.demuxer.GetCodecs(ctx)
+		streams, err := m.demuxer.GetCodecs(sctx)
 		if err != nil {
 			m.setLastCodecError(err)
 
@@ -123,7 +121,7 @@ func (m *Producer) Start(ctx context.Context) error {
 		m.mu.Unlock()
 
 		m.wg.Go(func() {
-			m.readWriteLoop(ctx)
+			m.readWriteLoop(sctx)
 		})
 
 		ticker := time.NewTicker(1 * time.Second)
@@ -144,7 +142,7 @@ func (m *Producer) Start(ctx context.Context) error {
 					continue
 				}
 
-				_ = c1.Start(ctx)
+				_ = c1.Start(sctx)
 			case <-ticker.C:
 				m.mu.RLock()
 
@@ -169,11 +167,11 @@ func (m *Producer) Start(ctx context.Context) error {
 				}
 				m.mu.Unlock()
 
-			case <-ctx.Done():
+			case <-sctx.Done():
 				return
 			}
 		}
-	}(sctx, cancel)
+	})
 
 	return nil
 }

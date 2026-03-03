@@ -61,27 +61,24 @@ func (m *Consumer) Start(ctx context.Context) error {
 	}
 
 	m.cancel = cancel
-	m.wg.Add(1) // must happen under the lock so Close's Wait sees it
 	m.mu.Unlock()
-
-	go func(ctx context.Context, cancel context.CancelFunc) {
-		defer m.wg.Done()
+	m.wg.Go(func() {
 		defer cancel()
-		defer func(ctx context.Context) {
+		defer func() {
 			if m.muxerRemover != nil {
-				ctxDetached := context.WithoutCancel(ctx)
+				ctxDetached := context.WithoutCancel(sctx)
 
 				ctxTimeout, cancel := context.WithTimeout(ctxDetached, 5*time.Second)
 				defer cancel()
 
 				_ = m.muxerRemover(ctxTimeout, m.id)
 			}
-		}(ctx)
+		}()
 		defer m.inactive.Store(true)
 
 		select {
-		case <-ctx.Done():
-			m.setLastError(ctx.Err())
+		case <-sctx.Done():
+			m.setLastError(sctx.Err())
 
 			return
 		case _, ok := <-m.headersAvailable:
@@ -89,7 +86,7 @@ func (m *Consumer) Start(ctx context.Context) error {
 				return
 			}
 
-			muxer, err := m.muxerFactory(ctx, m.id)
+			muxer, err := m.muxerFactory(sctx, m.id)
 			if err != nil {
 				m.setLastError(errors.Join(ErrConsumerMuxFactory, err))
 
@@ -97,7 +94,7 @@ func (m *Consumer) Start(ctx context.Context) error {
 			}
 
 			defer func() {
-				ctxDetached := context.WithoutCancel(ctx)
+				ctxDetached := context.WithoutCancel(sctx)
 
 				ctxTimeout, cancel := context.WithTimeout(ctxDetached, 5*time.Second)
 				defer cancel()
@@ -110,7 +107,7 @@ func (m *Consumer) Start(ctx context.Context) error {
 			streams := m.headers
 			m.mu.RUnlock()
 
-			if err := muxer.WriteHeader(ctx, streams); err != nil {
+			if err := muxer.WriteHeader(sctx, streams); err != nil {
 				m.setLastError(errors.Join(ErrMuxerWriteHeader, err))
 
 				return
@@ -118,7 +115,7 @@ func (m *Consumer) Start(ctx context.Context) error {
 
 			for {
 				select {
-				case <-ctx.Done():
+				case <-sctx.Done():
 					return
 				case pkt, ok := <-m.queue:
 					if !ok {
@@ -127,7 +124,7 @@ func (m *Consumer) Start(ctx context.Context) error {
 
 					if pkt.NewCodecs != nil {
 						if cc, ok := muxer.(av.CodecChanger); ok {
-							if err := cc.WriteCodecChange(ctx, pkt.NewCodecs); err != nil {
+							if err := cc.WriteCodecChange(sctx, pkt.NewCodecs); err != nil {
 								m.setLastError(errors.Join(ErrMuxerWriteCodecChange, err))
 
 								return
@@ -135,7 +132,7 @@ func (m *Consumer) Start(ctx context.Context) error {
 						}
 					}
 
-					if err := muxer.WritePacket(ctx, pkt); err != nil {
+					if err := muxer.WritePacket(sctx, pkt); err != nil {
 						m.setLastError(errors.Join(ErrMuxerWritePacket, err))
 
 						return
@@ -143,7 +140,7 @@ func (m *Consumer) Start(ctx context.Context) error {
 				}
 			}
 		}
-	}(sctx, cancel)
+	})
 
 	return nil
 }

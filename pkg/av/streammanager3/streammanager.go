@@ -158,11 +158,9 @@ func (m *StreamManager) Start(ctx context.Context) error {
 
 	m.mu.Lock()
 	m.cancel = cancel
-	m.wg.Add(1)
 	m.mu.Unlock()
 
-	go func(sctx context.Context, cancel context.CancelFunc) {
-		defer m.wg.Done()
+	m.wg.Go(func() {
 		defer cancel()
 		defer func() {
 			m.mu.RLock()
@@ -222,7 +220,7 @@ func (m *StreamManager) Start(ctx context.Context) error {
 				}
 			}
 		}
-	}(sctx, cancel)
+	})
 
 	return nil
 }
