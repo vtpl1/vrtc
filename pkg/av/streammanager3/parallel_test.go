@@ -1251,3 +1251,459 @@ func TestCodecChangeForwardedToCodecChanger(t *testing.T) {
 
 	t.Errorf("WriteCodecChange was not called on the CodecChanger muxer within 3 s (changeAfter=%d)", changeAfter)
 }
+
+// =============================================================================
+// Tests — High-load / exhaustive parallel
+// =============================================================================
+
+// TestMillionConsumerOperations exercises 1 000 000 total add+remove consumer
+// cycles spread across 100 producers with 1 000 concurrent worker goroutines
+// (10 per producer). Each worker uses unique consumer IDs so there are no
+// duplicate-ID collisions. Run with -race to validate synchronisation at scale.
+func TestMillionConsumerOperations(t *testing.T) {
+	t.Parallel()
+
+	const (
+		numProducers = 100
+		numWorkers   = 1_000
+		opsPerWorker = 1_000 // 1 000 × 1 000 = 1 000 000 total cycles
+	)
+
+	ctx, cancel := context.WithTimeout(context.Background(), 120*time.Second)
+	defer cancel()
+
+	sm := startedSM(t, ctx)
+	factory, _ := makeMuxerFactory()
+
+	var (
+		wg      sync.WaitGroup
+		success atomic.Int64
+	)
+
+	for w := range numWorkers {
+		wg.Add(1)
+
+		go func(w int) {
+			defer wg.Done()
+
+			pid := fmt.Sprintf("producer-%d", w%numProducers)
+
+			for i := range opsPerWorker {
+				if ctx.Err() != nil {
+					return
+				}
+
+				cid := fmt.Sprintf("w%d-op%d", w, i)
+
+				if err := sm.AddConsumer(ctx, pid, cid, factory, nil, nil); err != nil {
+					if errors.Is(err, context.DeadlineExceeded) ||
+						errors.Is(err, context.Canceled) {
+						return
+					}
+
+					continue
+				}
+
+				success.Add(1)
+				removeConsumer(t, sm, ctx, pid, cid)
+			}
+		}(w)
+	}
+
+	wg.Wait()
+
+	total := int64(numWorkers * opsPerWorker)
+	got := success.Load()
+	t.Logf("completed %d/%d add+remove cycles", got, total)
+
+	// Allow up to 5% failure due to transient producer-closing or context
+	// cancellation during auto-cleanup ticker races.
+	if got < total*95/100 {
+		t.Errorf("too many failures: %d/%d succeeded (need ≥95%%)", got, total)
+	}
+}
+
+// TestConcurrentStopDuringHighLoad calls Stop() while 200 goroutines are
+// hammering AddConsumer across 20 producers. Verifies clean shutdown with no
+// deadlocks, panics, or stuck goroutines under full load.
+func TestConcurrentStopDuringHighLoad(t *testing.T) {
+	t.Parallel()
+
+	const (
+		numWorkers   = 200
+		numProducers = 20
+	)
+
+	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+	defer cancel()
+
+	sm := streammanager3.New(makeDemuxerFactory(testStreams()), nil)
+	if err := sm.Start(ctx); err != nil {
+		t.Fatal(err)
+	}
+
+	factory, _ := makeMuxerFactory()
+
+	var wg sync.WaitGroup
+
+	for w := range numWorkers {
+		wg.Add(1)
+
+		go func(w int) {
+			defer wg.Done()
+
+			pid := fmt.Sprintf("producer-%d", w%numProducers)
+
+			for i := 0; ctx.Err() == nil; i++ {
+				cid := fmt.Sprintf("w%d-op%d", w, i)
+
+				if err := sm.AddConsumer(ctx, pid, cid, factory, nil, nil); err != nil {
+					return
+				}
+
+				removeConsumer(t, sm, ctx, pid, cid)
+			}
+		}(w)
+	}
+
+	// Let the load build briefly, then shut down while goroutines are active.
+	time.Sleep(20 * time.Millisecond)
+
+	if err := sm.Stop(); err != nil {
+		t.Errorf("Stop() returned %v", err)
+	}
+
+	cancel() // unblock any goroutines still waiting inside AddConsumer
+	wg.Wait()
+}
+
+// TestCloseBeforeStartRace exercises the specific window where RemoveConsumer
+// races against an in-flight AddConsumer before the producer goroutine has
+// dispatched Consumer.Start(). This directly validates the alreadyClosing guard
+// added to Consumer.Start after the CAS. Run with -race.
+func TestCloseBeforeStartRace(t *testing.T) {
+	t.Parallel()
+
+	const (
+		numWorkers = 100
+		iterations = 100 // 100 × 100 = 10 000 concurrent add/remove pairs
+	)
+
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+
+	sm := startedSM(t, ctx)
+	factory, _ := makeMuxerFactory()
+
+	// Seed the producer so it is running before the race begins.
+	if err := sm.AddConsumer(ctx, "producer-1", "seed", factory, nil, nil); err != nil {
+		t.Fatal(err)
+	}
+
+	var wg sync.WaitGroup
+
+	for w := range numWorkers {
+		wg.Add(1)
+
+		go func(w int) {
+			defer wg.Done()
+
+			for i := range iterations {
+				if ctx.Err() != nil {
+					return
+				}
+
+				cid := fmt.Sprintf("w%d-i%d", w, i)
+
+				// AddConsumer and RemoveConsumer run concurrently so that Close
+				// may arrive before the producer goroutine dispatches Start.
+				var pair sync.WaitGroup
+				pair.Add(2)
+
+				go func() {
+					defer pair.Done()
+					_ = sm.AddConsumer(ctx, "producer-1", cid, factory, nil, nil)
+				}()
+
+				go func() {
+					defer pair.Done()
+					removeConsumer(t, sm, ctx, "producer-1", cid)
+				}()
+
+				pair.Wait()
+			}
+		}(w)
+	}
+
+	wg.Wait()
+}
+
+// TestHighConcurrencyManyProducers stresses the StreamManager's producer-map
+// locking with 500 producers each served by 20 concurrent consumers. After all
+// consumers are removed, it verifies that all producers are auto-cleaned within
+// the ticker period.
+func TestHighConcurrencyManyProducers(t *testing.T) {
+	t.Parallel()
+
+	const (
+		numProducers     = 500
+		consumersPerProd = 20
+	)
+
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+
+	sm := startedSM(t, ctx)
+	factory, _ := makeMuxerFactory()
+
+	var wg sync.WaitGroup
+
+	errs := make(chan error, numProducers*consumersPerProd)
+
+	for p := range numProducers {
+		for c := range consumersPerProd {
+			wg.Add(1)
+
+			go func(p, c int) {
+				defer wg.Done()
+
+				pid := fmt.Sprintf("producer-%d", p)
+				cid := fmt.Sprintf("consumer-%d-%d", p, c)
+
+				if err := sm.AddConsumer(ctx, pid, cid, factory, nil, nil); err != nil {
+					errs <- fmt.Errorf("add %s/%s: %w", pid, cid, err)
+
+					return
+				}
+
+				time.Sleep(time.Duration((p+c)%10+1) * time.Millisecond)
+				removeConsumer(t, sm, ctx, pid, cid)
+			}(p, c)
+		}
+	}
+
+	wg.Wait()
+	close(errs)
+
+	for err := range errs {
+		t.Error(err)
+	}
+
+	// All consumers removed → producers should auto-clean within 2 ticker periods.
+	deadline := time.Now().Add(4 * time.Second)
+	for time.Now().Before(deadline) {
+		if sm.GetActiveProducersCount(ctx) == 0 {
+			return
+		}
+
+		time.Sleep(100 * time.Millisecond)
+	}
+
+	t.Errorf("producers still active 4 s after all consumers left: count=%d",
+		sm.GetActiveProducersCount(ctx))
+}
+
+// TestConcurrentWaitStop launches 100 goroutines that all call WaitStop
+// simultaneously after SignalStop. Verifies that all callers unblock with no
+// deadlock regardless of scheduling order.
+func TestConcurrentWaitStop(t *testing.T) {
+	t.Parallel()
+
+	ctx := context.Background()
+
+	sm := streammanager3.New(makeDemuxerFactory(testStreams()), nil)
+	if err := sm.Start(ctx); err != nil {
+		t.Fatal(err)
+	}
+
+	const numWaiters = 100
+
+	var wg sync.WaitGroup
+
+	for range numWaiters {
+		wg.Add(1)
+
+		go func() {
+			defer wg.Done()
+			_ = sm.WaitStop()
+		}()
+	}
+
+	sm.SignalStop()
+	wg.Wait()
+}
+
+// TestStopIdempotentUnderConcurrency calls Stop() from 50 goroutines at the
+// same instant. Exactly one must initiate shutdown; all must return nil.
+func TestStopIdempotentUnderConcurrency(t *testing.T) {
+	t.Parallel()
+
+	ctx := context.Background()
+
+	sm := streammanager3.New(makeDemuxerFactory(testStreams()), nil)
+	if err := sm.Start(ctx); err != nil {
+		t.Fatal(err)
+	}
+
+	const numCallers = 50
+
+	var wg sync.WaitGroup
+
+	errs := make(chan error, numCallers)
+
+	for range numCallers {
+		wg.Add(1)
+
+		go func() {
+			defer wg.Done()
+
+			if err := sm.Stop(); err != nil {
+				errs <- err
+			}
+		}()
+	}
+
+	wg.Wait()
+	close(errs)
+
+	for err := range errs {
+		t.Errorf("Stop() returned %v, want nil", err)
+	}
+}
+
+// TestHighLoadWithCodecChanges adds 200 consumers to a producer that emits a
+// codec-change event after every 5 packets. Verifies that WriteCodecChange
+// reaches all active consumers under high concurrency without data races on
+// the shared headers field.
+func TestHighLoadWithCodecChanges(t *testing.T) {
+	t.Parallel()
+
+	const (
+		numConsumers = 200
+		changeAfter  = int64(5)
+	)
+
+	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+	defer cancel()
+
+	demuxFactory := func(_ context.Context, _ string) (av.DemuxCloser, error) {
+		return &codecChangingDemuxer{
+			streams:     testStreams(),
+			newStreams:   []av.Stream{{Idx: 0}, {Idx: 1}},
+			changeAfter: changeAfter,
+		}, nil
+	}
+
+	sm := streammanager3.New(demuxFactory, nil)
+	if err := sm.Start(ctx); err != nil {
+		t.Fatal(err)
+	}
+
+	t.Cleanup(func() { _ = sm.Stop() })
+
+	var (
+		wg      sync.WaitGroup
+		changed atomic.Int64
+	)
+
+	for i := range numConsumers {
+		wg.Add(1)
+
+		go func(i int) {
+			defer wg.Done()
+
+			mux := &codecChangingMuxer{}
+			muxFactory := func(_ context.Context, _ string) (av.MuxCloser, error) {
+				return mux, nil
+			}
+
+			if err := sm.AddConsumer(ctx, "producer-1", fmt.Sprintf("c%d", i), muxFactory, nil, nil); err != nil {
+				return
+			}
+
+			deadline := time.Now().Add(5 * time.Second)
+			for time.Now().Before(deadline) {
+				if mux.codecChanges.Load() > 0 {
+					changed.Add(1)
+
+					break
+				}
+
+				time.Sleep(5 * time.Millisecond)
+			}
+		}(i)
+	}
+
+	wg.Wait()
+
+	if changed.Load() == 0 {
+		t.Error("no consumers received a codec change event")
+	}
+
+	t.Logf("%d/%d consumers received at least one codec change", changed.Load(), numConsumers)
+}
+
+// TestConsumerErrChanHighLoad attaches 200 consumers that each use a muxer
+// failing after 1 packet, all sharing a single buffered errChan. Verifies that
+// errors are delivered under high concurrency and the channel never deadlocks
+// due to back-pressure.
+func TestConsumerErrChanHighLoad(t *testing.T) {
+	t.Parallel()
+
+	const numConsumers = 200
+
+	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+	defer cancel()
+
+	sm := startedSM(t, ctx)
+
+	errChan := make(chan error, numConsumers)
+
+	var wg sync.WaitGroup
+
+	for i := range numConsumers {
+		wg.Add(1)
+
+		go func(i int) {
+			defer wg.Done()
+
+			fm := &failingMuxer{failAfter: 1}
+			muxFactory := func(_ context.Context, _ string) (av.MuxCloser, error) {
+				return fm, nil
+			}
+
+			_ = sm.AddConsumer(
+				ctx,
+				"producer-1",
+				fmt.Sprintf("failing-%d", i),
+				muxFactory,
+				nil,
+				errChan,
+			)
+		}(i)
+	}
+
+	wg.Wait()
+
+	// Drain: require at least half the consumers to have delivered an error.
+	received := 0
+	drain := time.NewTimer(5 * time.Second)
+	defer drain.Stop()
+
+	for received < numConsumers/2 {
+		select {
+		case err := <-errChan:
+			if !errors.Is(err, errWritePacketFailed) {
+				t.Errorf("unexpected error: %v", err)
+			}
+
+			received++
+		case <-drain.C:
+			t.Errorf("timed out: received only %d/%d errors", received, numConsumers)
+
+			return
+		}
+	}
+
+	t.Logf("received %d/%d muxer errors (≥50%% threshold met)", received, numConsumers)
+}

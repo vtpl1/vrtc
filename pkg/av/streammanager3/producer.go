@@ -16,13 +16,13 @@ type Producer struct {
 	demuxerFactory av.DemuxerFactory
 	demuxerRemover av.DemuxerRemover
 
-	cancel           context.CancelFunc
-	wg               sync.WaitGroup
-	mu               sync.RWMutex
-	alreadyClosing   atomic.Bool
-	started          atomic.Bool
-	consumers        map[string]*Consumer
-	consumersToStart chan *Consumer
+	cancel         context.CancelFunc
+	sctx           context.Context // producer's running context; set under mu in Start
+	wg             sync.WaitGroup
+	mu             sync.RWMutex
+	alreadyClosing atomic.Bool
+	started        atomic.Bool
+	consumers      map[string]*Consumer
 
 	demuxer          av.DemuxCloser
 	headers          []av.Stream
@@ -39,7 +39,6 @@ func NewProducer(
 		id:               producerID,
 		demuxerFactory:   demuxerFactory,
 		demuxerRemover:   demuxerRemover,
-		consumersToStart: make(chan *Consumer),
 		headersAvailable: make(chan struct{}),
 		consumers:        make(map[string]*Consumer),
 	}
@@ -49,28 +48,26 @@ func NewProducer(
 
 func (m *Producer) Start(ctx context.Context) error {
 	if !m.started.CompareAndSwap(false, true) {
-		return ErrProducesAlreadyStarted
+		return ErrProducerAlreadyStarted
 	}
-
+	if m.alreadyClosing.Load() {
+		return ErrProducerClosing
+	}
 	sctx, cancel := context.WithCancel(ctx)
-
 	m.mu.Lock()
 	m.cancel = cancel
+	m.sctx = sctx
 	m.mu.Unlock()
-
 	m.wg.Go(func() {
 		defer cancel()
-
 		demuxer, err := m.demuxerFactory(sctx, m.id)
 		if err != nil {
 			m.setLastCodecError(errors.Join(ErrProducerDemuxFactory, err))
 
 			return
 		}
-
 		m.mu.Lock()
 		m.demuxer = demuxer
-
 		m.mu.Unlock()
 		defer m.demuxer.Close()
 		defer func(ctx context.Context) {
@@ -129,20 +126,6 @@ func (m *Producer) Start(ctx context.Context) error {
 
 		for {
 			select {
-			case c, ok := <-m.consumersToStart:
-				if !ok {
-					continue
-				}
-
-				m.mu.RLock()
-				c1, exists := m.consumers[c.id] // cross check if the consumer still exists
-				m.mu.RUnlock()
-
-				if !exists {
-					continue
-				}
-
-				_ = c1.Start(sctx)
 			case <-ticker.C:
 				m.mu.RLock()
 
@@ -172,7 +155,6 @@ func (m *Producer) Start(ctx context.Context) error {
 			}
 		}
 	})
-
 	return nil
 }
 
@@ -180,9 +162,12 @@ func (m *Producer) Close() error {
 	if !m.alreadyClosing.CompareAndSwap(false, true) {
 		return nil
 	}
+	m.mu.RLock()
+	cancel := m.cancel
+	m.mu.RUnlock()
 
-	if m.cancel != nil {
-		m.cancel()
+	if cancel != nil {
+		cancel()
 	}
 
 	m.wg.Wait()
@@ -195,7 +180,10 @@ func (m *Producer) GetCodecs(ctx context.Context) ([]av.Stream, error) {
 	case <-ctx.Done():
 		return nil, ctx.Err()
 	case <-m.headersAvailable:
-		return m.headers, m.headersErr
+		m.mu.RLock()
+		headers, headersErr := m.headers, m.headersErr
+		m.mu.RUnlock()
+		return headers, headersErr
 	}
 }
 
@@ -221,8 +209,11 @@ func (m *Producer) readWriteLoop(ctx context.Context) {
 		case <-fpsLimitTicker.C:
 			pkt, err := m.ReadPacket(ctx)
 			if err != nil {
-				if m.cancel != nil {
-					m.cancel()
+				m.mu.RLock()
+				cancel := m.cancel
+				m.mu.RUnlock()
+				if cancel != nil {
+					cancel()
 				}
 
 				return
@@ -338,12 +329,20 @@ func (m *Producer) AddConsumer(
 		return err
 	}
 
-	select {
-	case <-ctx.Done():
-		c.inactive.Store(true)
+	// Start the consumer directly using the producer's stored context.
+	// If the producer is closing (sctx already cancelled or alreadyClosing set),
+	// Consumer.Start detects this and returns an error without spawning a goroutine.
+	m.mu.RLock()
+	sctx := m.sctx
+	m.mu.RUnlock()
 
-		return ctx.Err()
-	case m.consumersToStart <- c:
+	if err := c.Start(sctx); err != nil {
+		c.inactive.Store(true)
+		m.mu.Lock()
+		delete(m.consumers, consumerID)
+		m.mu.Unlock()
+
+		return ErrProducerClosing
 	}
 
 	return c.WriteHeader(ctx, streams)
@@ -362,14 +361,6 @@ func (m *Producer) RemoveConsumer(_ context.Context, consumerID string) error {
 }
 
 func (m *Producer) Pause(ctx context.Context) error {
-	if m.alreadyClosing.Load() {
-		return ErrProducerClosing
-	}
-
-	if !m.started.Load() {
-		return ErrProducerNotStartedYet
-	}
-
 	m.mu.RLock()
 	dmx := m.demuxer
 	m.mu.RUnlock()
@@ -382,14 +373,6 @@ func (m *Producer) Pause(ctx context.Context) error {
 }
 
 func (m *Producer) Resume(ctx context.Context) error {
-	if m.alreadyClosing.Load() {
-		return ErrProducerClosing
-	}
-
-	if !m.started.Load() {
-		return ErrProducerNotStartedYet
-	}
-
 	m.mu.RLock()
 	dmx := m.demuxer
 	m.mu.RUnlock()

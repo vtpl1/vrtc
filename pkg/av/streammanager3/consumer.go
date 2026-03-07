@@ -16,13 +16,17 @@ type Consumer struct {
 	muxerRemover av.MuxerRemover
 	errCh        chan<- error
 
+	// lifecycle: serialises Start vs Close (protects cancel and wg.Go/wg.Wait ordering)
+	mu             sync.Mutex
 	cancel         context.CancelFunc
 	wg             sync.WaitGroup
 	alreadyClosing atomic.Bool
+	started        atomic.Bool
 	inactive       atomic.Bool
 	writeOnce      sync.Once
 
-	mu               sync.RWMutex
+	// data: protects headers and headersErr
+	dataMu           sync.RWMutex
 	headers          []av.Stream
 	headersErr       error
 	headersAvailable chan []av.Stream
@@ -48,20 +52,24 @@ func NewConsumer(
 }
 
 func (m *Consumer) Start(ctx context.Context) error {
-	sctx, cancel := context.WithCancel(ctx)
-
-	m.mu.Lock()
+	if !m.started.CompareAndSwap(false, true) {
+		return ErrConsumerAlreadyStarted
+	}
 	if m.alreadyClosing.Load() {
-		// Close was called before Start; discard the context and do not
-		// increment the WaitGroup — Close may have already returned from Wait.
-		m.mu.Unlock()
-		cancel()
-
-		return nil
+		return ErrConsumerClosing
 	}
 
+	sctx, cancel := context.WithCancel(ctx)
+	m.mu.Lock()
+	// Definitive check under lock: Close may have run between the early check
+	// above and here. Checking inside the lock ensures wg.Go() never races
+	// with Close's wg.Wait() (which also acquires m.mu before waiting).
+	if m.alreadyClosing.Load() {
+		m.mu.Unlock()
+		cancel()
+		return ErrConsumerClosing
+	}
 	m.cancel = cancel
-	m.mu.Unlock()
 	m.wg.Go(func() {
 		defer cancel()
 		defer func() {
@@ -75,11 +83,8 @@ func (m *Consumer) Start(ctx context.Context) error {
 			}
 		}()
 		defer m.inactive.Store(true)
-
 		select {
 		case <-sctx.Done():
-			m.setLastError(sctx.Err())
-
 			return
 		case _, ok := <-m.headersAvailable:
 			if !ok {
@@ -103,9 +108,9 @@ func (m *Consumer) Start(ctx context.Context) error {
 				_ = muxer.Close()
 			}()
 
-			m.mu.RLock()
+			m.dataMu.RLock()
 			streams := m.headers
-			m.mu.RUnlock()
+			m.dataMu.RUnlock()
 
 			if err := muxer.WriteHeader(sctx, streams); err != nil {
 				m.setLastError(errors.Join(ErrMuxerWriteHeader, err))
@@ -141,7 +146,7 @@ func (m *Consumer) Start(ctx context.Context) error {
 			}
 		}
 	})
-
+	m.mu.Unlock()
 	return nil
 }
 
@@ -149,11 +154,7 @@ func (m *Consumer) Close() error {
 	if !m.alreadyClosing.CompareAndSwap(false, true) {
 		return nil
 	}
-
 	m.inactive.Store(true)
-	// Lock (not RLock) to synchronise with Start: either Start's wg.Add(1)
-	// completes before we reach Wait, or Start sees alreadyClosing=true under
-	// this same lock and does not call Add at all.
 	m.mu.Lock()
 	cancel := m.cancel
 	m.mu.Unlock()
@@ -188,8 +189,8 @@ func (m *Consumer) WriteHeader(ctx context.Context, streams []av.Stream) error {
 }
 
 func (m *Consumer) WriteCodecChange(_ context.Context, changed []av.Stream) error {
-	m.mu.Lock()
-	defer m.mu.Unlock()
+	m.dataMu.Lock()
+	defer m.dataMu.Unlock()
 
 	m.headers = changed
 
@@ -227,8 +228,8 @@ func (m *Consumer) setLastError(err error) {
 		return
 	}
 
-	m.mu.Lock()
-	defer m.mu.Unlock()
+	m.dataMu.Lock()
+	defer m.dataMu.Unlock()
 
 	m.headersErr = err
 	if m.errCh == nil {
@@ -244,8 +245,8 @@ func (m *Consumer) setLastError(err error) {
 }
 
 func (m *Consumer) LastError() error {
-	m.mu.RLock()
-	defer m.mu.RUnlock()
+	m.dataMu.RLock()
+	defer m.dataMu.RUnlock()
 
 	return m.headersErr
 }
