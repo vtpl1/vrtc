@@ -3,6 +3,7 @@ package h265parser
 import "errors"
 
 var (
+	ErrInvalidSPS            = errors.New("invalid sps")
 	ErrSPSNotFound           = errors.New("h265parser SPS not found")
 	ErrPPSNotFound           = errors.New("h265parser PPS not found")
 	ErrVPSNotFound           = errors.New("h265parser VPS not found")

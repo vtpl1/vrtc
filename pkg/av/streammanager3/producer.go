@@ -227,8 +227,8 @@ func (m *Producer) readWriteLoop(ctx context.Context) {
 
 			m.mu.RLock()
 
-			active := make(map[string]*Consumer, len(m.consumers))
-			for consumerID, c := range m.consumers {
+			active := make([]*Consumer, 0, len(m.consumers))
+			for _, c := range m.consumers {
 				if c.LastError() != nil {
 					continue
 				}
@@ -237,7 +237,7 @@ func (m *Producer) readWriteLoop(ctx context.Context) {
 					continue
 				}
 
-				active[consumerID] = c
+				active = append(active, c)
 			}
 
 			m.mu.RUnlock()
@@ -349,9 +349,12 @@ func (m *Producer) AddConsumer(
 }
 
 func (m *Producer) RemoveConsumer(_ context.Context, consumerID string) error {
-	m.mu.RLock()
+	m.mu.Lock()
 	consumer, exists := m.consumers[consumerID]
-	m.mu.RUnlock()
+	if exists {
+		delete(m.consumers, consumerID)
+	}
+	m.mu.Unlock()
 
 	if exists {
 		_ = consumer.Close()
