@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"strconv"
 	"time"
 
 	"github.com/vtpl1/vrtc/pkg/av"
@@ -112,7 +113,11 @@ var chanConfigTable = []av.ChannelLayout{
 func ParseADTSHeader(
 	frame []byte,
 ) (config MPEG4AudioConfig, hdrlen int, framelen int, samples int, err error) {
-	if frame[0] != 0xff || frame[1]&0xf6 != 0xf0 {
+	if len(frame) < 7 {
+		return config, 0, 0, 0, io.ErrUnexpectedEOF
+	}
+
+	if frame[0] != 0xff || (frame[1]&0xf0) != 0xf0 {
 		err = ErrAACparserNotAdtsHeader
 
 		return config, hdrlen, framelen, samples, err
@@ -120,9 +125,13 @@ func ParseADTSHeader(
 
 	config.ObjectType = uint(frame[2]>>6) + 1
 	config.SampleRateIndex = uint(frame[2] >> 2 & 0xf)
+
+	if int(config.SampleRateIndex) >= len(sampleRateTable) {
+		return config, 0, 0, 0, fmt.Errorf("aacparser: invalid sample rate index %d", config.SampleRateIndex)
+	}
 	config.ChannelConfig = uint(frame[2]<<2&0x4 | frame[3]>>6&0x3)
 
-	if config.ChannelConfig == uint(0) {
+	if config.ChannelConfig > 7 {
 		err = ErrAACparserAdtsChannelCountInvalid
 
 		return config, hdrlen, framelen, samples, err
@@ -130,7 +139,9 @@ func ParseADTSHeader(
 
 	(&config).Complete()
 
-	framelen = int(frame[3]&0x3)<<11 | int(frame[4])<<3 | int(frame[5]>>5)
+	framelen = int(frame[3]&0x03)<<11 |
+		int(frame[4])<<3 |
+		int(frame[5])>>5
 	samples = (int(frame[6]&0x3) + 1) * 1024
 
 	hdrlen = 7
@@ -144,13 +155,25 @@ func ParseADTSHeader(
 		return config, hdrlen, framelen, samples, err
 	}
 
+	if framelen > len(frame) {
+		return config, hdrlen, framelen, samples, io.ErrUnexpectedEOF
+	}
+
 	return config, hdrlen, framelen, samples, err
 }
 
-const ADTSHeaderLength = 7
+const (
+	ADTSHeaderLength    = 7
+	ADTSHeaderLengthCRC = 9
+)
 
 func FillADTSHeader(header []byte, config MPEG4AudioConfig, samples int, payloadLength int) {
-	payloadLength += 7
+	if len(header) < ADTSHeaderLength {
+		return
+	}
+
+	hdrlen := ADTSHeaderLength
+	payloadLength += hdrlen
 	// AAAAAAAA AAAABCCD EEFFFFGH HHIJKLMM MMMMMMMM MMMOOOOO OOOOOOPP (QQQQQQQQ QQQQQQQQ)
 	header[0] = 0xff
 	header[1] = 0xf1
@@ -257,12 +280,12 @@ func (s *MPEG4AudioConfig) IsValid() bool {
 }
 
 func (s *MPEG4AudioConfig) Complete() {
-	if int(s.SampleRateIndex) < len(sampleRateTable) {
-		s.SampleRate = sampleRateTable[s.SampleRateIndex]
+	if i := int(s.SampleRateIndex); i >= 0 && i < len(sampleRateTable) {
+		s.SampleRate = sampleRateTable[i]
 	}
 
-	if int(s.ChannelConfig) < len(chanConfigTable) {
-		s.ChannelLayout = chanConfigTable[s.ChannelConfig]
+	if i := int(s.ChannelConfig); i >= 0 && i < len(chanConfigTable) {
+		s.ChannelLayout = chanConfigTable[i]
 	}
 }
 
@@ -271,9 +294,8 @@ func ParseMPEG4AudioConfigBytes(data []byte) (MPEG4AudioConfig, error) {
 
 	var err error
 	// copied from libavcodec/mpeg4audio.c avpriv_mpeg4audio_get_config()
-	r := bytes.NewReader(data)
 
-	br := &bits.Reader{R: r}
+	br := &bits.Reader{R: bytes.NewReader(data)}
 	if config.ObjectType, err = readObjectType(br); err != nil {
 		return config, err
 	}
@@ -289,6 +311,20 @@ func ParseMPEG4AudioConfigBytes(data []byte) (MPEG4AudioConfig, error) {
 	(&config).Complete()
 
 	return config, err
+}
+
+//nolint:gochecknoglobals
+var layoutToChannelConfig = map[av.ChannelLayout]uint{
+	av.ChFrontCenter:                                    1,
+	av.ChFrontLeft | av.ChFrontRight:                    2,
+	av.ChFrontCenter | av.ChFrontLeft | av.ChFrontRight: 3,
+	av.ChFrontCenter | av.ChFrontLeft | av.ChFrontRight |
+		av.ChBackCenter: 4,
+	av.ChFrontCenter | av.ChFrontLeft | av.ChFrontRight |
+		av.ChBackLeft | av.ChBackRight: 5,
+	av.ChFrontCenter | av.ChFrontLeft | av.ChFrontRight |
+		av.ChBackLeft | av.ChBackRight |
+		av.ChLowFreq: 6,
 }
 
 func WriteMPEG4AudioConfig(w io.Writer, config MPEG4AudioConfig) error {
@@ -311,12 +347,9 @@ func WriteMPEG4AudioConfig(w io.Writer, config MPEG4AudioConfig) error {
 	if err != nil {
 		return err
 	}
-
 	if config.ChannelConfig == 0 {
-		for i, layout := range chanConfigTable {
-			if layout == config.ChannelLayout {
-				config.ChannelConfig = uint(i)
-			}
+		if cc, ok := layoutToChannelConfig[config.ChannelLayout]; ok {
+			config.ChannelConfig = cc
 		}
 	}
 
@@ -358,17 +391,29 @@ func (s CodecData) SampleFormat() av.SampleFormat {
 	return av.FLTP
 }
 
+func (s CodecData) IsLC() bool {
+	return s.Config.ObjectType == AOT_AAC_LC
+}
+
 func (s CodecData) Tag() string {
-	return fmt.Sprintf("mp4a.40.%d", s.Config.ObjectType)
+
+	if s.Config.ObjectType == AOT_AAC_LC {
+		return "mp4a.40.2"
+	}
+	return "mp4a.40." + strconv.Itoa(int(s.Config.ObjectType))
 }
 
 func (s CodecData) PacketDuration(_ []byte) (time.Duration, error) {
-	return time.Duration(1024) * time.Second / time.Duration(s.Config.SampleRate), nil
+	if s.Config.SampleRate == 0 {
+		return 0, errors.New("aacparser: invalid samplerate")
+	}
+
+	return time.Second * 1024 / time.Duration(s.Config.SampleRate), nil
 }
 
 func NewCodecDataFromMPEG4AudioConfig(config MPEG4AudioConfig) (CodecData, error) {
-	b := &bytes.Buffer{}
-	_ = WriteMPEG4AudioConfig(b, config)
+	var b bytes.Buffer
+	_ = WriteMPEG4AudioConfig(&b, config)
 
 	return NewCodecDataFromMPEG4AudioConfigBytes(b.Bytes())
 }
@@ -387,4 +432,22 @@ func NewCodecDataFromMPEG4AudioConfigBytes(config []byte) (CodecData, error) {
 	}
 
 	return s, err
+}
+
+func ExtractADTSFrame(frame []byte) (
+	raw []byte,
+	config MPEG4AudioConfig,
+	samples int,
+	err error,
+) {
+
+	config, hdrlen, framelen, samples, err := ParseADTSHeader(frame)
+	if err != nil {
+		return nil, config, 0, err
+	}
+
+	// zero-copy slice
+	raw = frame[hdrlen:framelen]
+
+	return raw, config, samples, nil
 }
