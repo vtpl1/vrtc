@@ -13,8 +13,11 @@ import (
 	"encoding/binary"
 	"errors"
 	"io"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -23,6 +26,7 @@ import (
 	"github.com/vtpl1/vrtc/pkg/av/codec/pcm"
 	"github.com/vtpl1/vrtc/pkg/av/format/avf"
 	"github.com/vtpl1/vrtc/pkg/av/format/fmp4"
+	"github.com/vtpl1/vrtc/pkg/av/format/llhls"
 )
 
 // ── codec fixtures ────────────────────────────────────────────────────────────
@@ -635,7 +639,7 @@ func TestAVFtoFMP4_RealFiles(t *testing.T) {
 	for _, path := range paths {
 		base := filepath.Base(path)
 		stem := base[:len(base)-len(filepath.Ext(base))]
-		outPath := filepath.Join(outDir, stem+".fmp4")
+		outPath := filepath.Join(outDir, stem+".mp4")
 
 		dmx, err := avf.Open(path)
 		if err != nil {
@@ -674,6 +678,271 @@ func TestAVFtoFMP4_RealFiles(t *testing.T) {
 
 	if written == 0 {
 		t.Logf("no fMP4 files were written — all real files were skipped or errored")
+	}
+}
+
+// ── AVF → LLHLS integration tests ────────────────────────────────────────────
+
+// pipeAVFtoLLHLS runs the full AVF demuxer → LL-HLS muxer pipeline and returns
+// the muxer so callers can issue HTTP requests against its handler.
+// It only muxes H.264/H.265/AAC streams; others are silently skipped.
+// Returns (nil, false) when no supported stream is present.
+func pipeAVFtoLLHLS(
+	t *testing.T,
+	dmx *avf.Demuxer,
+	cfg llhls.Config,
+) (*llhls.Muxer, bool) {
+	t.Helper()
+
+	ctx := context.Background()
+
+	streams, err := dmx.GetCodecs(ctx)
+	if err != nil {
+		t.Fatalf("avf GetCodecs: %v", err)
+	}
+
+	// Filter to streams the LLHLS muxer (via fMP4) supports.
+	var hlsStreams []av.Stream
+	supported := make(map[uint16]bool)
+
+	for _, s := range streams {
+		switch s.Codec.Type() {
+		case av.H264, av.H265, av.AAC:
+			hlsStreams = append(hlsStreams, s)
+			supported[s.Idx] = true
+		}
+	}
+
+	if len(hlsStreams) == 0 {
+		return nil, false
+	}
+
+	mx := llhls.NewMuxer(cfg)
+
+	if err := mx.WriteHeader(ctx, hlsStreams); err != nil {
+		t.Fatalf("llhls WriteHeader: %v", err)
+	}
+
+	for {
+		pkt, err := dmx.ReadPacket(ctx)
+		if errors.Is(err, io.EOF) {
+			break
+		}
+
+		if err != nil {
+			t.Fatalf("avf ReadPacket: %v", err)
+		}
+
+		if !supported[pkt.Idx] {
+			continue
+		}
+
+		if err := mx.WritePacket(ctx, pkt); err != nil {
+			t.Fatalf("llhls WritePacket: %v", err)
+		}
+	}
+
+	if err := mx.WriteTrailer(ctx, nil); err != nil {
+		t.Fatalf("llhls WriteTrailer: %v", err)
+	}
+
+	return mx, true
+}
+
+// TestAVFtoLLHLS_Synthetic verifies that a synthetic H.264 AVF stream produces
+// a valid LL-HLS playlist with at least one part and a reachable init segment.
+func TestAVFtoLLHLS_Synthetic(t *testing.T) {
+	t.Parallel()
+
+	h264 := makeH264Codec(t)
+	streams := []av.Stream{{Idx: 0, Codec: h264}}
+
+	const vidDur = 100 * time.Millisecond // 10 fps
+
+	// 3 keyframes → at least 2 complete parts (each keyframe boundary = new part).
+	inPkts := []av.Packet{
+		{Idx: 0, KeyFrame: true, DTS: 0, Duration: vidDur, Data: []byte{0x65, 0x01}, CodecType: av.H264},
+		{Idx: 0, KeyFrame: false, DTS: vidDur, Duration: vidDur, Data: []byte{0x41, 0x02}, CodecType: av.H264},
+		{Idx: 0, KeyFrame: true, DTS: 2 * vidDur, Duration: vidDur, Data: []byte{0x65, 0x03}, CodecType: av.H264},
+		{Idx: 0, KeyFrame: false, DTS: 3 * vidDur, Duration: vidDur, Data: []byte{0x41, 0x04}, CodecType: av.H264},
+		{Idx: 0, KeyFrame: true, DTS: 4 * vidDur, Duration: vidDur, Data: []byte{0x65, 0x05}, CodecType: av.H264},
+	}
+
+	avfData := buildSyntheticAVF(t, streams, inPkts)
+
+	cfg := llhls.DefaultConfig()
+	cfg.PartTarget = 150 * time.Millisecond // 1–2 frames per part at 10 fps
+
+	mx, ok := pipeAVFtoLLHLS(t, avf.New(bytes.NewReader(avfData)), cfg)
+	if !ok {
+		t.Fatal("no supported streams found")
+	}
+
+	srv := httptest.NewServer(mx.Handler("/hls"))
+	defer srv.Close()
+
+	// init segment must be present and non-empty.
+	resp, err := http.Get(srv.URL + "/hls/init.mp4")
+	if err != nil {
+		t.Fatalf("GET init.mp4: %v", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("init.mp4: want 200, got %d", resp.StatusCode)
+	}
+
+	initBody, _ := io.ReadAll(resp.Body)
+	if len(initBody) == 0 {
+		t.Fatal("init.mp4: empty response")
+	}
+
+	boxes := collectBoxTypes(t, initBody)
+	if !containsBox(boxes, "ftyp") || !containsBox(boxes, "moov") {
+		t.Errorf("init.mp4: missing ftyp/moov; boxes=%v", boxes)
+	}
+
+	// playlist must be present and contain required LL-HLS tags.
+	resp2, err := http.Get(srv.URL + "/hls/index.m3u8")
+	if err != nil {
+		t.Fatalf("GET index.m3u8: %v", err)
+	}
+	defer resp2.Body.Close()
+
+	if resp2.StatusCode != http.StatusOK {
+		t.Fatalf("index.m3u8: want 200, got %d", resp2.StatusCode)
+	}
+
+	playlist, _ := io.ReadAll(resp2.Body)
+	playlistStr := string(playlist)
+
+	for _, tag := range []string{
+		"#EXTM3U",
+		"#EXT-X-TARGETDURATION",
+		"#EXT-X-SERVER-CONTROL",
+		"#EXT-X-PART-INF",
+		"#EXT-X-MAP",
+	} {
+		if !strings.Contains(playlistStr, tag) {
+			t.Errorf("index.m3u8 missing tag %q", tag)
+		}
+	}
+
+	t.Logf("init.mp4 boxes=%v size=%d", boxes, len(initBody))
+	t.Logf("playlist:\n%s", playlistStr)
+}
+
+// TestAVFtoLLHLS_RealFiles runs the AVF→LLHLS pipeline on every real .avf file,
+// verifies the playlist and init segment are structurally valid, and confirms
+// that each #EXT-X-PART URI is reachable.
+func TestAVFtoLLHLS_RealFiles(t *testing.T) {
+	for _, path := range realAVFFiles(t) {
+		base := filepath.Base(path)
+
+		t.Run(base, func(t *testing.T) {
+			dmx, err := avf.Open(path)
+			if err != nil {
+				t.Fatalf("Open: %v", err)
+			}
+			defer dmx.Close()
+
+			cfg := llhls.DefaultConfig()
+			cfg.PartTarget = 500 * time.Millisecond
+			cfg.SegTarget = 2 * time.Second
+
+			mx, ok := pipeAVFtoLLHLS(t, dmx, cfg)
+			if !ok {
+				t.Skipf("no LLHLS-supported streams in %s", base)
+			}
+
+			srv := httptest.NewServer(mx.Handler("/hls"))
+			defer srv.Close()
+
+			// ── init segment ──────────────────────────────────────────────────
+
+			initResp, err := http.Get(srv.URL + "/hls/init.mp4")
+			if err != nil {
+				t.Fatalf("GET init.mp4: %v", err)
+			}
+			defer initResp.Body.Close()
+
+			if initResp.StatusCode != http.StatusOK {
+				t.Fatalf("init.mp4: want 200, got %d", initResp.StatusCode)
+			}
+
+			initBody, _ := io.ReadAll(initResp.Body)
+			initBoxes := collectBoxTypes(t, initBody)
+
+			if !containsBox(initBoxes, "ftyp") || !containsBox(initBoxes, "moov") {
+				t.Errorf("init.mp4 missing ftyp/moov; boxes=%v", initBoxes)
+			}
+
+			// ── playlist ──────────────────────────────────────────────────────
+
+			plResp, err := http.Get(srv.URL + "/hls/index.m3u8")
+			if err != nil {
+				t.Fatalf("GET index.m3u8: %v", err)
+			}
+			defer plResp.Body.Close()
+
+			if plResp.StatusCode != http.StatusOK {
+				t.Fatalf("index.m3u8: want 200, got %d", plResp.StatusCode)
+			}
+
+			playlist, _ := io.ReadAll(plResp.Body)
+			playlistStr := string(playlist)
+
+			for _, tag := range []string{"#EXTM3U", "#EXT-X-TARGETDURATION", "#EXT-X-MAP"} {
+				if !strings.Contains(playlistStr, tag) {
+					t.Errorf("playlist missing %q", tag)
+				}
+			}
+
+			// ── part reachability ─────────────────────────────────────────────
+
+			partCount := 0
+			for _, line := range strings.Split(playlistStr, "\n") {
+				line = strings.TrimSpace(line)
+				if !strings.HasPrefix(line, "#EXT-X-PART:") {
+					continue
+				}
+
+				// Extract URI= value.
+				uri := ""
+				for _, field := range strings.Split(strings.TrimPrefix(line, "#EXT-X-PART:"), ",") {
+					if strings.HasPrefix(field, "URI=") {
+						uri = strings.Trim(strings.TrimPrefix(field, "URI="), "\"")
+					}
+				}
+
+				if uri == "" {
+					continue
+				}
+
+				pr, err := http.Get(srv.URL + "/hls/" + uri)
+				if err != nil {
+					t.Errorf("GET part %s: %v", uri, err)
+					continue
+				}
+				partBody, _ := io.ReadAll(pr.Body)
+				pr.Body.Close()
+
+				if pr.StatusCode != http.StatusOK {
+					t.Errorf("part %s: want 200, got %d", uri, pr.StatusCode)
+					continue
+				}
+
+				partBoxes := collectBoxTypes(t, partBody)
+				if !containsBox(partBoxes, "moof") || !containsBox(partBoxes, "mdat") {
+					t.Errorf("part %s missing moof/mdat; boxes=%v", uri, partBoxes)
+				}
+
+				partCount++
+			}
+
+			t.Logf("init=%d B  parts=%d  playlist=%d B",
+				len(initBody), partCount, len(playlist))
+		})
 	}
 }
 

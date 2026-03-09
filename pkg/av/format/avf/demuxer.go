@@ -22,6 +22,8 @@ import (
 	"github.com/vtpl1/vrtc/pkg/av/codec/pcm"
 )
 
+type Option func(*Demuxer)
+
 // Sentinel errors returned by the demuxer.
 var (
 	// ErrNoCodecFound is returned by GetCodecs when no decodable stream was found.
@@ -88,18 +90,16 @@ type rawFrame struct {
 	timestamp int64 // milliseconds from the TimeStamp field
 	data      []byte
 
-	frameID    int64
-	durationMs int64
+	frameID int64
 }
 
 func (m *rawFrame) String() string {
 	return fmt.Sprintf(
-		"ID=%d Time=%dms Media=%d Frame=%d Duration=%d ms DataLen=%d",
+		"ID=%d Time=%dms Media=%d Frame=%d DataLen=%d",
 		m.frameID,
 		m.timestamp,
 		m.mediaType,
 		m.frameType,
-		m.durationMs,
 		len(m.data),
 	)
 }
@@ -132,11 +132,19 @@ type Demuxer struct {
 
 	probed     bool // GetCodecs has run
 	frameCount int64
+
+	// lastVideoTS and lastAudioTS track the timestamp (ms) of the most recently
+	// emitted video/audio packet so that packet Duration can be derived from the
+	// difference between consecutive timestamps.
+	lastVideoTS int64 // 0 = not yet set
+	lastAudioTS int64 // 0 = not yet set
+
+	disableAudio bool
 }
 
 // New creates a Demuxer that reads AVF data from r.
 // If r implements io.Closer, Close will delegate to it.
-func New(r io.Reader) *Demuxer {
+func New(r io.Reader, opts ...Option) *Demuxer {
 	d := &Demuxer{
 		r: bufio.NewReaderSize(r, readBufferSize),
 	}
@@ -144,20 +152,27 @@ func New(r io.Reader) *Demuxer {
 		d.rc = rc
 	}
 
+	for _, o := range opts {
+		o(d)
+	}
+
 	return d
 }
 
 // Open opens the named AVF file and returns a ready Demuxer.
-func Open(path string) (*Demuxer, error) {
+func Open(path string, opts ...Option) (*Demuxer, error) {
 	f, err := os.Open(path)
 	if err != nil {
 		return nil, err
 	}
 
-	return &Demuxer{
-		r:  bufio.NewReaderSize(f, readBufferSize),
-		rc: f,
-	}, nil
+	return New(f, opts...), nil
+}
+
+func WithDisableAudio() Option {
+	return func(d *Demuxer) {
+		d.disableAudio = true
+	}
 }
 
 // GetCodecs probes the stream to discover codec parameters and returns the
@@ -187,7 +202,7 @@ func (d *Demuxer) GetCodecs(_ context.Context) ([]av.Stream, error) {
 
 		switch frm.frameType {
 		case frameTypeAudioFrame:
-			if d.audioCodec == nil {
+			if !d.disableAudio && d.audioCodec == nil {
 				d.audioCodec = parseAudioCodec(frm.mediaType, frm.data)
 			}
 		case frameTypeConnectHeader:
@@ -207,8 +222,8 @@ func (d *Demuxer) GetCodecs(_ context.Context) ([]av.Stream, error) {
 	}
 
 	probeCount = 0
-	for probeCount < audioProbeSize {
-		// Early exit once both streams are identified.
+	for !d.disableAudio && probeCount < audioProbeSize {
+		// Early exit once audio codec is identified.
 		if d.audioCodec != nil {
 			break
 		}
@@ -245,7 +260,7 @@ func (d *Demuxer) GetCodecs(_ context.Context) ([]av.Stream, error) {
 		idx++
 	}
 
-	if d.audioCodec != nil {
+	if !d.disableAudio && d.audioCodec != nil {
 		d.audioIdx = idx
 		d.streams = append(d.streams, av.Stream{Idx: idx, Codec: d.audioCodec})
 	}
@@ -479,15 +494,38 @@ func (d *Demuxer) frameToPacket(frm rawFrame) (pkt av.Packet, skip bool, err err
 			return av.Packet{}, true, nil
 		}
 
+		// Clamp to enforce strictly-increasing DTS. Rare camera clock glitches
+		// can produce a backward step in the video timestamp; clamping to
+		// lastVideoTS+1 keeps downstream consumers (fMP4, LL-HLS) valid.
+		ts := frm.timestamp
+		if d.lastVideoTS != 0 && ts <= d.lastVideoTS {
+			ts = d.lastVideoTS + 1
+		}
+
+		var dur time.Duration
+		if d.lastVideoTS != 0 {
+			dur = time.Duration(ts-d.lastVideoTS) * time.Millisecond
+		}
+
+		d.lastVideoTS = ts
+
 		return av.Packet{
 			Idx:       d.videoIdx,
 			KeyFrame:  frm.frameType == frameTypeIFrame,
-			DTS:       dts,
+			DTS:       time.Duration(ts) * time.Millisecond,
+			Duration:  dur,
 			CodecType: d.videoCodec.Type(),
 			Data:      stripVideoPrefix(frm.data),
 		}, false, nil
 
 	case frameTypeAudioFrame:
+		// Honour the disableAudio option: skip all audio frames including
+		// late-detection ones so that audio packets are never emitted when
+		// the caller has opted out of audio.
+		if d.disableAudio {
+			return av.Packet{}, true, nil
+		}
+
 		if d.audioCodec == nil {
 			// Late audio codec detection for streams that had no audio during probe.
 			if c := parseAudioCodec(frm.mediaType, frm.data); c != nil {
@@ -512,9 +550,17 @@ func (d *Demuxer) frameToPacket(frm rawFrame) (pkt av.Packet, skip bool, err err
 			}
 		}
 
+		var dur time.Duration
+		if d.lastAudioTS != 0 && frm.timestamp > d.lastAudioTS {
+			dur = time.Duration(frm.timestamp-d.lastAudioTS) * time.Millisecond
+		}
+
+		d.lastAudioTS = frm.timestamp
+
 		return av.Packet{
 			Idx:       d.audioIdx,
 			DTS:       dts,
+			Duration:  dur,
 			CodecType: d.audioCodec.Type(),
 			Data:      data,
 		}, false, nil

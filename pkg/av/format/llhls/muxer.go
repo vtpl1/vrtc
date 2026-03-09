@@ -18,6 +18,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"math"
 	"net/http"
 	"strconv"
 	"strings"
@@ -124,6 +125,14 @@ type Muxer struct {
 	curSeg   *Segment   // segment being built (parts appended as they complete)
 	compSegs []*Segment // completed segments (ring buffer, oldest first)
 
+	// maxSegDur is the maximum actual segment duration (seconds) seen so far.
+	// Updated by finaliseSegment; used for EXT-X-TARGETDURATION.
+	maxSegDur float64
+
+	// seenFirstKey gates WritePacket: packets are dropped until the first video
+	// keyframe so every segment starts at an IDR and spans a full keyframe interval.
+	seenFirstKey bool
+
 	// lifecycle
 	written     bool
 	closed      bool
@@ -197,6 +206,17 @@ func (m *Muxer) WritePacket(_ context.Context, pkt av.Packet) error {
 	}
 
 	isVideoKey := pkt.KeyFrame && pkt.CodecType.IsVideo() && m.fw.HasVideo()
+
+	// Drop everything until the first video keyframe so that every segment
+	// starts at an IDR boundary and spans a full camera keyframe interval.
+	// This also ensures TARGETDURATION reflects a complete GOP, not a partial one.
+	if !m.seenFirstKey {
+		if !isVideoKey {
+			return nil
+		}
+
+		m.seenFirstKey = true
+	}
 
 	// Decide whether to flush the current part before adding this packet.
 	shouldFlush := m.fw.HasSamples() && (isVideoKey || m.partDurAccum >= m.cfg.PartTarget)
@@ -338,6 +358,11 @@ func (m *Muxer) finaliseSegment() {
 	}
 
 	m.curSeg.Data = sb.Bytes()
+
+	if m.curSeg.Duration > m.maxSegDur {
+		m.maxSegDur = m.curSeg.Duration
+	}
+
 	m.compSegs = append(m.compSegs, m.curSeg)
 
 	// Trim ring buffer.
@@ -409,6 +434,22 @@ func (m *Muxer) servePlaylist(w http.ResponseWriter, r *http.Request) {
 
 			return
 		}
+	} else {
+		// Initial (non-blocking-reload) request: block until the first complete
+		// segment is ready so clients never receive a playlist with no #EXTINF.
+		// We pass hasPIdx=false to waitForPart which resolves once segment 0
+		// appears in compSegs (i.e. has been fully finalised).
+		m.mu.Lock()
+		empty := !m.hasCompletedSegment()
+		m.mu.Unlock()
+
+		if empty {
+			if err := m.waitForPart(r.Context(), 0, 0, false); err != nil {
+				http.Error(w, "timeout waiting for first segment", http.StatusServiceUnavailable)
+
+				return
+			}
+		}
 	}
 
 	playlist := m.buildPlaylist()
@@ -462,6 +503,12 @@ func (m *Muxer) waitForPart(ctx context.Context, msn uint64, pIdx int, hasPIdx b
 	}
 
 	return nil
+}
+
+// hasCompletedSegment reports whether at least one complete segment has been
+// published (i.e. is present in compSegs). Must be called with m.mu held.
+func (m *Muxer) hasCompletedSegment() bool {
+	return len(m.compSegs) > 0
 }
 
 // partAvailable reports whether the requested MSN/part combination is already
@@ -598,13 +645,22 @@ func (m *Muxer) buildPlaylist() []byte {
 	defer m.mu.Unlock()
 
 	partTarget := m.cfg.PartTarget.Seconds()
-	segTarget := int(m.cfg.SegTarget.Seconds())
+
+	// EXT-X-TARGETDURATION must be >= ceil(max actual segment duration) per
+	// RFC 8216bis §4.4.3.1. Use the measured max; fall back to config when no
+	// segments have completed yet.
+	targetDur := m.cfg.SegTarget.Seconds()
+	if m.maxSegDur > targetDur {
+		targetDur = m.maxSegDur
+	}
+
+	segTargetInt := int(math.Ceil(targetDur))
 	holdBack := partTarget * 3
 
 	var b strings.Builder
 
 	fmt.Fprintf(&b, "#EXTM3U\n")
-	fmt.Fprintf(&b, "#EXT-X-TARGETDURATION:%d\n", segTarget)
+	fmt.Fprintf(&b, "#EXT-X-TARGETDURATION:%d\n", segTargetInt)
 	fmt.Fprintf(&b, "#EXT-X-VERSION:9\n")
 	fmt.Fprintf(&b, "#EXT-X-PART-INF:PART-TARGET=%.5f\n", partTarget)
 	fmt.Fprintf(&b,

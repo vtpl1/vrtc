@@ -264,14 +264,21 @@ func TestReadPacket_Timestamps(t *testing.T) {
 
 func TestReadPacket_EOF(t *testing.T) {
 	spsppsBuf := annexBSPSPPS(t)
+	payload := []byte{0x65, 0xAB}
 
 	var buf bytes.Buffer
-	buf.Write(buildFrame(2, 3, 0, spsppsBuf, 0)) // only init, no media frames
+	buf.Write(buildFrame(2, 3, 0, spsppsBuf, 0))              // CONNECT_HEADER
+	buf.Write(buildFrame(2, 1, 0, withLenPrefix(payload), 0)) // I_FRAME so GetCodecs succeeds
 
 	dmx := avf.New(bytes.NewReader(buf.Bytes()))
 
 	if _, err := dmx.GetCodecs(context.Background()); err != nil {
 		t.Fatalf("GetCodecs: %v", err)
+	}
+
+	// Drain the buffered I_FRAME, then the next call must return EOF.
+	if _, err := dmx.ReadPacket(context.Background()); err != nil {
+		t.Fatalf("first ReadPacket: %v", err)
 	}
 
 	_, err := dmx.ReadPacket(context.Background())
@@ -282,9 +289,11 @@ func TestReadPacket_EOF(t *testing.T) {
 
 func TestReadPacket_CancelledContext(t *testing.T) {
 	spsppsBuf := annexBSPSPPS(t)
+	payload := []byte{0x65, 0xAB}
 
 	var buf bytes.Buffer
-	buf.Write(buildFrame(2, 3, 0, spsppsBuf, 0))
+	buf.Write(buildFrame(2, 3, 0, spsppsBuf, 0))              // CONNECT_HEADER
+	buf.Write(buildFrame(2, 1, 0, withLenPrefix(payload), 0)) // I_FRAME so GetCodecs succeeds
 
 	dmx := avf.New(bytes.NewReader(buf.Bytes()))
 

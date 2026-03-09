@@ -20,6 +20,7 @@ type Edge struct {
 	ChannelsCSV   string   `json:"channels_csv,omitempty"    mapstructure:"channels_csv"    yaml:"channels_csv,omitempty"`    //nolint:tagliatelle
 	DontListen    bool     `json:"dont_listen,omitempty"     mapstructure:"dont_listen"     yaml:"dont_listen,omitempty"`     //nolint:tagliatelle
 	StreamAddr    string   `json:"stream_addr,omitempty"     mapstructure:"stream_addr"     yaml:"stream_addr,omitempty"`     //nolint:tagliatelle
+	StoragePath   string   `json:"storage_path,omitempty"    mapstructure:"storage_path"    yaml:"storage_path,omitempty"`    //nolint:tagliatelle
 }
 
 type API struct {

@@ -610,8 +610,15 @@ func (d *Demuxer) parseMoofMdat(
 			continue // out-of-bounds sample (malformed fragment)
 		}
 
-		data := make([]byte, s.size)
-		copy(data, mdatPayload[s.mdatOff:s.mdatOff+s.size])
+		raw := mdatPayload[s.mdatOff : s.mdatOff+s.size]
+
+		var data []byte
+		if track.hasVideo {
+			data = normalizeVideoFromAVCC(raw)
+		} else {
+			data = make([]byte, len(raw))
+			copy(data, raw)
+		}
 
 		dts := ticksToDuration(s.dts, track.timescale)
 		dur := ticksToDuration(int64(s.duration), track.timescale)
@@ -912,6 +919,34 @@ func parseTrun(
 	}
 
 	return samples, nil
+}
+
+// normalizeVideoFromAVCC extracts the raw NALU payload(s) from AVCC-framed
+// sample data and returns them concatenated without any length prefix or start
+// code. For a single-NALU sample (the common case), this returns exactly the
+// NALU bytes. For multi-NALU samples, the NALUs are concatenated in order.
+func normalizeVideoFromAVCC(data []byte) []byte {
+	var out []byte
+
+	for len(data) >= 4 {
+		naluLen := int(binary.BigEndian.Uint32(data[:4]))
+		data = data[4:]
+
+		if naluLen <= 0 || naluLen > len(data) {
+			break
+		}
+
+		out = append(out, data[:naluLen]...)
+		data = data[naluLen:]
+	}
+
+	if len(out) == 0 {
+		// Not AVCC — return a copy of the original data.
+		out = make([]byte, len(data))
+		copy(out, data)
+	}
+
+	return out
 }
 
 // ticksToDuration converts timescale ticks to a time.Duration.

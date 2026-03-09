@@ -183,11 +183,30 @@ func TestServeInit(t *testing.T) {
 func TestServePlaylist_Basic(t *testing.T) {
 	t.Parallel()
 
-	m := llhls.NewMuxer(smallCfg())
+	cfg := smallCfg()
+	m := llhls.NewMuxer(cfg)
 	ctx := context.Background()
 
 	if err := m.WriteHeader(ctx, streams(t)); err != nil {
 		t.Fatalf("header: %v", err)
+	}
+
+	// Write enough keyframes to complete the first full segment.
+	// Each keyframe flushes the previous part; segment finalises when
+	// accumulated duration >= SegTarget at a keyframe boundary.
+	nFrames := int(cfg.SegTarget/cfg.PartTarget) + 2
+	for i := range nFrames {
+		pkt := av.Packet{
+			Idx:       0,
+			KeyFrame:  true,
+			DTS:       time.Duration(i) * cfg.PartTarget,
+			Duration:  cfg.PartTarget,
+			Data:      []byte{0x65, 0x01},
+			CodecType: av.H264,
+		}
+		if err := m.WritePacket(ctx, pkt); err != nil {
+			t.Fatalf("WritePacket: %v", err)
+		}
 	}
 
 	h := m.Handler("/hls")
@@ -670,11 +689,17 @@ func TestWriteCodecChange_FlushesCurrentPart(t *testing.T) {
 		t.Fatalf("WriteCodecChange: %v", err)
 	}
 
+	// Finalise the stream so the flushed part appears in a completed segment
+	// (the initial playlist load now waits for the first complete segment).
+	if err := m.WriteTrailer(ctx, nil); err != nil {
+		t.Fatalf("WriteTrailer: %v", err)
+	}
+
 	h := m.Handler("/hls")
 	rec := httptest.NewRecorder()
 	h.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/hls/index.m3u8", nil))
 
-	// The flushed packet should appear as a part in the playlist.
+	// The flushed packet should appear as a part in the completed segment.
 	body := rec.Body.String()
 	if !strings.Contains(body, "#EXT-X-PART:") {
 		t.Errorf("expected flushed part in playlist after codec change\nGot:\n%s", body)

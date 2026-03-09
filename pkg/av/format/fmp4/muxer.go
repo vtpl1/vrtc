@@ -15,6 +15,7 @@ import (
 	"github.com/vtpl1/vrtc/pkg/av/codec/aacparser"
 	"github.com/vtpl1/vrtc/pkg/av/codec/h264parser"
 	"github.com/vtpl1/vrtc/pkg/av/codec/h265parser"
+	"github.com/vtpl1/vrtc/pkg/av/codec/parser"
 	"github.com/vtpl1/vrtc/pkg/av/codec/pcm"
 )
 
@@ -81,17 +82,19 @@ type Muxer struct {
 	seqNum   uint32
 	written  bool // WriteHeader has been called
 	closed   bool // WriteTrailer has been called
+
+	// dtsOffset is the DTS of the very first packet received; it is subtracted
+	// from all subsequent timestamps so the output timeline starts at zero.
+	// This normalises camera wall-clock timestamps to a player-friendly origin.
+	dtsOffset    time.Duration
+	dtsOffsetSet bool
 }
 
 // NewMuxer returns a Muxer that writes fMP4 data to w.
 func NewMuxer(w io.Writer) *Muxer {
 	return &Muxer{
 		w:        w,
-		tracks:   nil,
 		trackMap: make(map[uint16]*trackState),
-		seqNum:   0,
-		written:  false,
-		closed:   false,
 	}
 }
 
@@ -137,6 +140,15 @@ func (m *Muxer) WritePacket(_ context.Context, pkt av.Packet) error {
 	if ts == nil {
 		return nil // unknown stream index – skip gracefully
 	}
+
+	// Normalise timestamps to a zero-based origin on the first packet so that
+	// camera wall-clock DTS values don't produce huge or negative tfdt times.
+	if !m.dtsOffsetSet {
+		m.dtsOffset = pkt.DTS
+		m.dtsOffsetSet = true
+	}
+
+	pkt.DTS -= m.dtsOffset
 
 	// A video keyframe triggers a fragment flush of all pending samples.
 	if ts.hasVideo && pkt.KeyFrame && m.hasAnySamples() {
@@ -279,23 +291,54 @@ func makeSample(pkt av.Packet, ts *trackState) sample {
 
 	flags := uint32(0)
 
+	var data []byte
+
 	if ts.hasVideo {
 		if pkt.KeyFrame {
 			flags = sampleFlagsKeyframe
 		} else {
 			flags = sampleFlagsNonKeyframe
 		}
-	}
 
-	data := make([]byte, len(pkt.Data))
-	copy(data, pkt.Data)
+		data = normalizeVideoToAVCC(pkt.Data)
+	} else {
+		data = make([]byte, len(pkt.Data))
+		copy(data, pkt.Data)
+	}
 
 	return sample{
 		duration:  uint32(dur),
-		size:      uint32(len(pkt.Data)),
+		size:      uint32(len(data)),
 		flags:     flags,
 		ptsOffset: cts,
 		data:      data,
+	}
+}
+
+// normalizeVideoToAVCC ensures H.264/H.265 sample data is in AVCC format
+// (4-byte big-endian length prefix per NALU), as required by ISO 14496-15.
+// It handles three input formats:
+//   - AVCC: already correct, returned as-is.
+//   - Annex-B: converted to AVCC by replacing start codes with length prefixes.
+//   - Raw single NALU (e.g. from AVF demuxer after start-code stripping):
+//     wrapped with a 4-byte BE length prefix.
+func normalizeVideoToAVCC(data []byte) []byte {
+	nalus, typ := parser.SplitNALUs(data)
+	switch typ {
+	case parser.NALUAvcc:
+		out := make([]byte, len(data))
+		copy(out, data)
+
+		return out
+	case parser.NALUAnnexb:
+		return h264parser.AnnexBToAVCC(nalus)
+	default:
+		// Raw single NALU — prepend 4-byte BE length.
+		out := make([]byte, 4+len(data))
+		binary.BigEndian.PutUint32(out, uint32(len(data)))
+		copy(out[4:], data)
+
+		return out
 	}
 }
 

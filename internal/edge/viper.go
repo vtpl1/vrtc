@@ -18,6 +18,7 @@ func SaveConfig(cfgFile string) error {
 			ChannelsCSV:   "",
 			DontListen:    false,
 			StreamAddr:    "",
+			StoragePath:   "./test_data",
 		},
 		API: API{
 			Listen:    8083,
