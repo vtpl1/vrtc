@@ -11,7 +11,7 @@ import (
 const bitsInByte = 8
 
 var (
-	StartCodeBytes = []byte{0, 0, 1}                            //nolint:gochecknoglobals
+	StartCodeBytes = []byte{0, 0, 1}                           //nolint:gochecknoglobals
 	AUDBytes       = []byte{0, 0, 0, 1, 0x9, 0xf0, 0, 0, 0, 1} //nolint:gochecknoglobals // AUD
 )
 

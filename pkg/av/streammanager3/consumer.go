@@ -55,11 +55,13 @@ func (m *Consumer) Start(ctx context.Context) error {
 	if !m.started.CompareAndSwap(false, true) {
 		return ErrConsumerAlreadyStarted
 	}
+
 	if m.alreadyClosing.Load() {
 		return ErrConsumerClosing
 	}
 
 	sctx, cancel := context.WithCancel(ctx)
+
 	m.mu.Lock()
 	// Definitive check under lock: Close may have run between the early check
 	// above and here. Checking inside the lock ensures wg.Go() never races
@@ -67,8 +69,10 @@ func (m *Consumer) Start(ctx context.Context) error {
 	if m.alreadyClosing.Load() {
 		m.mu.Unlock()
 		cancel()
+
 		return ErrConsumerClosing
 	}
+
 	m.cancel = cancel
 	m.wg.Go(func() {
 		defer cancel()
@@ -83,6 +87,7 @@ func (m *Consumer) Start(ctx context.Context) error {
 			}
 		}()
 		defer m.inactive.Store(true)
+
 		select {
 		case <-sctx.Done():
 			return
@@ -147,6 +152,7 @@ func (m *Consumer) Start(ctx context.Context) error {
 		}
 	})
 	m.mu.Unlock()
+
 	return nil
 }
 
@@ -154,6 +160,7 @@ func (m *Consumer) Close() error {
 	if !m.alreadyClosing.CompareAndSwap(false, true) {
 		return nil
 	}
+
 	m.inactive.Store(true)
 	m.mu.Lock()
 	cancel := m.cancel

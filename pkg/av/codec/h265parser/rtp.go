@@ -1,6 +1,9 @@
 package h265parser
 
-import "errors"
+import (
+	"errors"
+	"slices"
+)
 
 // AccessUnit groups the NALUs of a single H.265 picture.
 type AccessUnit struct {
@@ -138,12 +141,8 @@ func (p *Parser) buildAU() *AccessUnit {
 	}
 	copy(au.NALUs, p.current)
 
-	for _, n := range au.NALUs {
-		if IsIRAP(n) {
-			au.KeyFrame = true
-
-			break
-		}
+	if slices.ContainsFunc(au.NALUs, IsIRAP) {
+		au.KeyFrame = true
 	}
 
 	return au

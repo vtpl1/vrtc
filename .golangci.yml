@@ -9,7 +9,9 @@ linters:
     - wsl
     - wrapcheck
     - mnd
+    - varnamelen
     - funlen
+    - nonamedreturns
     - paralleltest  # project does not require t.Parallel() in all tests
     - testpackage   # white-box tests in the same package are valid
     - ireturn       # codec factory functions intentionally return interfaces

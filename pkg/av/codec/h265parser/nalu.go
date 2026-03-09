@@ -23,7 +23,7 @@ func IsKeyFrame(nalu []byte) bool {
 
 // IsIRAP reports whether the NALU is an Intra Random Access Point picture.
 func IsIRAP(nalu []byte) bool {
-	switch NALUType(nalu) {
+	switch NALUType(nalu) { //nolint:exhaustive
 	case
 		av.HEVC_NAL_BLA_W_LP,
 		av.HEVC_NAL_BLA_W_RADL,

@@ -931,7 +931,7 @@ func TestPauseResumeDuringConsumerChurn(t *testing.T) {
 // codec renegotiation.
 type codecChangingDemuxer struct {
 	streams     []av.Stream
-	newStreams   []av.Stream
+	newStreams  []av.Stream
 	changeAfter int64
 	pktIdx      atomic.Int64
 }
@@ -1219,7 +1219,7 @@ func TestCodecChangeForwardedToCodecChanger(t *testing.T) {
 	demuxFactory := func(_ context.Context, _ string) (av.DemuxCloser, error) {
 		return &codecChangingDemuxer{
 			streams:     testStreams(),
-			newStreams:   []av.Stream{{Idx: 0}, {Idx: 1}},
+			newStreams:  []av.Stream{{Idx: 0}, {Idx: 1}},
 			changeAfter: changeAfter,
 		}, nil
 	}
@@ -1589,7 +1589,7 @@ func TestHighLoadWithCodecChanges(t *testing.T) {
 	demuxFactory := func(_ context.Context, _ string) (av.DemuxCloser, error) {
 		return &codecChangingDemuxer{
 			streams:     testStreams(),
-			newStreams:   []av.Stream{{Idx: 0}, {Idx: 1}},
+			newStreams:  []av.Stream{{Idx: 0}, {Idx: 1}},
 			changeAfter: changeAfter,
 		}, nil
 	}

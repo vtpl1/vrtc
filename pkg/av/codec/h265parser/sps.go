@@ -42,11 +42,12 @@ const (
 
 // ParseSPS parses the H.265 SPS NAL unit (including the 2-byte NAL header).
 //
-//nolint:gocyclo,cyclop
+
 func ParseSPS(sps []byte) (SPSInfo, error) {
 	var spsInfo SPSInfo
 
 	var err error
+
 	if len(sps) < 2 {
 		return spsInfo, ErrH265IncorrectUnitSize
 	}
@@ -227,8 +228,10 @@ func parseVUI(br *bits.GolombBitReader, spsInfo *SPSInfo) error {
 }
 
 func parsePTL(br *bits.GolombBitReader, ctx *SPSInfo, maxSubLayersMinus1 uint) error {
-	var err error
-	var ptl SPSInfo
+	var (
+		err error
+		ptl SPSInfo
+	)
 
 	if ptl.generalProfileSpace, err = br.ReadBits(2); err != nil {
 		return err

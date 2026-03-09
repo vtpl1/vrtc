@@ -17,17 +17,17 @@ import (
 // minimalAVCRecord is a synthetic AVCDecoderConfigurationRecord for
 // a 320×240 Baseline-profile H.264 stream (profile 66, level 30).
 var minimalAVCRecord = []byte{
-	0x01,       // configurationVersion
+	0x01,             // configurationVersion
 	0x42, 0x00, 0x1E, // profile_idc, constraint_flags, level_idc
-	0xFF,             // lengthSizeMinusOne = 3
-	0xE1,             // numSequenceParameterSets = 1
+	0xFF,       // lengthSizeMinusOne = 3
+	0xE1,       // numSequenceParameterSets = 1
 	0x00, 0x0F, // SPS length
 	// SPS: 66 00 1E AC D9 40 A0 3D A1 00 00 03 00 00 03 (truncated but enough for parser)
 	0x67, 0x42, 0x00, 0x1E,
 	0xAC, 0xD9, 0x40, 0xA0,
 	0x3D, 0xA1, 0x00, 0x00,
 	0x03, 0x00, 0x00,
-	0x01,             // numPictureParameterSets = 1
+	0x01,       // numPictureParameterSets = 1
 	0x00, 0x04, // PPS length
 	0x68, 0xCE, 0x38, 0x80, // PPS
 }

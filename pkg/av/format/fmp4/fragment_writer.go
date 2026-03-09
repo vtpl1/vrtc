@@ -37,7 +37,7 @@ func NewFragmentWriter(streams []av.Stream) (*FragmentWriter, []byte, error) {
 	hasVideo := false
 
 	for i, s := range streams {
-		ts, err := newTrackState(s, uint32(i+1)) //nolint:gosec
+		ts, err := newTrackState(s, uint32(i+1))
 		if err != nil {
 			return nil, nil, err
 		}
@@ -168,7 +168,7 @@ func BuildInitSegment(streams []av.Stream) ([]byte, error) {
 	tracks := make([]*trackState, 0, len(streams))
 
 	for i, s := range streams {
-		ts, err := newTrackState(s, uint32(i+1)) //nolint:gosec
+		ts, err := newTrackState(s, uint32(i+1))
 		if err != nil {
 			return nil, err
 		}

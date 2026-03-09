@@ -29,15 +29,14 @@ PLATFORMS := \
 all: build
 
 prerequisite:
-	@go install github.com/golangci/golangci-lint/v2/cmd/golangci-lint@latest
-	@go install github.com/google/pprof@latest
-	@go install mvdan.cc/gofumpt@latest
+	@go get -tool github.com/golangci/golangci-lint/v2/cmd/golangci-lint@latest	
+	@go get -tool mvdan.cc/gofumpt@latest
 
 fmt:
-	gofumpt -l -w -extra .
+	go tool gofumpt -l -w -extra .
 
 lint:
-	golangci-lint run --fix ./...
+	go tool golangci-lint run --fix ./...
 
 update:
 	go get -u ./...

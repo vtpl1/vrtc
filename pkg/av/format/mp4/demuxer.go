@@ -171,8 +171,8 @@ func findTopLevelBox(rs io.ReadSeeker, typ string) ([]byte, error) {
 		boxTyp := string(hdr[4:8])
 		headerSize := int64(8)
 
-		switch {
-		case boxSize == 1:
+		switch boxSize {
+		case 1:
 			// Extended 64-bit size — next 8 bytes hold the full box size.
 			var ext [8]byte
 			if _, err := io.ReadFull(rs, ext[:]); err != nil {
@@ -182,7 +182,7 @@ func findTopLevelBox(rs io.ReadSeeker, typ string) ([]byte, error) {
 			boxSize = int64(binary.BigEndian.Uint64(ext[:]))
 			headerSize = 16
 
-		case boxSize == 0:
+		case 0:
 			// Box extends to EOF.
 			end, err := rs.Seek(0, io.SeekEnd)
 			if err != nil {
@@ -446,7 +446,7 @@ func parseSampleTable(
 }
 
 // parseStsz returns the per-sample size array from the stsz box.
-// The stsz full-box layout: version+flags(4) + constant_size(4) + sample_count(4) + [entry_size(4)...]
+// The stsz full-box layout: version+flags(4) + constant_size(4) + sample_count(4) + [entry_size(4)...].
 func parseStsz(stblPayload []byte) ([]uint32, error) {
 	stszPayload, ok := findBox(stblPayload, "stsz")
 	if !ok {
@@ -580,7 +580,11 @@ func buildChunkSamplesMap(stblPayload []byte, totalSamples, numChunks int) ([]in
 
 // parseStts returns per-sample DTS and duration (as time.Duration) from stts.
 // stts full-box: version+flags(4) + entry_count(4) + entries{count(4)+delta(4)}...
-func parseStts(stblPayload []byte, n int, timescale uint32) ([]time.Duration, []time.Duration, error) {
+func parseStts(
+	stblPayload []byte,
+	n int,
+	timescale uint32,
+) ([]time.Duration, []time.Duration, error) {
 	sttsPayload, ok := findBox(stblPayload, "stts")
 	if !ok {
 		return nil, nil, fmt.Errorf("%w: missing stts box", ErrMalformed)
@@ -862,7 +866,12 @@ func readDescriptorBody(data []byte, expectedTag byte) ([]byte, error) {
 	}
 
 	if data[0] != expectedTag {
-		return nil, fmt.Errorf("%w: expected tag 0x%02X, got 0x%02X", ErrMalformed, expectedTag, data[0])
+		return nil, fmt.Errorf(
+			"%w: expected tag 0x%02X, got 0x%02X",
+			ErrMalformed,
+			expectedTag,
+			data[0],
+		)
 	}
 
 	length := 0

@@ -9,7 +9,7 @@ func VecLen(vec [][]byte) int {
 	return n
 }
 
-func VecSliceTo(in [][]byte, out [][]byte, s int, e int) int {
+func VecSliceTo(in, out [][]byte, s, e int) int {
 	var n int
 
 	if s < 0 {
@@ -69,7 +69,7 @@ func VecSliceTo(in [][]byte, out [][]byte, s int, e int) int {
 	return n
 }
 
-func VecSlice(in [][]byte, s int, e int) [][]byte {
+func VecSlice(in [][]byte, s, e int) [][]byte {
 	var out [][]byte
 
 	out = make([][]byte, len(in))

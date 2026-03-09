@@ -146,8 +146,8 @@ func TestParseSPS(t *testing.T) {
 func TestIsPredicates(t *testing.T) {
 	sps := []byte{0x67, 0x64, 0x00, 0x1E} // SPS (type 7)
 	pps := []byte{0x68, 0xCE, 0x38, 0x80} // PPS (type 8)
-	idr := []byte{0x65, 0x88, 0x84}        // IDR slice (type 5)
-	p := []byte{0x61, 0x00}                // non-IDR slice (type 1)
+	idr := []byte{0x65, 0x88, 0x84}       // IDR slice (type 5)
+	p := []byte{0x61, 0x00}               // non-IDR slice (type 1)
 
 	if !h264parser.IsSPSNALU(sps) {
 		t.Error("expected SPS to be SPS NALU")

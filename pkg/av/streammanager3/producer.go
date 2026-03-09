@@ -16,8 +16,9 @@ type Producer struct {
 	demuxerFactory av.DemuxerFactory
 	demuxerRemover av.DemuxerRemover
 
-	cancel         context.CancelFunc
-	sctx           context.Context // producer's running context; set under mu in Start
+	cancel context.CancelFunc
+	// producer's running context; set under mu in Start
+	sctx           context.Context //nolint:containedctx
 	wg             sync.WaitGroup
 	mu             sync.RWMutex
 	alreadyClosing atomic.Bool
@@ -50,24 +51,30 @@ func (m *Producer) Start(ctx context.Context) error {
 	if !m.started.CompareAndSwap(false, true) {
 		return ErrProducerAlreadyStarted
 	}
+
 	if m.alreadyClosing.Load() {
 		return ErrProducerClosing
 	}
+
 	sctx, cancel := context.WithCancel(ctx)
+
 	m.mu.Lock()
 	m.cancel = cancel
 	m.sctx = sctx
 	m.mu.Unlock()
 	m.wg.Go(func() {
 		defer cancel()
+
 		demuxer, err := m.demuxerFactory(sctx, m.id)
 		if err != nil {
 			m.setLastCodecError(errors.Join(ErrProducerDemuxFactory, err))
 
 			return
 		}
+
 		m.mu.Lock()
 		m.demuxer = demuxer
+
 		m.mu.Unlock()
 		defer m.demuxer.Close()
 		defer func(ctx context.Context) {
@@ -155,6 +162,7 @@ func (m *Producer) Start(ctx context.Context) error {
 			}
 		}
 	})
+
 	return nil
 }
 
@@ -162,6 +170,7 @@ func (m *Producer) Close() error {
 	if !m.alreadyClosing.CompareAndSwap(false, true) {
 		return nil
 	}
+
 	m.mu.RLock()
 	cancel := m.cancel
 	m.mu.RUnlock()
@@ -183,6 +192,7 @@ func (m *Producer) GetCodecs(ctx context.Context) ([]av.Stream, error) {
 		m.mu.RLock()
 		headers, headersErr := m.headers, m.headersErr
 		m.mu.RUnlock()
+
 		return headers, headersErr
 	}
 }
@@ -212,6 +222,7 @@ func (m *Producer) readWriteLoop(ctx context.Context) {
 				m.mu.RLock()
 				cancel := m.cancel
 				m.mu.RUnlock()
+
 				if cancel != nil {
 					cancel()
 				}
@@ -336,7 +347,7 @@ func (m *Producer) AddConsumer(
 	sctx := m.sctx
 	m.mu.RUnlock()
 
-	if err := c.Start(sctx); err != nil {
+	if err := c.Start(sctx); err != nil { //nolint:contextcheck
 		c.inactive.Store(true)
 		m.mu.Lock()
 		delete(m.consumers, consumerID)
@@ -350,6 +361,7 @@ func (m *Producer) AddConsumer(
 
 func (m *Producer) RemoveConsumer(_ context.Context, consumerID string) error {
 	m.mu.Lock()
+
 	consumer, exists := m.consumers[consumerID]
 	if exists {
 		delete(m.consumers, consumerID)

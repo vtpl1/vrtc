@@ -116,7 +116,7 @@ type Muxer struct {
 
 	// current-part accumulation (not locked; only written by WritePacket goroutine).
 	partDurAccum time.Duration // duration accumulated in the in-progress part
-	segDurAccum  float64      // duration (s) from completed parts in current segment
+	segDurAccum  float64       // duration (s) from completed parts in current segment
 
 	// published data – all fields below are protected by mu.
 	mu       sync.Mutex
@@ -166,6 +166,7 @@ func (m *Muxer) WriteHeader(_ context.Context, streams []av.Stream) error {
 
 	m.fw = fw
 	m.initData = init
+
 	m.streams = append([]av.Stream(nil), streams...) // own copy
 
 	m.mu.Lock()
@@ -238,7 +239,7 @@ func (m *Muxer) WriteTrailer(_ context.Context, _ error) error {
 // already done) and wakes any goroutines blocked on a playlist reload.
 func (m *Muxer) Close() error {
 	if m.written && !m.closed {
-		_ = m.WriteTrailer(context.Background(), nil) //nolint:contextcheck // best-effort
+		_ = m.WriteTrailer(context.Background(), nil)
 	}
 
 	m.mu.Lock()
@@ -498,7 +499,7 @@ func (m *Muxer) serveSegment(w http.ResponseWriter, _ *http.Request, path string
 
 	seqNo, ok := parseUint64(numStr)
 	if !ok {
-		http.NotFound(w, nil) //nolint:staticcheck
+		http.NotFound(w, nil)
 
 		return
 	}
@@ -508,7 +509,7 @@ func (m *Muxer) serveSegment(w http.ResponseWriter, _ *http.Request, path string
 	m.mu.Unlock()
 
 	if data == nil {
-		http.NotFound(w, nil) //nolint:staticcheck
+		http.NotFound(w, nil)
 
 		return
 	}
@@ -537,7 +538,7 @@ func (m *Muxer) servePart(w http.ResponseWriter, _ *http.Request, path string) {
 	sep := strings.LastIndex(inner, "_")
 
 	if sep < 0 {
-		http.NotFound(w, nil) //nolint:staticcheck
+		http.NotFound(w, nil)
 
 		return
 	}
@@ -546,7 +547,7 @@ func (m *Muxer) servePart(w http.ResponseWriter, _ *http.Request, path string) {
 	pIdx, ok2 := parseInt(inner[sep+1:])
 
 	if !ok1 || !ok2 {
-		http.NotFound(w, nil) //nolint:staticcheck
+		http.NotFound(w, nil)
 
 		return
 	}
@@ -556,7 +557,7 @@ func (m *Muxer) servePart(w http.ResponseWriter, _ *http.Request, path string) {
 	m.mu.Unlock()
 
 	if data == nil {
-		http.NotFound(w, nil) //nolint:staticcheck
+		http.NotFound(w, nil)
 
 		return
 	}

@@ -15,6 +15,7 @@ import (
 	"github.com/vtpl1/vrtc/pkg/av/codec/aacparser"
 	"github.com/vtpl1/vrtc/pkg/av/codec/h264parser"
 	"github.com/vtpl1/vrtc/pkg/av/codec/h265parser"
+	"github.com/vtpl1/vrtc/pkg/av/codec/pcm"
 )
 
 var (
@@ -102,7 +103,7 @@ func (m *Muxer) WriteHeader(_ context.Context, streams []av.Stream) error {
 	}
 
 	for i, s := range streams {
-		ts, err := newTrackState(s, uint32(i+1)) //nolint:gosec // i+1 is always small
+		ts, err := newTrackState(s, uint32(i+1))
 		if err != nil {
 			return err
 		}
@@ -178,7 +179,7 @@ func (m *Muxer) WriteTrailer(_ context.Context, _ error) error {
 // then closes the underlying writer if it implements io.Closer.
 func (m *Muxer) Close() error {
 	if !m.closed {
-		_ = m.WriteTrailer(context.Background(), nil) //nolint:contextcheck // best-effort
+		_ = m.WriteTrailer(context.Background(), nil)
 	}
 
 	if c, ok := m.w.(io.Closer); ok {
@@ -249,7 +250,9 @@ func newTrackState(s av.Stream, id uint32) (*trackState, error) {
 		ts = c.TimeScale()
 		isVideo = true
 	case aacparser.CodecData:
-		ts = uint32(c.SampleRate()) //nolint:gosec // sample rates fit in uint32
+		ts = uint32(c.SampleRate())
+	case pcm.FLACCodecData:
+		ts = uint32(c.SampleRate())
 	default:
 		return nil, ErrUnsupportedCodec
 	}
@@ -271,10 +274,11 @@ func makeSample(pkt av.Packet, ts *trackState) sample {
 	cts := int32(0)
 
 	if pkt.PTSOffset != 0 {
-		cts = int32(durationToTimescale(pkt.PTSOffset, ts.timescale)) //nolint:gosec
+		cts = int32(durationToTimescale(pkt.PTSOffset, ts.timescale))
 	}
 
 	flags := uint32(0)
+
 	if ts.hasVideo {
 		if pkt.KeyFrame {
 			flags = sampleFlagsKeyframe
@@ -287,8 +291,8 @@ func makeSample(pkt av.Packet, ts *trackState) sample {
 	copy(data, pkt.Data)
 
 	return sample{
-		duration:  uint32(dur),           //nolint:gosec // duration fits in uint32 for any practical packet
-		size:      uint32(len(pkt.Data)), //nolint:gosec
+		duration:  uint32(dur),
+		size:      uint32(len(pkt.Data)),
 		flags:     flags,
 		ptsOffset: cts,
 		data:      data,
@@ -433,8 +437,8 @@ func buildMvhd(numTracks int) []byte {
 	writeUint32(&p, 0)
 	writeUint32(&p, 0)
 	writeUint32(&p, 0x40000000)
-	writeZeros(&p, 24)                   // pre_defined
-	writeUint32(&p, uint32(numTracks+1)) //nolint:gosec // track count is small
+	writeZeros(&p, 24) // pre_defined
+	writeUint32(&p, uint32(numTracks+1))
 
 	return makeFullBox("mvhd", 0, 0, p.Bytes())
 }
@@ -478,8 +482,8 @@ func buildTkhd(ts *trackState) []byte {
 	writeUint32(&p, 0x40000000)
 	// width and height (16.16 fixed point)
 	if v, ok := ts.codec.(av.VideoCodecData); ok {
-		writeUint32(&p, uint32(v.Width())<<16)  //nolint:gosec
-		writeUint32(&p, uint32(v.Height())<<16) //nolint:gosec
+		writeUint32(&p, uint32(v.Width())<<16)
+		writeUint32(&p, uint32(v.Height())<<16)
 	} else {
 		writeUint32(&p, 0)
 		writeUint32(&p, 0)
@@ -563,6 +567,7 @@ func buildSmhd() []byte {
 func buildDinf() []byte {
 	// dref with one self-contained 'url ' entry (flags=1)
 	var urlp bytes.Buffer
+
 	dref := makeFullBox("url ", 0, 1, urlp.Bytes())
 
 	var drefp bytes.Buffer
@@ -593,6 +598,8 @@ func buildStsd(ts *trackState) []byte {
 		entry = buildHev1(c)
 	case aacparser.CodecData:
 		entry = buildMp4a(c)
+	case pcm.FLACCodecData:
+		entry = buildFLaC(c)
 	default:
 		entry = []byte{}
 	}
@@ -607,20 +614,20 @@ func buildStsd(ts *trackState) []byte {
 // buildAvc1 writes the avc1 (H.264) sample entry with an embedded avcC box.
 func buildAvc1(c h264parser.CodecData) []byte {
 	var p bytes.Buffer
-	writeZeros(&p, 6)                   // reserved
-	writeUint16(&p, 1)                  // data_reference_index
-	writeUint16(&p, 0)                  // pre_defined
-	writeUint16(&p, 0)                  // reserved
-	writeZeros(&p, 12)                  // pre_defined[3]
-	writeUint16(&p, uint16(c.Width()))  //nolint:gosec
-	writeUint16(&p, uint16(c.Height())) //nolint:gosec
-	writeUint32(&p, 0x00480000)         // horiz_resolution 72 dpi
-	writeUint32(&p, 0x00480000)         // vert_resolution 72 dpi
-	writeUint32(&p, 0)                  // reserved
-	writeUint16(&p, 1)                  // frame_count
-	writeZeros(&p, 32)                  // compressorname
-	writeUint16(&p, 0x0018)             // depth
-	writeInt16(&p, -1)                  // pre_defined
+	writeZeros(&p, 6)  // reserved
+	writeUint16(&p, 1) // data_reference_index
+	writeUint16(&p, 0) // pre_defined
+	writeUint16(&p, 0) // reserved
+	writeZeros(&p, 12) // pre_defined[3]
+	writeUint16(&p, uint16(c.Width()))
+	writeUint16(&p, uint16(c.Height()))
+	writeUint32(&p, 0x00480000) // horiz_resolution 72 dpi
+	writeUint32(&p, 0x00480000) // vert_resolution 72 dpi
+	writeUint32(&p, 0)          // reserved
+	writeUint16(&p, 1)          // frame_count
+	writeZeros(&p, 32)          // compressorname
+	writeUint16(&p, 0x0018)     // depth
+	writeInt16(&p, -1)          // pre_defined
 
 	// avcC box
 	avcc := makeBox("avcC", c.AVCDecoderConfRecordBytes())
@@ -632,13 +639,13 @@ func buildAvc1(c h264parser.CodecData) []byte {
 // buildHev1 writes the hev1 (H.265) sample entry with an embedded hvcC box.
 func buildHev1(c h265parser.CodecData) []byte {
 	var p bytes.Buffer
-	writeZeros(&p, 6)                   // reserved
-	writeUint16(&p, 1)                  // data_reference_index
-	writeUint16(&p, 0)                  // pre_defined
-	writeUint16(&p, 0)                  // reserved
-	writeZeros(&p, 12)                  // pre_defined[3]
-	writeUint16(&p, uint16(c.Width()))  //nolint:gosec
-	writeUint16(&p, uint16(c.Height())) //nolint:gosec
+	writeZeros(&p, 6)  // reserved
+	writeUint16(&p, 1) // data_reference_index
+	writeUint16(&p, 0) // pre_defined
+	writeUint16(&p, 0) // reserved
+	writeZeros(&p, 12) // pre_defined[3]
+	writeUint16(&p, uint16(c.Width()))
+	writeUint16(&p, uint16(c.Height()))
 	writeUint32(&p, 0x00480000)
 	writeUint32(&p, 0x00480000)
 	writeUint32(&p, 0)
@@ -660,18 +667,36 @@ func buildMp4a(c aacparser.CodecData) []byte {
 	writeZeros(&p, 6)  // reserved
 	writeUint16(&p, 1) // data_reference_index
 	// AudioSampleEntry fields
-	writeUint32(&p, 0)                                 // reserved
-	writeUint32(&p, 0)                                 // reserved
-	writeUint16(&p, uint16(c.ChannelLayout().Count())) //nolint:gosec
-	writeUint16(&p, 16)                                // samplesize
-	writeUint16(&p, 0)                                 // pre_defined
-	writeUint16(&p, 0)                                 // reserved
-	writeUint32(&p, uint32(c.SampleRate())<<16)        //nolint:gosec // rate in 16.16 fixed point
+	writeUint32(&p, 0) // reserved
+	writeUint32(&p, 0) // reserved
+	writeUint16(&p, uint16(c.ChannelLayout().Count()))
+	writeUint16(&p, 16) // samplesize
+	writeUint16(&p, 0)  // pre_defined
+	writeUint16(&p, 0)  // reserved
+	writeUint32(&p, uint32(c.SampleRate())<<16)
 
 	// esds box
 	p.Write(buildEsds(c))
 
 	return makeBox("mp4a", p.Bytes())
+}
+
+// buildFLaC writes the fLaC (FLAC) AudioSampleEntry + dfLaC child box.
+// Reference: https://wiki.xiph.org/FLAC_in_ISOBMFF
+func buildFLaC(c pcm.FLACCodecData) []byte {
+	var p bytes.Buffer
+	writeZeros(&p, 6)
+	writeUint16(&p, 1) // data_reference_index
+	writeUint32(&p, 0) // reserved
+	writeUint32(&p, 0) // reserved
+	writeUint16(&p, uint16(c.ChannelLayout().Count()))
+	writeUint16(&p, 16) // samplesize
+	writeUint16(&p, 0)  // pre_defined
+	writeUint16(&p, 0)  // reserved
+	writeUint32(&p, uint32(c.SampleRate())<<16)
+	p.Write(makeFullBox("dfLa", 0, 0, c.STREAMINFOBlock())) // 38-byte STREAMINFO block
+
+	return makeBox("fLaC", p.Bytes())
 }
 
 // buildEsds writes an esds (MPEG-4 audio Elementary Stream Descriptor) box.
@@ -714,15 +739,16 @@ func buildEsds(c aacparser.CodecData) []byte {
 // buildDescriptor writes an MPEG-4 expandable class descriptor.
 func buildDescriptor(tag byte, payload []byte) []byte {
 	n := len(payload)
+
 	var b bytes.Buffer
 	b.WriteByte(tag)
 	// Encode length as expandable class length (multibyte if needed).
 	for n > 0x7f {
-		b.WriteByte(byte(n>>21) | 0x80) //nolint:gosec
+		b.WriteByte(byte(n>>21) | 0x80)
 		n &= 0x1fffff
 	}
 
-	b.WriteByte(byte(n)) //nolint:gosec
+	b.WriteByte(byte(n))
 	b.Write(payload)
 
 	return b.Bytes()
@@ -790,7 +816,7 @@ func estimateMoofSize(active []*trackState) uint32 {
 		trunPayload := 4 + 4 + n*perSampleSize(ts) // sample_count + data_offset + samples
 		trunSize := 8 + 4 + trunPayload            // box header + version+flags
 		// traf = box header(8) + tfhd(16) + tfdt(20) + trun
-		size += uint32(8 + 16 + 20 + trunSize) //nolint:gosec
+		size += uint32(8 + 16 + 20 + trunSize)
 	}
 
 	return size
@@ -827,7 +853,7 @@ func buildTraf(ts *trackState, dataOffset uint32) []byte {
 	var p bytes.Buffer
 	p.Write(buildTfhd(ts.id))
 	p.Write(buildTfdt(ts.baseTime))
-	p.Write(buildTrun(ts, int32(dataOffset))) //nolint:gosec // offset fits int32
+	p.Write(buildTrun(ts, int32(dataOffset)))
 
 	return makeBox("traf", p.Bytes())
 }
@@ -844,7 +870,7 @@ func buildTfhd(trackID uint32) []byte {
 
 func buildTfdt(baseTime int64) []byte {
 	var p bytes.Buffer
-	writeUint64(&p, uint64(baseTime)) //nolint:gosec // DTS is non-negative
+	writeUint64(&p, uint64(baseTime))
 
 	// version=1 → 64-bit baseMediaDecodeTime
 	return makeFullBox("tfdt", 1, 0, p.Bytes())
@@ -859,8 +885,8 @@ func buildTrun(ts *trackState, dataOffset int32) []byte {
 	}
 
 	var p bytes.Buffer
-	writeUint32(&p, uint32(len(ts.samples))) //nolint:gosec
-	writeInt32(&p, dataOffset)               // data_offset
+	writeUint32(&p, uint32(len(ts.samples)))
+	writeInt32(&p, dataOffset) // data_offset
 
 	for _, s := range ts.samples {
 		writeUint32(&p, s.duration)
@@ -894,7 +920,7 @@ func buildMdat(active []*trackState, _ uint32) []byte {
 
 // makeBox builds a regular (non-full) ISO BMFF box.
 func makeBox(typ string, payload []byte) []byte {
-	size := uint32(8 + len(payload)) //nolint:gosec
+	size := uint32(8 + len(payload))
 	b := make([]byte, size)
 	binary.BigEndian.PutUint32(b[0:], size)
 	copy(b[4:8], typ)

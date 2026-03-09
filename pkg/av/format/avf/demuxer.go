@@ -39,9 +39,9 @@ const (
 	mediaTypeMJPG    = uint32(0)
 	mediaTypeMPEG    = uint32(1)
 	mediaTypeH264    = uint32(2)
-	mediaTypeG711U   = uint32(3)  // PCM µ-law (G.711 µ-law)
-	mediaTypeG711A   = uint32(4)  // PCM A-law (G.711 A-law)
-	mediaTypeL16     = uint32(5)  // PCM 16-bit linear
+	mediaTypeG711U   = uint32(3) // PCM µ-law (G.711 µ-law)
+	mediaTypeG711A   = uint32(4) // PCM A-law (G.711 A-law)
+	mediaTypeL16     = uint32(5) // PCM 16-bit linear
 	mediaTypeAAC     = uint32(6)
 	mediaTypeUnknown = uint32(7)
 	mediaTypeH265    = uint32(8)
@@ -69,8 +69,10 @@ const (
 	frameTrailerSize = 8
 	// maxFrameSize is the maximum allowed payload (3 MB).
 	maxFrameSize = 3 * 1024 * 1024
-	// videoProbeSize is the maximum number of frames to scan for a video codec.
+	// videoProbeSize is the maximum number of frames to scan for a video codec, during this scan also scan for audio codec.
 	videoProbeSize = 200 * 50
+	// audioProbeSize is the maximum number of frames to scan for a audio codec, if the audio codec is not found during the video codec scan cycle.
+	audioProbeSize = 4 * 50
 	// readBufferSize is the internal bufio.Reader buffer size (2 MB).
 	readBufferSize = 2 * 1024 * 1024
 )
@@ -85,6 +87,21 @@ type rawFrame struct {
 	frameType uint32
 	timestamp int64 // milliseconds from the TimeStamp field
 	data      []byte
+
+	frameID    int64
+	durationMs int64
+}
+
+func (m *rawFrame) String() string {
+	return fmt.Sprintf(
+		"ID=%d Time=%dms Media=%d Frame=%d Duration=%d ms DataLen=%d",
+		m.frameID,
+		m.timestamp,
+		m.mediaType,
+		m.frameType,
+		m.durationMs,
+		len(m.data),
+	)
 }
 
 // ── Demuxer ───────────────────────────────────────────────────────────────────
@@ -113,7 +130,8 @@ type Demuxer struct {
 	// pendingCodecChange is attached to the next emitted packet's NewCodecs field
 	pendingCodecChange []av.Stream
 
-	probed bool // GetCodecs has run
+	probed     bool // GetCodecs has run
+	frameCount int64
 }
 
 // New creates a Demuxer that reads AVF data from r.
@@ -146,10 +164,12 @@ func Open(path string) (*Demuxer, error) {
 // stream list. It must be called exactly once before ReadPacket.
 func (d *Demuxer) GetCodecs(_ context.Context) ([]av.Stream, error) {
 	probeCount := 0
+	connectHeader := make([]byte, 0)
+	appendingToConnectHeader := false
 
 	for probeCount < videoProbeSize {
 		// Early exit once both streams are identified.
-		if d.videoCodec != nil && d.audioCodec != nil {
+		if d.videoCodec != nil {
 			break
 		}
 
@@ -166,17 +186,46 @@ func (d *Demuxer) GetCodecs(_ context.Context) ([]av.Stream, error) {
 		probeCount++
 
 		switch frm.frameType {
+		case frameTypeAudioFrame:
+			if d.audioCodec == nil {
+				d.audioCodec = parseAudioCodec(frm.mediaType, frm.data)
+			}
 		case frameTypeConnectHeader:
-			if d.videoCodec == nil && isVideoMediaType(frm.mediaType) {
-				d.videoCodec = parseVideoCodec(frm.mediaType, frm.data)
+			connectHeader = append(connectHeader, frm.data...)
+			appendingToConnectHeader = true
+		default:
+			if appendingToConnectHeader {
+				appendingToConnectHeader = false
+				d.videoCodec = parseVideoCodec(frm.mediaType, connectHeader)
+			} else if frm.frameType == frameTypeIFrame {
+				// MJPEG does not use CONNECT_HEADER; detect from first I_FRAME.
+				if d.videoCodec == nil && frm.mediaType == mediaTypeMJPG {
+					d.videoCodec = mjpeg.CodecData{}
+				}
+			}
+		}
+	}
+
+	probeCount = 0
+	for probeCount < audioProbeSize {
+		// Early exit once both streams are identified.
+		if d.audioCodec != nil {
+			break
+		}
+
+		frm, err := d.readFrame()
+		if err != nil {
+			if errors.Is(err, io.EOF) {
+				break
 			}
 
-		case frameTypeIFrame:
-			// MJPEG does not use CONNECT_HEADER; detect from first I_FRAME.
-			if d.videoCodec == nil && frm.mediaType == mediaTypeMJPG {
-				d.videoCodec = mjpeg.CodecData{}
-			}
+			return nil, err
+		}
 
+		d.buffered = append(d.buffered, frm)
+		probeCount++
+
+		switch frm.frameType {
 		case frameTypeAudioFrame:
 			if d.audioCodec == nil {
 				d.audioCodec = parseAudioCodec(frm.mediaType, frm.data)
@@ -290,11 +339,14 @@ func (d *Demuxer) readFrame() (rawFrame, error) {
 		return rawFrame{}, err
 	}
 
+	d.frameCount++
+
 	return rawFrame{
 		mediaType: mediaType,
 		frameType: frameType,
 		timestamp: timestamp,
 		data:      data,
+		frameID:   d.frameCount,
 	}, nil
 }
 
@@ -387,7 +439,7 @@ func parseAudioCodec(mediaType uint32, data []byte) av.CodecData {
 
 		// Fall back to AAC-LC 8 kHz mono.
 		fallback := aacparser.MPEG4AudioConfig{
-			ObjectType:      2, // AAC-LC
+			ObjectType:      2,  // AAC-LC
 			SampleRateIndex: 11, // 8000 Hz
 			ChannelConfig:   1,  // mono (front-center)
 		}
@@ -452,7 +504,10 @@ func (d *Demuxer) frameToPacket(frm rawFrame) (pkt av.Packet, skip bool, err err
 		// Strip ADTS header from AAC frames when present.
 		if frm.mediaType == mediaTypeAAC && len(data) >= 7 &&
 			data[0] == 0xFF && data[1]&0xF6 == 0xF0 {
-			if _, hdrLen, _, _, adtsErr := aacparser.ParseADTSHeader(data); adtsErr == nil && hdrLen < len(data) {
+			if _, hdrLen, _, _, adtsErr := aacparser.ParseADTSHeader(
+				data,
+			); adtsErr == nil &&
+				hdrLen < len(data) {
 				data = data[hdrLen:]
 			}
 		}

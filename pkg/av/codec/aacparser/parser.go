@@ -112,7 +112,7 @@ var chanConfigTable = []av.ChannelLayout{
 //nolint:nonamedreturns
 func ParseADTSHeader(
 	frame []byte,
-) (config MPEG4AudioConfig, hdrlen int, framelen int, samples int, err error) {
+) (config MPEG4AudioConfig, hdrlen, framelen, samples int, err error) {
 	if len(frame) < 7 {
 		return config, 0, 0, 0, io.ErrUnexpectedEOF
 	}
@@ -127,8 +127,12 @@ func ParseADTSHeader(
 	config.SampleRateIndex = uint(frame[2] >> 2 & 0xf)
 
 	if int(config.SampleRateIndex) >= len(sampleRateTable) {
-		return config, 0, 0, 0, fmt.Errorf("aacparser: invalid sample rate index %d", config.SampleRateIndex)
+		return config, 0, 0, 0, fmt.Errorf(
+			"aacparser: invalid sample rate index %d",
+			config.SampleRateIndex,
+		)
 	}
+
 	config.ChannelConfig = uint(frame[2]<<2&0x4 | frame[3]>>6&0x3)
 
 	if config.ChannelConfig > 7 {
@@ -167,7 +171,7 @@ const (
 	ADTSHeaderLengthCRC = 9
 )
 
-func FillADTSHeader(header []byte, config MPEG4AudioConfig, samples int, payloadLength int) {
+func FillADTSHeader(header []byte, config MPEG4AudioConfig, samples, payloadLength int) {
 	if len(header) < ADTSHeaderLength {
 		return
 	}
@@ -347,6 +351,7 @@ func WriteMPEG4AudioConfig(w io.Writer, config MPEG4AudioConfig) error {
 	if err != nil {
 		return err
 	}
+
 	if config.ChannelConfig == 0 {
 		if cc, ok := layoutToChannelConfig[config.ChannelLayout]; ok {
 			config.ChannelConfig = cc
@@ -396,10 +401,10 @@ func (s CodecData) IsLC() bool {
 }
 
 func (s CodecData) Tag() string {
-
 	if s.Config.ObjectType == AOT_AAC_LC {
 		return "mp4a.40.2"
 	}
+
 	return "mp4a.40." + strconv.Itoa(int(s.Config.ObjectType))
 }
 
@@ -413,6 +418,7 @@ func (s CodecData) PacketDuration(_ []byte) (time.Duration, error) {
 
 func NewCodecDataFromMPEG4AudioConfig(config MPEG4AudioConfig) (CodecData, error) {
 	var b bytes.Buffer
+
 	_ = WriteMPEG4AudioConfig(&b, config)
 
 	return NewCodecDataFromMPEG4AudioConfigBytes(b.Bytes())
@@ -440,7 +446,6 @@ func ExtractADTSFrame(frame []byte) (
 	samples int,
 	err error,
 ) {
-
 	config, hdrlen, framelen, samples, err := ParseADTSHeader(frame)
 	if err != nil {
 		return nil, config, 0, err

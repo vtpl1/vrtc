@@ -36,7 +36,7 @@ func Downsample(k float32) func([]int16) []int16 {
 			}
 		}
 
-		return
+		return dst
 	}
 }
 
@@ -57,7 +57,7 @@ func Upsample(k float32) func([]int16) []int16 {
 			}
 		}
 
-		return
+		return dst
 	}
 }
 
@@ -77,7 +77,7 @@ func FlipEndian(src []byte) (dst []byte) { //nolint:nonamedreturns
 		j++
 	}
 
-	return
+	return dst
 }
 
 func Transcode(dst, src av.AudioCodecData) func([]byte) []byte {
@@ -104,7 +104,7 @@ func Transcode(dst, src av.AudioCodecData) func([]byte) []byte {
 				j++
 			}
 
-			return
+			return dst
 		}
 	case av.PCM:
 		reader = func(src []byte) (dst []int16) { //nolint:nonamedreturns
@@ -122,7 +122,7 @@ func Transcode(dst, src av.AudioCodecData) func([]byte) []byte {
 				j++
 			}
 
-			return
+			return dst
 		}
 	case av.PCM_MULAW:
 		reader = func(src []byte) (dst []int16) { //nolint:nonamedreturns
@@ -134,7 +134,7 @@ func Transcode(dst, src av.AudioCodecData) func([]byte) []byte {
 				i++
 			}
 
-			return
+			return dst
 		}
 	case av.PCM_ALAW:
 		reader = func(src []byte) (dst []int16) { //nolint:nonamedreturns
@@ -146,7 +146,7 @@ func Transcode(dst, src av.AudioCodecData) func([]byte) []byte {
 				i++
 			}
 
-			return
+			return dst
 		}
 	}
 
@@ -177,7 +177,7 @@ func Transcode(dst, src av.AudioCodecData) func([]byte) []byte {
 				i++
 			}
 
-			return
+			return dst
 		}
 	case av.PCM:
 		writer = func(src []int16) (dst []byte) { //nolint:nonamedreturns
@@ -191,7 +191,7 @@ func Transcode(dst, src av.AudioCodecData) func([]byte) []byte {
 				i++
 			}
 
-			return
+			return dst
 		}
 	case av.PCM_MULAW:
 		writer = func(src []int16) (dst []byte) { //nolint:nonamedreturns
@@ -203,7 +203,7 @@ func Transcode(dst, src av.AudioCodecData) func([]byte) []byte {
 				i++
 			}
 
-			return
+			return dst
 		}
 	case av.PCM_ALAW:
 		writer = func(src []int16) (dst []byte) { //nolint:nonamedreturns
@@ -215,7 +215,7 @@ func Transcode(dst, src av.AudioCodecData) func([]byte) []byte {
 				i++
 			}
 
-			return
+			return dst
 		}
 	}
 

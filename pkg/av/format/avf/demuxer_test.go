@@ -25,14 +25,14 @@ const avfMagic = "00dc"
 func buildFrame(mediaType, frameType uint32, tsMs int64, data []byte, frameOff int64) []byte {
 	var b bytes.Buffer
 
-	b.WriteString(avfMagic)                             // magic [0:4]
-	writeInt64(&b, -1)                                  // refFrameOff [4:12]
-	writeUint32(&b, mediaType)                          // mediaType [12:16]
-	writeUint32(&b, frameType)                          // frameType [16:20]
-	writeInt64(&b, tsMs)                                // timestamp [20:28]
-	writeUint32(&b, uint32(len(data)))                  //nolint:gosec // frameSize [28:32]
-	b.Write(data)                                       // payload
-	writeInt64(&b, frameOff)                            // currentFrameOff
+	b.WriteString(avfMagic)            // magic [0:4]
+	writeInt64(&b, -1)                 // refFrameOff [4:12]
+	writeUint32(&b, mediaType)         // mediaType [12:16]
+	writeUint32(&b, frameType)         // frameType [16:20]
+	writeInt64(&b, tsMs)               // timestamp [20:28]
+	writeUint32(&b, uint32(len(data))) //nolint:gosec // frameSize [28:32]
+	b.Write(data)                      // payload
+	writeInt64(&b, frameOff)           // currentFrameOff
 
 	return b.Bytes()
 }
@@ -171,9 +171,9 @@ func TestGetCodecs_VideoAndAudio(t *testing.T) {
 	spsppsBuf := annexBSPSPPS(t)
 
 	var buf bytes.Buffer
-	buf.Write(buildFrame(2, 3, 0, spsppsBuf, 0))                        // H264 CONNECT_HEADER
-	buf.Write(buildFrame(4, 16, 0, []byte{0xCC, 0xDD}, 0))              // G711A AUDIO_FRAME
-	buf.Write(buildFrame(2, 1, 33, withLenPrefix([]byte{0x65}), 0))     // H264 I_FRAME
+	buf.Write(buildFrame(2, 3, 0, spsppsBuf, 0))                    // H264 CONNECT_HEADER
+	buf.Write(buildFrame(4, 16, 0, []byte{0xCC, 0xDD}, 0))          // G711A AUDIO_FRAME
+	buf.Write(buildFrame(2, 1, 33, withLenPrefix([]byte{0x65}), 0)) // H264 I_FRAME
 
 	dmx := avf.New(bytes.NewReader(buf.Bytes()))
 

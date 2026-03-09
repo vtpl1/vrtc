@@ -160,7 +160,7 @@ func SplitNALUs(b []byte) ([][]byte, NALUAvccOrAnnexb) {
 }
 
 //nolint:nonamedreturns
-func FindNextAnnexBNALUnit(data []byte, start int) (nalStart int, nalEnd int) {
+func FindNextAnnexBNALUnit(data []byte, start int) (nalStart, nalEnd int) {
 	nalStart = -1
 
 	// Find start code

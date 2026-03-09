@@ -16,7 +16,7 @@ import (
 
 // compile-time interface assertions.
 var (
-	_ av.MuxCloser   = (*llhls.Muxer)(nil)
+	_ av.MuxCloser    = (*llhls.Muxer)(nil)
 	_ av.CodecChanger = (*llhls.Muxer)(nil)
 )
 

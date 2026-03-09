@@ -144,7 +144,7 @@ func (s AudioFrame) HasSameFormat(other AudioFrame) bool {
 }
 
 // Slice returns a sub-frame containing samples [start, end).
-func (s AudioFrame) Slice(start int, end int) AudioFrame {
+func (s AudioFrame) Slice(start, end int) AudioFrame {
 	if start < 0 || end > s.SampleCount || start > end {
 		panic(
 			fmt.Sprintf(

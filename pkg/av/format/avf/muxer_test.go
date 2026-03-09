@@ -16,8 +16,10 @@ import (
 )
 
 // compile-time check: *avf.Muxer satisfies av.MuxCloser and av.CodecChanger.
-var _ av.MuxCloser = (*avf.Muxer)(nil)
-var _ av.CodecChanger = (*avf.Muxer)(nil)
+var (
+	_ av.MuxCloser    = (*avf.Muxer)(nil)
+	_ av.CodecChanger = (*avf.Muxer)(nil)
+)
 
 // ── lifecycle error tests ─────────────────────────────────────────────────────
 
@@ -519,11 +521,11 @@ func TestRoundTrip_CodecChange(t *testing.T) {
 // ── frame parser (test helper) ────────────────────────────────────────────────
 
 type parsedFrame struct {
-	mediaType      uint32
-	frameType      uint32
-	refFrameOff    int64
+	mediaType       uint32
+	frameType       uint32
+	refFrameOff     int64
 	currentFrameOff int64
-	data           []byte
+	data            []byte
 }
 
 // parseFrames parses raw AVF bytes into a slice of parsedFrame descriptors.

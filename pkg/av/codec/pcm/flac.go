@@ -2,12 +2,63 @@ package pcm
 
 import (
 	"encoding/binary"
+	"errors"
+	"time"
 	"unicode/utf8"
 
 	"github.com/sigurn/crc16"
 	"github.com/sigurn/crc8"
 	"github.com/vtpl1/vrtc/pkg/av"
 )
+
+// FLACCodecData implements av.AudioCodecData for FLAC-wrapped PCM audio.
+type FLACCodecData struct {
+	sourceType av.CodecType
+	sampleRate uint32
+	chLayout   av.ChannelLayout
+}
+
+func NewFLACCodecData(
+	sourceType av.CodecType,
+	sampleRate uint32,
+	ch av.ChannelLayout,
+) FLACCodecData {
+	return FLACCodecData{sourceType: sourceType, sampleRate: sampleRate, chLayout: ch}
+}
+
+func (f FLACCodecData) Type() av.CodecType              { return av.FLAC }
+func (f FLACCodecData) SampleFormat() av.SampleFormat   { return av.S16 }
+func (f FLACCodecData) SampleRate() int                 { return int(f.sampleRate) }
+func (f FLACCodecData) ChannelLayout() av.ChannelLayout { return f.chLayout }
+func (f FLACCodecData) SourceType() av.CodecType        { return f.sourceType }
+
+// STREAMINFOBlock returns the 38-byte STREAMINFO metadata block for dfLaC box.
+// FLACHeader(false, sr) returns 42 bytes: 4-byte magic placeholder + 38 bytes.
+func (f FLACCodecData) STREAMINFOBlock() []byte {
+	return FLACHeader(false, f.sampleRate)[4:]
+}
+
+// PacketDuration parses the FLAC frame header. FLACEncoder always uses
+// blockSizeType=7 (16-bit block size - 1 follows the UTF-8 sample number).
+func (f FLACCodecData) PacketDuration(pkt []byte) (time.Duration, error) {
+	if len(pkt) < 8 {
+		return 0, errors.New("flac: packet too short")
+	}
+
+	_, runeLen := utf8.DecodeRune(pkt[4:])
+	if runeLen == 0 {
+		return 0, errors.New("flac: invalid UTF-8 in frame header")
+	}
+
+	offset := 4 + runeLen
+	if offset+2 > len(pkt) {
+		return 0, errors.New("flac: packet truncated before block size")
+	}
+
+	blockSize := uint32(binary.BigEndian.Uint16(pkt[offset:])) + 1
+
+	return time.Duration(blockSize) * time.Second / time.Duration(f.sampleRate), nil
+}
 
 func FLACHeader(magic bool, sampleRate uint32) []byte {
 	b := make([]byte, 42)

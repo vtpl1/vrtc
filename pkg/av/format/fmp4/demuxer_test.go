@@ -75,7 +75,6 @@ func TestDemuxer_GetCodecs_H264(t *testing.T) {
 
 	dmx := fmp4.NewDemuxer(bytes.NewReader(data))
 	got, err := dmx.GetCodecs(context.Background())
-
 	if err != nil {
 		t.Fatalf("GetCodecs: %v", err)
 	}
@@ -96,7 +95,6 @@ func TestDemuxer_GetCodecs_AAC(t *testing.T) {
 
 	dmx := fmp4.NewDemuxer(bytes.NewReader(data))
 	got, err := dmx.GetCodecs(context.Background())
-
 	if err != nil {
 		t.Fatalf("GetCodecs: %v", err)
 	}
@@ -121,7 +119,6 @@ func TestDemuxer_GetCodecs_MultiStream(t *testing.T) {
 
 	dmx := fmp4.NewDemuxer(bytes.NewReader(data))
 	got, err := dmx.GetCodecs(context.Background())
-
 	if err != nil {
 		t.Fatalf("GetCodecs: %v", err)
 	}
@@ -269,7 +266,6 @@ func TestDemuxer_ReadPacket_VideoAndAudioRoundTrip(t *testing.T) {
 
 	dmx := fmp4.NewDemuxer(bytes.NewReader(data))
 	got, err := dmx.GetCodecs(context.Background())
-
 	if err != nil {
 		t.Fatalf("GetCodecs: %v", err)
 	}
@@ -384,7 +380,7 @@ func TestDemuxer_Close_ClosesUnderlying(t *testing.T) {
 	closed := false
 
 	rc := &closingReader{
-		r:      bytes.NewReader([]byte{}),
+		r:       bytes.NewReader([]byte{}),
 		onClose: func() { closed = true },
 	}
 

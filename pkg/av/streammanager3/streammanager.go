@@ -153,7 +153,9 @@ func (m *StreamManager) Start(ctx context.Context) error {
 	if !m.started.CompareAndSwap(false, true) {
 		return ErrStreamManagerAlreadyStarted
 	}
+
 	sctx, cancel := context.WithCancel(ctx)
+
 	m.mu.Lock()
 	m.cancel = cancel
 	m.mu.Unlock()
@@ -218,6 +220,7 @@ func (m *StreamManager) Start(ctx context.Context) error {
 			}
 		}
 	})
+
 	return nil
 }
 
@@ -225,6 +228,7 @@ func (m *StreamManager) SignalStop() bool {
 	if !m.alreadyClosing.CompareAndSwap(false, true) {
 		return false
 	}
+
 	m.mu.RLock()
 	cancel := m.cancel
 	m.mu.RUnlock()
@@ -238,6 +242,7 @@ func (m *StreamManager) SignalStop() bool {
 
 func (m *StreamManager) WaitStop() error {
 	m.wg.Wait()
+
 	return nil
 }
 

@@ -156,7 +156,7 @@ func (m *Muxer) WriteTrailer(_ context.Context, _ error) error {
 // if it implements io.Closer.
 func (m *Muxer) Close() error {
 	if !m.closed {
-		_ = m.WriteTrailer(context.Background(), nil) //nolint:contextcheck
+		_ = m.WriteTrailer(context.Background(), nil)
 	}
 
 	if m.wc != nil {
@@ -200,7 +200,12 @@ func (m *Muxer) writeVideoPacket(si streamInfo, pkt av.Packet, tsMs int64) error
 			// The CONNECT_HEADER's RefFrameOff points to itself (it IS the
 			// current parameter set reference).
 			m.lastConnectHdrOff = m.currentOffset
-			if err := m.writeFrame(si.mediaType, frameTypeConnectHeader, tsMs, hdrData); err != nil {
+			if err := m.writeFrame(
+				si.mediaType,
+				frameTypeConnectHeader,
+				tsMs,
+				hdrData,
+			); err != nil {
 				return err
 			}
 		}
@@ -229,16 +234,17 @@ func (m *Muxer) writeFrame(mediaType, frameType uint32, tsMs int64, data []byte)
 
 	// Build the 32-byte frame header in one allocation.
 	var hdr [frameHeaderSize]byte
+
 	hdr[0], hdr[1], hdr[2], hdr[3] = '0', '0', 'd', 'c'
-	binary.BigEndian.PutUint64(hdr[4:12], uint64(m.lastConnectHdrOff))  //nolint:gosec
+	binary.BigEndian.PutUint64(hdr[4:12], uint64(m.lastConnectHdrOff))
 	binary.BigEndian.PutUint32(hdr[12:16], mediaType)
 	binary.BigEndian.PutUint32(hdr[16:20], frameType)
-	binary.BigEndian.PutUint64(hdr[20:28], uint64(tsMs))                //nolint:gosec
-	binary.BigEndian.PutUint32(hdr[28:32], uint32(len(data)))           //nolint:gosec
+	binary.BigEndian.PutUint64(hdr[20:28], uint64(tsMs))
+	binary.BigEndian.PutUint32(hdr[28:32], uint32(len(data)))
 
 	// Build the 8-byte trailer (CurrentFrameOff = this frame's start).
 	var trailer [frameTrailerSize]byte
-	binary.BigEndian.PutUint64(trailer[:], uint64(frameStart)) //nolint:gosec
+	binary.BigEndian.PutUint64(trailer[:], uint64(frameStart))
 
 	// Write header + payload + trailer as a single gather-write where possible.
 	if _, err := m.w.Write(hdr[:]); err != nil {
@@ -255,7 +261,7 @@ func (m *Muxer) writeFrame(mediaType, frameType uint32, tsMs int64, data []byte)
 		return err
 	}
 
-	m.currentOffset += int64(40 + len(data)) //nolint:gosec
+	m.currentOffset += int64(40 + len(data))
 
 	return nil
 }
