@@ -21,22 +21,14 @@ import (
 const _ = grpc.SupportPackageIsVersion9
 
 const (
-	StreamService_ReadFrame_FullMethodName      = "/stream_service_frs.StreamService/ReadFrame"
-	StreamService_WritePva_FullMethodName       = "/stream_service_frs.StreamService/WritePva"
-	StreamService_ReadFramePva_FullMethodName   = "/stream_service_frs.StreamService/ReadFramePva"
-	StreamService_WriteFramePva_FullMethodName  = "/stream_service_frs.StreamService/WriteFramePva"
-	StreamService_RecvJpegFrames_FullMethodName = "/stream_service_frs.StreamService/RecvJpegFrames"
+	StreamService_WriteFramePva_FullMethodName = "/stream_service_frs.StreamService/WriteFramePva"
 )
 
 // StreamServiceClient is the client API for StreamService service.
 //
 // For semantics around ctx use and closing/ending streaming RPCs, please refer to https://pkg.go.dev/google.golang.org/grpc/?tab=doc#ClientConn.NewStream.
 type StreamServiceClient interface {
-	ReadFrame(ctx context.Context, in *ReadFrameRequest, opts ...grpc.CallOption) (grpc.ServerStreamingClient[ReadFrameResponse], error)
-	WritePva(ctx context.Context, opts ...grpc.CallOption) (grpc.ClientStreamingClient[WritePvaRequest, WritePvaResponse], error)
-	ReadFramePva(ctx context.Context, in *ReadFramePvaRequest, opts ...grpc.CallOption) (grpc.ServerStreamingClient[ReadFramePvaResponse], error)
 	WriteFramePva(ctx context.Context, opts ...grpc.CallOption) (grpc.ClientStreamingClient[WriteFramePvaRequest, WriteFramePvaResponse], error)
-	RecvJpegFrames(ctx context.Context, in *RecvJpegFramesRequest, opts ...grpc.CallOption) (*RecvJpegFramesResponse, error)
 }
 
 type streamServiceClient struct {
@@ -47,60 +39,9 @@ func NewStreamServiceClient(cc grpc.ClientConnInterface) StreamServiceClient {
 	return &streamServiceClient{cc}
 }
 
-func (c *streamServiceClient) ReadFrame(ctx context.Context, in *ReadFrameRequest, opts ...grpc.CallOption) (grpc.ServerStreamingClient[ReadFrameResponse], error) {
-	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
-	stream, err := c.cc.NewStream(ctx, &StreamService_ServiceDesc.Streams[0], StreamService_ReadFrame_FullMethodName, cOpts...)
-	if err != nil {
-		return nil, err
-	}
-	x := &grpc.GenericClientStream[ReadFrameRequest, ReadFrameResponse]{ClientStream: stream}
-	if err := x.ClientStream.SendMsg(in); err != nil {
-		return nil, err
-	}
-	if err := x.ClientStream.CloseSend(); err != nil {
-		return nil, err
-	}
-	return x, nil
-}
-
-// This type alias is provided for backwards compatibility with existing code that references the prior non-generic stream type by name.
-type StreamService_ReadFrameClient = grpc.ServerStreamingClient[ReadFrameResponse]
-
-func (c *streamServiceClient) WritePva(ctx context.Context, opts ...grpc.CallOption) (grpc.ClientStreamingClient[WritePvaRequest, WritePvaResponse], error) {
-	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
-	stream, err := c.cc.NewStream(ctx, &StreamService_ServiceDesc.Streams[1], StreamService_WritePva_FullMethodName, cOpts...)
-	if err != nil {
-		return nil, err
-	}
-	x := &grpc.GenericClientStream[WritePvaRequest, WritePvaResponse]{ClientStream: stream}
-	return x, nil
-}
-
-// This type alias is provided for backwards compatibility with existing code that references the prior non-generic stream type by name.
-type StreamService_WritePvaClient = grpc.ClientStreamingClient[WritePvaRequest, WritePvaResponse]
-
-func (c *streamServiceClient) ReadFramePva(ctx context.Context, in *ReadFramePvaRequest, opts ...grpc.CallOption) (grpc.ServerStreamingClient[ReadFramePvaResponse], error) {
-	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
-	stream, err := c.cc.NewStream(ctx, &StreamService_ServiceDesc.Streams[2], StreamService_ReadFramePva_FullMethodName, cOpts...)
-	if err != nil {
-		return nil, err
-	}
-	x := &grpc.GenericClientStream[ReadFramePvaRequest, ReadFramePvaResponse]{ClientStream: stream}
-	if err := x.ClientStream.SendMsg(in); err != nil {
-		return nil, err
-	}
-	if err := x.ClientStream.CloseSend(); err != nil {
-		return nil, err
-	}
-	return x, nil
-}
-
-// This type alias is provided for backwards compatibility with existing code that references the prior non-generic stream type by name.
-type StreamService_ReadFramePvaClient = grpc.ServerStreamingClient[ReadFramePvaResponse]
-
 func (c *streamServiceClient) WriteFramePva(ctx context.Context, opts ...grpc.CallOption) (grpc.ClientStreamingClient[WriteFramePvaRequest, WriteFramePvaResponse], error) {
 	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
-	stream, err := c.cc.NewStream(ctx, &StreamService_ServiceDesc.Streams[3], StreamService_WriteFramePva_FullMethodName, cOpts...)
+	stream, err := c.cc.NewStream(ctx, &StreamService_ServiceDesc.Streams[0], StreamService_WriteFramePva_FullMethodName, cOpts...)
 	if err != nil {
 		return nil, err
 	}
@@ -111,25 +52,11 @@ func (c *streamServiceClient) WriteFramePva(ctx context.Context, opts ...grpc.Ca
 // This type alias is provided for backwards compatibility with existing code that references the prior non-generic stream type by name.
 type StreamService_WriteFramePvaClient = grpc.ClientStreamingClient[WriteFramePvaRequest, WriteFramePvaResponse]
 
-func (c *streamServiceClient) RecvJpegFrames(ctx context.Context, in *RecvJpegFramesRequest, opts ...grpc.CallOption) (*RecvJpegFramesResponse, error) {
-	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
-	out := new(RecvJpegFramesResponse)
-	err := c.cc.Invoke(ctx, StreamService_RecvJpegFrames_FullMethodName, in, out, cOpts...)
-	if err != nil {
-		return nil, err
-	}
-	return out, nil
-}
-
 // StreamServiceServer is the server API for StreamService service.
 // All implementations must embed UnimplementedStreamServiceServer
 // for forward compatibility.
 type StreamServiceServer interface {
-	ReadFrame(*ReadFrameRequest, grpc.ServerStreamingServer[ReadFrameResponse]) error
-	WritePva(grpc.ClientStreamingServer[WritePvaRequest, WritePvaResponse]) error
-	ReadFramePva(*ReadFramePvaRequest, grpc.ServerStreamingServer[ReadFramePvaResponse]) error
 	WriteFramePva(grpc.ClientStreamingServer[WriteFramePvaRequest, WriteFramePvaResponse]) error
-	RecvJpegFrames(context.Context, *RecvJpegFramesRequest) (*RecvJpegFramesResponse, error)
 	mustEmbedUnimplementedStreamServiceServer()
 }
 
@@ -140,20 +67,8 @@ type StreamServiceServer interface {
 // pointer dereference when methods are called.
 type UnimplementedStreamServiceServer struct{}
 
-func (UnimplementedStreamServiceServer) ReadFrame(*ReadFrameRequest, grpc.ServerStreamingServer[ReadFrameResponse]) error {
-	return status.Error(codes.Unimplemented, "method ReadFrame not implemented")
-}
-func (UnimplementedStreamServiceServer) WritePva(grpc.ClientStreamingServer[WritePvaRequest, WritePvaResponse]) error {
-	return status.Error(codes.Unimplemented, "method WritePva not implemented")
-}
-func (UnimplementedStreamServiceServer) ReadFramePva(*ReadFramePvaRequest, grpc.ServerStreamingServer[ReadFramePvaResponse]) error {
-	return status.Error(codes.Unimplemented, "method ReadFramePva not implemented")
-}
 func (UnimplementedStreamServiceServer) WriteFramePva(grpc.ClientStreamingServer[WriteFramePvaRequest, WriteFramePvaResponse]) error {
 	return status.Error(codes.Unimplemented, "method WriteFramePva not implemented")
-}
-func (UnimplementedStreamServiceServer) RecvJpegFrames(context.Context, *RecvJpegFramesRequest) (*RecvJpegFramesResponse, error) {
-	return nil, status.Error(codes.Unimplemented, "method RecvJpegFrames not implemented")
 }
 func (UnimplementedStreamServiceServer) mustEmbedUnimplementedStreamServiceServer() {}
 func (UnimplementedStreamServiceServer) testEmbeddedByValue()                       {}
@@ -176,35 +91,6 @@ func RegisterStreamServiceServer(s grpc.ServiceRegistrar, srv StreamServiceServe
 	s.RegisterService(&StreamService_ServiceDesc, srv)
 }
 
-func _StreamService_ReadFrame_Handler(srv interface{}, stream grpc.ServerStream) error {
-	m := new(ReadFrameRequest)
-	if err := stream.RecvMsg(m); err != nil {
-		return err
-	}
-	return srv.(StreamServiceServer).ReadFrame(m, &grpc.GenericServerStream[ReadFrameRequest, ReadFrameResponse]{ServerStream: stream})
-}
-
-// This type alias is provided for backwards compatibility with existing code that references the prior non-generic stream type by name.
-type StreamService_ReadFrameServer = grpc.ServerStreamingServer[ReadFrameResponse]
-
-func _StreamService_WritePva_Handler(srv interface{}, stream grpc.ServerStream) error {
-	return srv.(StreamServiceServer).WritePva(&grpc.GenericServerStream[WritePvaRequest, WritePvaResponse]{ServerStream: stream})
-}
-
-// This type alias is provided for backwards compatibility with existing code that references the prior non-generic stream type by name.
-type StreamService_WritePvaServer = grpc.ClientStreamingServer[WritePvaRequest, WritePvaResponse]
-
-func _StreamService_ReadFramePva_Handler(srv interface{}, stream grpc.ServerStream) error {
-	m := new(ReadFramePvaRequest)
-	if err := stream.RecvMsg(m); err != nil {
-		return err
-	}
-	return srv.(StreamServiceServer).ReadFramePva(m, &grpc.GenericServerStream[ReadFramePvaRequest, ReadFramePvaResponse]{ServerStream: stream})
-}
-
-// This type alias is provided for backwards compatibility with existing code that references the prior non-generic stream type by name.
-type StreamService_ReadFramePvaServer = grpc.ServerStreamingServer[ReadFramePvaResponse]
-
 func _StreamService_WriteFramePva_Handler(srv interface{}, stream grpc.ServerStream) error {
 	return srv.(StreamServiceServer).WriteFramePva(&grpc.GenericServerStream[WriteFramePvaRequest, WriteFramePvaResponse]{ServerStream: stream})
 }
@@ -212,52 +98,14 @@ func _StreamService_WriteFramePva_Handler(srv interface{}, stream grpc.ServerStr
 // This type alias is provided for backwards compatibility with existing code that references the prior non-generic stream type by name.
 type StreamService_WriteFramePvaServer = grpc.ClientStreamingServer[WriteFramePvaRequest, WriteFramePvaResponse]
 
-func _StreamService_RecvJpegFrames_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
-	in := new(RecvJpegFramesRequest)
-	if err := dec(in); err != nil {
-		return nil, err
-	}
-	if interceptor == nil {
-		return srv.(StreamServiceServer).RecvJpegFrames(ctx, in)
-	}
-	info := &grpc.UnaryServerInfo{
-		Server:     srv,
-		FullMethod: StreamService_RecvJpegFrames_FullMethodName,
-	}
-	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
-		return srv.(StreamServiceServer).RecvJpegFrames(ctx, req.(*RecvJpegFramesRequest))
-	}
-	return interceptor(ctx, in, info, handler)
-}
-
 // StreamService_ServiceDesc is the grpc.ServiceDesc for StreamService service.
 // It's only intended for direct use with grpc.RegisterService,
 // and not to be introspected or modified (even as a copy)
 var StreamService_ServiceDesc = grpc.ServiceDesc{
 	ServiceName: "stream_service_frs.StreamService",
 	HandlerType: (*StreamServiceServer)(nil),
-	Methods: []grpc.MethodDesc{
-		{
-			MethodName: "RecvJpegFrames",
-			Handler:    _StreamService_RecvJpegFrames_Handler,
-		},
-	},
+	Methods:     []grpc.MethodDesc{},
 	Streams: []grpc.StreamDesc{
-		{
-			StreamName:    "ReadFrame",
-			Handler:       _StreamService_ReadFrame_Handler,
-			ServerStreams: true,
-		},
-		{
-			StreamName:    "WritePva",
-			Handler:       _StreamService_WritePva_Handler,
-			ClientStreams: true,
-		},
-		{
-			StreamName:    "ReadFramePva",
-			Handler:       _StreamService_ReadFramePva_Handler,
-			ServerStreams: true,
-		},
 		{
 			StreamName:    "WriteFramePva",
 			Handler:       _StreamService_WriteFramePva_Handler,

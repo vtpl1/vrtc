@@ -3,7 +3,6 @@ modules:
   - path: interfaces
     excludes:
       - interfaces/central_service
-      - interfaces/central_service_frs
       - interfaces/face_service
       - interfaces/fsb_q
       - interfaces/seperate_recording_service
