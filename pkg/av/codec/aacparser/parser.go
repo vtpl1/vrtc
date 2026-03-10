@@ -18,6 +18,8 @@ var (
 	ErrAACparserAdtsChannelCountInvalid = errors.New("aacparser: adts channel count invalid")
 	ErrAACparserAdtsFrameLen            = errors.New("aacparser: adts framelen < hdrlen")
 	ErrAACparserMPEG4AudioConfigFailed  = errors.New("aacparser: parse MPEG4AudioConfig failed")
+	ErrAACparserInvalidSampleRateIndex  = errors.New("aacparser: invalid sample rate index")
+	ErrAACparserInvalidSampleRate       = errors.New("aacparser: invalid samplerate")
 )
 
 // copied from libavcodec/mpeg4audio.h.
@@ -128,8 +130,9 @@ func ParseADTSHeader(
 
 	if int(config.SampleRateIndex) >= len(sampleRateTable) {
 		return config, 0, 0, 0, fmt.Errorf(
-			"aacparser: invalid sample rate index %d",
+			"aacparser: invalid sample rate index %d: %w",
 			config.SampleRateIndex,
+			ErrAACparserInvalidSampleRateIndex,
 		)
 	}
 
@@ -410,7 +413,7 @@ func (s CodecData) Tag() string {
 
 func (s CodecData) PacketDuration(_ []byte) (time.Duration, error) {
 	if s.Config.SampleRate == 0 {
-		return 0, errors.New("aacparser: invalid samplerate")
+		return 0, ErrAACparserInvalidSampleRate
 	}
 
 	return time.Second * 1024 / time.Duration(s.Config.SampleRate), nil

@@ -11,6 +11,12 @@ import (
 	"github.com/vtpl1/vrtc/pkg/av"
 )
 
+var (
+	errFlacPacketTooShort  = errors.New("flac: packet too short")
+	errFlacInvalidUTF8     = errors.New("flac: invalid UTF-8 in frame header")
+	errFlacPacketTruncated = errors.New("flac: packet truncated before block size")
+)
+
 // FLACCodecData implements av.AudioCodecData for FLAC-wrapped PCM audio.
 type FLACCodecData struct {
 	sourceType av.CodecType
@@ -42,17 +48,17 @@ func (f FLACCodecData) STREAMINFOBlock() []byte {
 // blockSizeType=7 (16-bit block size - 1 follows the UTF-8 sample number).
 func (f FLACCodecData) PacketDuration(pkt []byte) (time.Duration, error) {
 	if len(pkt) < 8 {
-		return 0, errors.New("flac: packet too short")
+		return 0, errFlacPacketTooShort
 	}
 
 	_, runeLen := utf8.DecodeRune(pkt[4:])
 	if runeLen == 0 {
-		return 0, errors.New("flac: invalid UTF-8 in frame header")
+		return 0, errFlacInvalidUTF8
 	}
 
 	offset := 4 + runeLen
 	if offset+2 > len(pkt) {
-		return 0, errors.New("flac: packet truncated before block size")
+		return 0, errFlacPacketTruncated
 	}
 
 	blockSize := uint32(binary.BigEndian.Uint16(pkt[offset:])) + 1

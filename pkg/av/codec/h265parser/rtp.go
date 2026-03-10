@@ -5,6 +5,11 @@ import (
 	"slices"
 )
 
+var (
+	errInvalidPayload = errors.New("invalid payload")
+	errInvalidFU      = errors.New("invalid FU")
+)
+
 // AccessUnit groups the NALUs of a single H.265 picture.
 type AccessUnit struct {
 	NALUs    [][]byte
@@ -16,13 +21,12 @@ type Parser struct {
 	current  [][]byte
 	fuBuffer []byte
 	fuActive bool
-	lastSeq  uint16
 }
 
 // PushRTP processes one RTP payload and returns a complete AccessUnit when ready.
 func (p *Parser) PushRTP(payload []byte) (*AccessUnit, bool, error) {
 	if len(payload) < 2 {
-		return nil, false, errors.New("invalid payload")
+		return nil, false, errInvalidPayload
 	}
 
 	naluType := (payload[0] >> 1) & 0x3F
@@ -61,7 +65,7 @@ func (p *Parser) parseAP(payload []byte) (*AccessUnit, bool, error) {
 
 func (p *Parser) parseFU(payload []byte) (*AccessUnit, bool, error) {
 	if len(payload) < 3 {
-		return nil, false, errors.New("invalid FU")
+		return nil, false, errInvalidFU
 	}
 
 	start := payload[2]&0x80 != 0

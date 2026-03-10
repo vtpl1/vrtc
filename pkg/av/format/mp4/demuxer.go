@@ -104,37 +104,35 @@ func (d *Demuxer) GetCodecs(_ context.Context) ([]av.Stream, error) {
 // ReadPacket returns the next av.Packet in DTS order. Returns io.EOF when all
 // samples have been read.
 func (d *Demuxer) ReadPacket(ctx context.Context) (av.Packet, error) {
-	for {
-		if ctx.Err() != nil {
-			return av.Packet{}, ctx.Err()
-		}
-
-		if d.pos >= len(d.samples) {
-			return av.Packet{}, io.EOF
-		}
-
-		s := d.samples[d.pos]
-		d.pos++
-
-		if _, err := d.rs.Seek(s.offset, io.SeekStart); err != nil {
-			return av.Packet{}, err
-		}
-
-		data := make([]byte, s.size)
-		if _, err := io.ReadFull(d.rs, data); err != nil {
-			return av.Packet{}, err
-		}
-
-		return av.Packet{
-			Idx:       s.streamIdx,
-			KeyFrame:  s.isKey,
-			DTS:       s.dts,
-			PTSOffset: s.ptsOffset,
-			Duration:  s.duration,
-			CodecType: s.codecType,
-			Data:      data,
-		}, nil
+	if ctx.Err() != nil {
+		return av.Packet{}, ctx.Err()
 	}
+
+	if d.pos >= len(d.samples) {
+		return av.Packet{}, io.EOF
+	}
+
+	s := d.samples[d.pos]
+	d.pos++
+
+	if _, err := d.rs.Seek(s.offset, io.SeekStart); err != nil {
+		return av.Packet{}, err
+	}
+
+	data := make([]byte, s.size)
+	if _, err := io.ReadFull(d.rs, data); err != nil {
+		return av.Packet{}, err
+	}
+
+	return av.Packet{
+		Idx:       s.streamIdx,
+		KeyFrame:  s.isKey,
+		DTS:       s.dts,
+		PTSOffset: s.ptsOffset,
+		Duration:  s.duration,
+		CodecType: s.codecType,
+		Data:      data,
+	}, nil
 }
 
 // Close releases the underlying resource.
@@ -634,7 +632,6 @@ func parseCtts(stblPayload []byte, n int, timescale uint32) ([]time.Duration, er
 		return nil, ErrMalformed
 	}
 
-	version := cttsPayload[0]
 	entryCount := int(binary.BigEndian.Uint32(cttsPayload[4:8]))
 
 	if len(cttsPayload) < 8+entryCount*8 {
@@ -650,13 +647,7 @@ func parseCtts(stblPayload []byte, n int, timescale uint32) ([]time.Duration, er
 		rawOffset := binary.BigEndian.Uint32(cttsPayload[off+4:])
 
 		// version=1: signed; version=0: treat as signed per ISO 14496-12:2012.
-		var offset int32
-
-		if version == 1 {
-			offset = int32(rawOffset)
-		} else {
-			offset = int32(rawOffset)
-		}
+		offset := int32(rawOffset)
 
 		d := ticksToDuration(int64(offset), timescale)
 

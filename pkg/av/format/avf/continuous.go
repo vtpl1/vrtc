@@ -14,7 +14,10 @@ import (
 	"github.com/vtpl1/vrtc/pkg/av"
 )
 
-var reDateTime = regexp.MustCompile(`\d{8}_\d{6}`)
+var (
+	reDateTime    = regexp.MustCompile(`\d{8}_\d{6}`)
+	errNoAVFFiles = errors.New("avf: no *.avf files found")
+)
 
 // ContinuousDemuxer reads AVF files from a directory in sorted order, looping
 // forever once the directory listing is exhausted. Timestamps are rewritten so
@@ -55,7 +58,7 @@ func NewContinuous(baseDir string, opts ...Option) (*ContinuousDemuxer, error) {
 	}
 
 	if len(files) == 0 {
-		return nil, fmt.Errorf("avf: no *.avf files found in %q", baseDir)
+		return nil, fmt.Errorf("avf: no *.avf files found in %q: %w", baseDir, errNoAVFFiles)
 	}
 
 	return &ContinuousDemuxer{
@@ -230,7 +233,7 @@ func fileDateTime(path string) time.Time {
 		return time.Time{}
 	}
 
-	t, err := time.ParseInLocation("20060102_150405", m, time.Local)
+	t, err := time.ParseInLocation("20060102_150405", m, time.Local) //nolint:gosmopolitan
 	if err != nil {
 		return time.Time{}
 	}

@@ -169,7 +169,7 @@ func ParseSPS(sps []byte) (SPSInfo, error) {
 	return spsInfo, nil
 }
 
-func parseVUI(br *bits.GolombBitReader, spsInfo *SPSInfo) error {
+func parseVUI(br *bits.GolombBitReader, spsInfo *SPSInfo) error { //nolint:unparam
 	aspectRatioInfoPresentFlag, _ := br.ReadBit()
 	if aspectRatioInfoPresentFlag != 0 {
 		aspectRatioIdc, _ := br.ReadBits(8)

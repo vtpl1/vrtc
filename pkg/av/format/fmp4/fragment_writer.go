@@ -25,6 +25,7 @@ type FragmentWriter struct {
 	tracks   []*trackState
 	trackMap map[uint16]*trackState
 	seqNum   uint32
+	emsgID   uint32 // monotonically increasing emsg event id
 	hasVideo bool
 }
 
@@ -132,6 +133,10 @@ func (fw *FragmentWriter) Flush() []byte {
 	}
 
 	mdatPayloadSize := offset - moofSize - 8
+
+	emsgs, nextID := collectEmsg(active, fw.emsgID)
+	fw.emsgID = nextID
+
 	moof := buildMoof(active, fw.seqNum, dataOffsets)
 	mdat := buildMdat(active, mdatPayloadSize)
 
@@ -144,6 +149,7 @@ func (fw *FragmentWriter) Flush() []byte {
 	}
 
 	var out bytes.Buffer
+	out.Write(emsgs)
 	out.Write(moof)
 	out.Write(mdat)
 

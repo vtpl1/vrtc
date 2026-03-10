@@ -23,10 +23,6 @@ var (
 	ErrMuxHeaderNotWritten = errors.New("avf: WriteHeader not called")
 )
 
-// writeBufferSize is the internal bufio-equivalent write buffer size.
-// AVF has no mandatory write buffer; we use a bytes.Buffer flush boundary instead.
-const writeBufferSize = 2 * 1024 * 1024
-
 // ── streamInfo ────────────────────────────────────────────────────────────────
 
 // streamInfo holds per-stream muxing state.
@@ -319,7 +315,7 @@ func buildConnectHeaderPayload(codec av.CodecData) []byte {
 	return nil
 }
 
-var startCode = []byte{0x00, 0x00, 0x00, 0x01}
+var startCode = []byte{0x00, 0x00, 0x00, 0x01} //nolint:gochecknoglobals
 
 // writeAnnexBNALU appends a 4-byte start code followed by nalu to b.
 func writeAnnexBNALU(b *bytes.Buffer, nalu []byte) {

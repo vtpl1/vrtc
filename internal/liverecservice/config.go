@@ -33,7 +33,7 @@ type MySQLConfig struct {
 	Host     string `json:"host"     mapstructure:"host"`
 	Port     int    `json:"port"     mapstructure:"port"`
 	Username string `json:"username" mapstructure:"username"`
-	Password string `json:"password" mapstructure:"password"`
+	Password string `json:"password" mapstructure:"password"` //nolint:gosec
 }
 
 func (m MySQLConfig) DSN(dbName string) string {

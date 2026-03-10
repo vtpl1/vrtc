@@ -4,17 +4,20 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"log/slog"
 	"net/http"
 	"strings"
 	"sync"
 	"time"
 
+	"github.com/rs/zerolog/log"
 	"github.com/vtpl1/vrtc/pkg/av"
 	"github.com/vtpl1/vrtc/pkg/av/format/avf"
 	"github.com/vtpl1/vrtc/pkg/av/format/llhls"
 	"github.com/vtpl1/vrtc/pkg/av/streammanager3"
+	"github.com/vtpl1/vrtc/pkg/lifecycle"
 )
+
+var errNoSupportedStreams = errors.New("streamFilterMuxer: no supported streams")
 
 const (
 	// hlsPrefix is the URL path prefix for all LL-HLS endpoints.
@@ -30,6 +33,8 @@ const (
 
 // supportedCodecs are the codec types that the llhls/fmp4 muxer can handle.
 // All other codecs (G.711 µ-law/A-law, SPEEX, …) are silently dropped.
+//
+//nolint:gochecknoglobals
 var supportedCodecs = map[av.CodecType]bool{
 	av.H264: true,
 	av.H265: true,
@@ -53,6 +58,7 @@ func newStreamFilterMuxer(inner *llhls.Muxer) *streamFilterMuxer {
 
 func (f *streamFilterMuxer) WriteHeader(ctx context.Context, streams []av.Stream) error {
 	var filtered []av.Stream
+
 	for _, s := range streams {
 		if supportedCodecs[s.Codec.Type()] {
 			innerIdx := uint16(len(filtered))
@@ -61,9 +67,11 @@ func (f *streamFilterMuxer) WriteHeader(ctx context.Context, streams []av.Stream
 			filtered = append(filtered, s)
 		}
 	}
+
 	if len(filtered) == 0 {
-		return fmt.Errorf("streamFilterMuxer: no supported streams")
+		return errNoSupportedStreams
 	}
+
 	return f.inner.WriteHeader(ctx, filtered)
 }
 
@@ -72,7 +80,9 @@ func (f *streamFilterMuxer) WritePacket(ctx context.Context, pkt av.Packet) erro
 	if !ok {
 		return nil // silently drop unsupported stream
 	}
+
 	pkt.Idx = innerIdx
+
 	return f.inner.WritePacket(ctx, pkt)
 }
 
@@ -82,15 +92,18 @@ func (f *streamFilterMuxer) WriteTrailer(ctx context.Context, upstreamError erro
 
 func (f *streamFilterMuxer) WriteCodecChange(ctx context.Context, changed []av.Stream) error {
 	var filtered []av.Stream
+
 	for _, s := range changed {
 		if innerIdx, ok := f.remap[s.Idx]; ok {
 			s.Idx = innerIdx
 			filtered = append(filtered, s)
 		}
 	}
+
 	if len(filtered) == 0 {
 		return nil
 	}
+
 	return f.inner.WriteCodecChange(ctx, filtered)
 }
 
@@ -124,9 +137,15 @@ func (e *consumerEntry) idleSince() time.Duration {
 }
 
 // Run starts the edge node and blocks until ctx is cancelled.
+//
+//nolint:maintidx
 func Run(siteID, nodeID string, cfg Config) error {
+	log.Info().Msgf("%+v", cfg)
+
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
+
+	errChan := make(chan error)
 
 	producerID := cfg.Edge.StoragePath // AVF base directory (from config)
 
@@ -150,7 +169,7 @@ func Run(siteID, nodeID string, cfg Config) error {
 			}
 			consumersMu.Unlock()
 
-			slog.Info("llhls muxer created", "consumer", consumerID)
+			log.Info().Str("consumer", consumerID).Msg("llhls muxer created")
 
 			return mx, nil
 		},
@@ -161,7 +180,7 @@ func Run(siteID, nodeID string, cfg Config) error {
 		delete(consumers, consumerID)
 		consumersMu.Unlock()
 
-		slog.Info("llhls muxer removed", "consumer", consumerID)
+		log.Info().Str("consumer", consumerID).Msg("llhls muxer removed")
 
 		return nil
 	})
@@ -174,13 +193,13 @@ func Run(siteID, nodeID string, cfg Config) error {
 			return nil, fmt.Errorf("avf continuous %q: %w", producerID, err)
 		}
 
-		slog.Info("avf continuous demuxer opened", "dir", producerID)
+		log.Info().Str("dir", producerID).Msg("avf continuous demuxer opened")
 
 		return dmx, nil
 	})
 
 	demuxerRemover := av.DemuxerRemover(func(_ context.Context, _ string) error {
-		slog.Info("avf continuous demuxer closed", "dir", producerID)
+		log.Info().Str("dir", producerID).Msg("avf continuous demuxer closed")
 
 		return nil
 	})
@@ -219,7 +238,7 @@ func Run(siteID, nodeID string, cfg Config) error {
 				consumersMu.RUnlock()
 
 				for _, id := range idle {
-					slog.Info("removing idle consumer", "consumer", id)
+					log.Info().Str("consumer", id).Msg("removing idle consumer")
 					_ = sm.RemoveConsumer(ctx, producerID, id)
 					// muxerRemover deletes from the map; double-delete is harmless.
 				}
@@ -273,7 +292,7 @@ func Run(siteID, nodeID string, cfg Config) error {
 			return nil, fmt.Errorf("add consumer %q: %w", consumerID, err)
 		}
 
-		slog.Info("consumer added", "consumer", consumerID, "dir", producerID)
+		log.Info().Str("consumer", consumerID).Str("dir", producerID).Msg("consumer added")
 
 		return e, nil
 	}
@@ -322,7 +341,7 @@ func Run(siteID, nodeID string, cfg Config) error {
 
 		e, err := ensureConsumer(r, consumerID)
 		if err != nil {
-			slog.Error("ensureConsumer", "consumer", consumerID, "err", err)
+			log.Error().Str("consumer", consumerID).Err(err).Msg("ensureConsumer")
 			http.Error(w, "stream unavailable", http.StatusServiceUnavailable)
 
 			return
@@ -355,13 +374,17 @@ func Run(siteID, nodeID string, cfg Config) error {
 	})
 
 	addr := fmt.Sprintf(":%d", cfg.API.Listen)
-	slog.Info("edge node starting",
-		"site", siteID, "node", nodeID,
-		"addr", addr, "avf_dir", producerID)
+	log.Info().
+		Str("site", siteID).
+		Str("node", nodeID).
+		Str("addr", addr).
+		Str("avf_dir", producerID).
+		Msg("edge node starting")
 
 	srv := &http.Server{
-		Addr:    addr,
-		Handler: corsMiddleware(mux),
+		Addr:              addr,
+		Handler:           corsMiddleware(mux),
+		ReadHeaderTimeout: 10 * time.Second,
 	}
 
 	go func() {
@@ -370,12 +393,15 @@ func Run(siteID, nodeID string, cfg Config) error {
 		shutCtx, shutCancel := context.WithTimeout(context.Background(), 5*time.Second)
 		defer shutCancel()
 
-		_ = srv.Shutdown(shutCtx)
+		_ = srv.Shutdown(shutCtx) //nolint:contextcheck
 	}()
 
 	if err := srv.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
 		return fmt.Errorf("http server: %w", err)
 	}
+
+	lifecycle.WaitForTerminationRequest(errChan)
+	cancel()
 
 	return nil
 }

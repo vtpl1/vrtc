@@ -163,9 +163,9 @@ func TestContinuousDemuxer_RealFiles(t *testing.T) {
 		lastDur     time.Duration
 		fileSeenPkt bool
 
-		totalPkts        int
-		withinFileRegs   int // non-monotonic steps inside a single file
-		boundaryRegs     int // non-monotonic steps at file transitions
+		totalPkts      int
+		withinFileRegs int // non-monotonic steps inside a single file
+		boundaryRegs   int // non-monotonic steps at file transitions
 	)
 
 	for fi, path := range files {

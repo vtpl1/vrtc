@@ -79,7 +79,7 @@ const (
 	readBufferSize = 2 * 1024 * 1024
 )
 
-var avfMagic = [4]byte{'0', '0', 'd', 'c'}
+var avfMagic = [4]byte{'0', '0', 'd', 'c'} //nolint:gochecknoglobals
 
 // ── rawFrame ──────────────────────────────────────────────────────────────────
 
@@ -240,11 +240,8 @@ func (d *Demuxer) GetCodecs(_ context.Context) ([]av.Stream, error) {
 		d.buffered = append(d.buffered, frm)
 		probeCount++
 
-		switch frm.frameType {
-		case frameTypeAudioFrame:
-			if d.audioCodec == nil {
-				d.audioCodec = parseAudioCodec(frm.mediaType, frm.data)
-			}
+		if frm.frameType == frameTypeAudioFrame && d.audioCodec == nil {
+			d.audioCodec = parseAudioCodec(frm.mediaType, frm.data)
 		}
 	}
 
@@ -410,11 +407,12 @@ func parseVideoCodec(mediaType uint32, data []byte) av.CodecData {
 				continue
 			}
 
-			if h265parser.IsVPSNALU(nalu) && vps == nil {
+			switch {
+			case h265parser.IsVPSNALU(nalu) && vps == nil:
 				vps = nalu
-			} else if h265parser.IsSPSNALU(nalu) && sps == nil {
+			case h265parser.IsSPSNALU(nalu) && sps == nil:
 				sps = nalu
-			} else if h265parser.IsPPSNALU(nalu) && pps == nil {
+			case h265parser.IsPPSNALU(nalu) && pps == nil:
 				pps = nalu
 			}
 		}
@@ -472,7 +470,9 @@ func parseAudioCodec(mediaType uint32, data []byte) av.CodecData {
 
 // frameToPacket converts one rawFrame into an av.Packet.
 // skip=true means the frame carries no decodable media (e.g. CONNECT_HEADER).
-func (d *Demuxer) frameToPacket(frm rawFrame) (pkt av.Packet, skip bool, err error) {
+func (d *Demuxer) frameToPacket(
+	frm rawFrame,
+) (pkt av.Packet, skip bool, err error) { //nolint:unparam
 	dts := time.Duration(frm.timestamp) * time.Millisecond
 
 	switch frm.frameType {

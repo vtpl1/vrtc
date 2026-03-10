@@ -51,7 +51,7 @@ func RemoveH264orH265EmulationBytes(b []byte) []byte {
 
 // ParseSPS parses the H.264 SPS NAL unit (including the 1-byte NAL header).
 //
-//nolint:cyclop
+//nolint:cyclop,gocyclo
 func ParseSPS(data []byte) (SPSInfo, error) {
 	data = RemoveH264orH265EmulationBytes(data)
 	r := &bits.GolombBitReader{R: bytes.NewReader(data)}

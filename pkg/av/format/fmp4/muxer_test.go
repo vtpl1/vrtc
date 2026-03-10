@@ -651,3 +651,85 @@ func findMFHD(t *testing.T, data []byte, seqs *[]uint32) {
 		}
 	}
 }
+
+// TestEmsg_BoundingBoxes verifies that a packet carrying bounding-box JSON in
+// its Extra field results in an emsg box appearing before the moof box in the
+// flushed fragment, and that the emsg payload matches the original JSON.
+func TestEmsg_BoundingBoxes(t *testing.T) {
+	t.Parallel()
+
+	h264 := makeH264Codec(t)
+	streams := []av.Stream{{Idx: 0, Codec: h264}}
+
+	bboxJSON := []byte(`{"boxes":[{"label":"person","x":0.1,"y":0.2,"w":0.3,"h":0.4}]}`)
+
+	fw, _, err := fmp4.NewFragmentWriter(streams)
+	if err != nil {
+		t.Fatalf("NewFragmentWriter: %v", err)
+	}
+
+	fw.WritePacket(av.Packet{
+		Idx:      0,
+		KeyFrame: true,
+		DTS:      33 * time.Millisecond,
+		Duration: 33 * time.Millisecond,
+		Data:     []byte{0x65, 0x88},
+		Extra:    bboxJSON,
+	})
+
+	fragment := fw.Flush()
+	if fragment == nil {
+		t.Fatal("Flush returned nil")
+	}
+
+	r := bytes.NewReader(fragment)
+
+	// First box must be emsg.
+	typ, payload := readBox(t, r)
+	if typ != "emsg" {
+		t.Fatalf("first box: want emsg, got %q", typ)
+	}
+
+	// emsg full-box: 1 byte version + 3 bytes flags = 4 bytes prefix.
+	// version=1, so layout after prefix:
+	//   scheme_id_uri (null-terminated)
+	//   value         (null-terminated)
+	//   timescale     uint32
+	//   presentation_time uint64
+	//   event_duration uint32
+	//   id            uint32
+	//   message_data  (rest)
+	version := payload[0]
+	if version != 1 {
+		t.Errorf("emsg version: want 1, got %d", version)
+	}
+
+	// Skip version+flags (4 bytes), find end of scheme_id_uri and value strings.
+	pos := 4
+	for pos < len(payload) && payload[pos] != 0 {
+		pos++
+	}
+	pos++ // skip null terminator of scheme_id_uri
+	for pos < len(payload) && payload[pos] != 0 {
+		pos++
+	}
+	pos++ // skip null terminator of value
+
+	// timescale(4) + presentation_time(8) + event_duration(4) + id(4) = 20 bytes
+	pos += 20
+
+	if pos > len(payload) {
+		t.Fatal("emsg payload too short")
+	}
+
+	got := payload[pos:]
+	if !bytes.Equal(got, bboxJSON) {
+		t.Errorf("emsg data mismatch:\n got  %s\n want %s", got, bboxJSON)
+	}
+
+	// Next box must be moof.
+	typ, _ = readBox(t, r)
+	if typ != "moof" {
+		t.Errorf("second box: want moof, got %q", typ)
+	}
+}

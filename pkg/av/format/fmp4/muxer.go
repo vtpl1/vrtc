@@ -54,11 +54,13 @@ const (
 
 // sample holds one compressed media sample buffered for the current fragment.
 type sample struct {
-	duration  uint32
-	size      uint32
-	flags     uint32
-	ptsOffset int32 // composition-time offset in timescale units (B-frame support)
-	data      []byte
+	duration           uint32
+	size               uint32
+	flags              uint32
+	ptsOffset          int32 // composition-time offset in timescale units (B-frame support)
+	data               []byte
+	extra              []byte // optional metadata payload (e.g. bounding-box JSON) from av.Packet.Extra
+	presentationTimeMS int64  // absolute presentation time in milliseconds for emsg
 }
 
 // trackState maintains per-track muxing state.
@@ -80,8 +82,9 @@ type Muxer struct {
 	tracks   []*trackState          // ordered by writeHeader stream order
 	trackMap map[uint16]*trackState // keyed by av.Stream.Idx
 	seqNum   uint32
-	written  bool // WriteHeader has been called
-	closed   bool // WriteTrailer has been called
+	emsgID   uint32 // monotonically increasing emsg event id
+	written  bool   // WriteHeader has been called
+	closed   bool   // WriteTrailer has been called
 
 	// dtsOffset is the DTS of the very first packet received; it is subtracted
 	// from all subsequent timestamps so the output timeline starts at zero.
@@ -251,7 +254,8 @@ func (m *Muxer) WriteCodecChange(_ context.Context, changed []av.Stream) error {
 // ── internal helpers ─────────────────────────────────────────────────────────
 
 func newTrackState(s av.Stream, id uint32) (*trackState, error) {
-	ts := uint32(0)
+	var ts uint32
+
 	isVideo := false
 
 	switch c := s.Codec.(type) {
@@ -306,12 +310,22 @@ func makeSample(pkt av.Packet, ts *trackState) sample {
 		copy(data, pkt.Data)
 	}
 
+	var extra []byte
+
+	if pkt.Extra != nil {
+		if b, ok := pkt.Extra.([]byte); ok {
+			extra = b
+		}
+	}
+
 	return sample{
-		duration:  uint32(dur),
-		size:      uint32(len(data)),
-		flags:     flags,
-		ptsOffset: cts,
-		data:      data,
+		duration:           uint32(dur),
+		size:               uint32(len(data)),
+		flags:              flags,
+		ptsOffset:          cts,
+		data:               data,
+		extra:              extra,
+		presentationTimeMS: (pkt.DTS + pkt.PTSOffset).Milliseconds(),
 	}
 }
 
@@ -332,6 +346,8 @@ func normalizeVideoToAVCC(data []byte) []byte {
 		return out
 	case parser.NALUAnnexb:
 		return h264parser.AnnexBToAVCC(nalus)
+	case parser.NALURaw:
+		fallthrough
 	default:
 		// Raw single NALU — prepend 4-byte BE length.
 		out := make([]byte, 4+len(data))
@@ -391,8 +407,17 @@ func (m *Muxer) flushFragment() error {
 
 	mdatPayloadSize := offset - moofSize - 8
 
+	emsgs, nextID := collectEmsg(active, m.emsgID)
+	m.emsgID = nextID
+
 	moof := buildMoof(active, m.seqNum, dataOffsets)
 	mdat := buildMdat(active, mdatPayloadSize)
+
+	if len(emsgs) > 0 {
+		if _, err := m.w.Write(emsgs); err != nil {
+			return err
+		}
+	}
 
 	if _, err := m.w.Write(moof); err != nil {
 		return err
@@ -957,6 +982,55 @@ func buildMdat(active []*trackState, _ uint32) []byte {
 	}
 
 	return makeBox("mdat", payload.Bytes())
+}
+
+// buildEmsg builds an emsg (Event Message) box per ISO 14496-12 §12.5.3
+// version 1. presentationTimeMS is the absolute presentation time in
+// milliseconds; id is a monotonically increasing per-stream event counter;
+// data is the raw event payload (e.g. bounding-box JSON).
+//
+// emsg boxes must appear before the moof box of the fragment they annotate so
+// that MSE delivers the DataCue event synchronously with the video frame.
+func buildEmsg(presentationTimeMS int64, id uint32, data []byte) []byte {
+	const (
+		schemeIDURI = "urn:vtpl:bboxes:1"
+		value       = ""
+		timescale   = uint32(1000) // millisecond resolution
+		eventDurInf = uint32(0xFFFFFFFF)
+	)
+
+	var p bytes.Buffer
+	p.WriteString(schemeIDURI)
+	p.WriteByte(0) // null-terminate scheme_id_uri
+	p.WriteString(value)
+	p.WriteByte(0) // null-terminate value
+	writeUint32(&p, timescale)
+	writeUint64(&p, uint64(presentationTimeMS))
+	writeUint32(&p, eventDurInf)
+	writeUint32(&p, id)
+	p.Write(data)
+
+	// version=1 → 64-bit presentation_time field
+	return makeFullBox("emsg", 1, 0, p.Bytes())
+}
+
+// collectEmsg returns one emsg box for every sample that carries extra data,
+// using seqBase as the starting event id. Returns the boxes and the next id.
+func collectEmsg(active []*trackState, seqBase uint32) ([]byte, uint32) {
+	var out bytes.Buffer
+
+	id := seqBase
+
+	for _, ts := range active {
+		for _, s := range ts.samples {
+			if len(s.extra) > 0 {
+				out.Write(buildEmsg(s.presentationTimeMS, id, s.extra))
+				id++
+			}
+		}
+	}
+
+	return out.Bytes(), id
 }
 
 // ── box writing primitives ───────────────────────────────────────────────────

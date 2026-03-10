@@ -38,6 +38,9 @@ var (
 	ErrTrailerAlreadyWritten = errors.New("llhls: WriteTrailer already called")
 	// ErrHeaderNotWritten is returned if WritePacket is called before WriteHeader.
 	ErrHeaderNotWritten = errors.New("llhls: WriteHeader not called")
+
+	errMuxerClosed           = errors.New("muxer closed")
+	errBlockingReloadTimeout = errors.New("blocking reload timeout")
 )
 
 // ── configuration ─────────────────────────────────────────────────────────────
@@ -423,6 +426,7 @@ func (m *Muxer) serveInit(w http.ResponseWriter, _ *http.Request) {
 	_, _ = w.Write(m.initData)
 }
 
+//nolint:nestif
 func (m *Muxer) servePlaylist(w http.ResponseWriter, r *http.Request) {
 	// Parse blocking-reload parameters.
 	msn, msnOK := parseUint64(r.URL.Query().Get("_HLS_msn"))
@@ -488,11 +492,11 @@ func (m *Muxer) waitForPart(ctx context.Context, msn uint64, pIdx int, hasPIdx b
 
 	for !m.partAvailable(msn, pIdx, hasPIdx) {
 		if m.terminating {
-			return errors.New("muxer closed")
+			return errMuxerClosed
 		}
 
 		if time.Now().After(deadline) {
-			return errors.New("blocking reload timeout")
+			return errBlockingReloadTimeout
 		}
 
 		if ctx.Err() != nil {
