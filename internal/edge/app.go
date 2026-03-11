@@ -139,7 +139,7 @@ func (e *consumerEntry) idleSince() time.Duration {
 // Run starts the edge node and blocks until ctx is cancelled.
 //
 //nolint:maintidx
-func Run(siteID, nodeID string, cfg Config) error {
+func Run(appName, appMode string, cfg Config) error {
 	log.Info().Msgf("%+v", cfg)
 
 	ctx, cancel := context.WithCancel(context.Background())
@@ -375,8 +375,8 @@ func Run(siteID, nodeID string, cfg Config) error {
 
 	addr := fmt.Sprintf(":%d", cfg.API.Listen)
 	log.Info().
-		Str("site", siteID).
-		Str("node", nodeID).
+		Str("appName", appName).
+		Str("appMode", appMode).
 		Str("addr", addr).
 		Str("avf_dir", producerID).
 		Msg("edge node starting")

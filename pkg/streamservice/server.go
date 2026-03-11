@@ -1,16 +1,16 @@
-// Package frs implements an av.DemuxCloser backed by a gRPC server that receives
+// Package streamservice implements an av.DemuxCloser backed by a gRPC server that receives
 // FramePVA frames via StreamService.WriteFramePva and exposes them as an AV stream.
 // It also implements CentralService.ReadEngines for engine discovery.
-package frs
+package streamservice
 
 import (
 	"context"
 	"errors"
 	"io"
-	"net"
 	"sync"
 	"time"
 
+	"github.com/rs/zerolog/log"
 	centralservicefrs "github.com/vtpl1/vrtc/gen/central_service_frs"
 	data_models "github.com/vtpl1/vrtc/gen/data_models"
 	streamservicefrs "github.com/vtpl1/vrtc/gen/stream_service_frs"
@@ -23,6 +23,7 @@ import (
 	"github.com/vtpl1/vrtc/pkg/av/codec/parser"
 	"github.com/vtpl1/vrtc/pkg/av/codec/pcm"
 	"google.golang.org/grpc"
+	"google.golang.org/grpc/peer"
 )
 
 // Frame media type values matching data_models.Frame.media_type and the AVF format.
@@ -91,31 +92,19 @@ type Server struct {
 	engineIDs map[string]struct{}
 	engChange chan struct{} // closed and replaced on each engine list change
 
-	grpcServer *grpc.Server
-	closed     chan struct{}
-	closeOnce  sync.Once
+	closed    chan struct{}
+	closeOnce sync.Once
 }
 
 // New creates a Server that listens on addr, registers both StreamService and
 // CentralService on the gRPC server, and starts serving in a goroutine.
-func New(addr string, opts ...grpc.ServerOption) (*Server, error) {
-	lis, err := net.Listen("tcp", addr)
-	if err != nil {
-		return nil, err
-	}
-
+func New() (*Server, error) {
 	s := &Server{
 		frameCh:   make(chan *data_models.FramePVA, frameChanSize),
 		engineIDs: make(map[string]struct{}),
 		engChange: make(chan struct{}),
 		closed:    make(chan struct{}),
 	}
-
-	s.grpcServer = grpc.NewServer(opts...)
-	streamservicefrs.RegisterStreamServiceServer(s.grpcServer, s)
-	centralservicefrs.RegisterCentralServiceServer(s.grpcServer, s)
-
-	go s.grpcServer.Serve(lis) //nolint:errcheck
 
 	return s, nil
 }
@@ -125,14 +114,17 @@ func New(addr string, opts ...grpc.ServerOption) (*Server, error) {
 // WriteFramePva implements StreamServiceServer.
 // It receives a client-streamed sequence of WriteFramePvaRequest messages and
 // forwards each FramePVA to the internal frame channel for GetCodecs/ReadPacket.
-func (s *Server) WriteFramePva(stream grpc.ClientStreamingServer[streamservicefrs.WriteFramePvaRequest, streamservicefrs.WriteFramePvaResponse]) error {
+func (s *Server) WriteFramePva(
+	stream grpc.ClientStreamingServer[streamservicefrs.WriteFramePvaRequest, streamservicefrs.WriteFramePvaResponse],
+) error {
 	var nodeID, engineID string
 
 	for {
 		req, err := stream.Recv()
-		if err == io.EOF {
+		if errors.Is(err, io.EOF) {
 			break
 		}
+
 		if err != nil {
 			return err
 		}
@@ -140,6 +132,7 @@ func (s *Server) WriteFramePva(stream grpc.ClientStreamingServer[streamservicefr
 		if nodeID == "" {
 			nodeID = req.GetNodeId()
 		}
+
 		if engineID == "" && req.GetEngineId() != "" {
 			engineID = req.GetEngineId()
 			s.addEngine(engineID)
@@ -170,13 +163,30 @@ func (s *Server) WriteFramePva(stream grpc.ClientStreamingServer[streamservicefr
 // It immediately streams the current set of connected engine IDs, then keeps
 // streaming updates as engines connect or disconnect, until the client disconnects
 // or the server closes.
-func (s *Server) ReadEngines(_ *centralservicefrs.ReadEnginesRequest, stream grpc.ServerStreamingServer[centralservicefrs.ReadEnginesResponse]) error {
+func (s *Server) ReadEngines(
+	req *centralservicefrs.ReadEnginesRequest,
+	stream grpc.ServerStreamingServer[centralservicefrs.ReadEnginesResponse],
+) error {
+	peerAddr := "unavailable"
+	if p, ok := peer.FromContext(stream.Context()); ok {
+		peerAddr = p.Addr.String()
+	}
+
+	log.Info().
+		Str("peer-addr", peerAddr).
+		Msgf("rpc(ReadEngines) request(site_id:%v)", req.GetNodeId())
+	defer log.Info().
+		Str("peer-addr", peerAddr).
+		Msgf("rpc(ReadEngines) request(site_id:%v) finished", req.GetNodeId())
+
 	for {
 		s.engMu.RLock()
+
 		ids := make([]string, 0, len(s.engineIDs))
 		for id := range s.engineIDs {
 			ids = append(ids, id)
 		}
+
 		notify := s.engChange
 		s.engMu.RUnlock()
 
@@ -203,6 +213,7 @@ func (s *Server) ReadEngines(_ *centralservicefrs.ReadEnginesRequest, stream grp
 // the initial stream list. Must be called exactly once before ReadPacket.
 func (s *Server) GetCodecs(ctx context.Context) ([]av.Stream, error) {
 	var connectHeader []byte
+
 	appendingHeader := false
 
 	for len(s.rawBuf) < videoProbSize {
@@ -215,8 +226,10 @@ func (s *Server) GetCodecs(ctx context.Context) ([]av.Stream, error) {
 			if errors.Is(err, io.EOF) {
 				break
 			}
+
 			return nil, err
 		}
+
 		s.rawBuf = append(s.rawBuf, pva)
 
 		frm := pva.GetFrame()
@@ -250,8 +263,10 @@ func (s *Server) GetCodecs(ctx context.Context) ([]av.Stream, error) {
 			if errors.Is(err, io.EOF) {
 				break
 			}
+
 			return nil, err
 		}
+
 		s.rawBuf = append(s.rawBuf, pva)
 
 		frm := pva.GetFrame()
@@ -270,12 +285,14 @@ func (s *Server) GetCodecs(ctx context.Context) ([]av.Stream, error) {
 		s.streams = append(s.streams, av.Stream{Idx: idx, Codec: s.videoCodec})
 		idx++
 	}
+
 	if s.audioCodec != nil {
 		s.audioIdx = idx
 		s.streams = append(s.streams, av.Stream{Idx: idx, Codec: s.audioCodec})
 	}
 
 	s.probed = true
+
 	return s.streams, nil
 }
 
@@ -294,6 +311,7 @@ func (s *Server) ReadPacket(ctx context.Context) (av.Packet, error) {
 			s.rawPos++
 		} else {
 			var err error
+
 			pva, err = s.recvPVA(ctx)
 			if err != nil {
 				return av.Packet{}, err
@@ -318,8 +336,8 @@ func (s *Server) ReadPacket(ctx context.Context) (av.Packet, error) {
 func (s *Server) Close() error {
 	s.closeOnce.Do(func() {
 		close(s.closed)
-		s.grpcServer.GracefulStop()
 	})
+
 	return nil
 }
 
@@ -331,6 +349,7 @@ func (s *Server) recvPVA(ctx context.Context) (*data_models.FramePVA, error) {
 		if !ok {
 			return nil, io.EOF
 		}
+
 		return pva, nil
 	case <-ctx.Done():
 		return nil, ctx.Err()
@@ -354,6 +373,7 @@ func (s *Server) pvaToPacket(pva *data_models.FramePVA) (av.Packet, bool) {
 			s.connectHeader = append(s.connectHeader, frm.GetBuffer()...)
 			s.appendingHeader = true
 		}
+
 		return av.Packet{}, true
 
 	case frameTypeHFrame, frameTypeIFrame, frameTypePFrame:
@@ -364,6 +384,7 @@ func (s *Server) pvaToPacket(pva *data_models.FramePVA) (av.Packet, bool) {
 				s.rebuildStreams()
 				s.pendingCodecChange = s.streams
 			}
+
 			s.connectHeader = nil
 		}
 
@@ -375,10 +396,12 @@ func (s *Server) pvaToPacket(pva *data_models.FramePVA) (av.Packet, bool) {
 		if s.lastVideoTS != 0 && ts <= s.lastVideoTS {
 			ts = s.lastVideoTS + 1
 		}
+
 		var dur time.Duration
 		if s.lastVideoTS != 0 {
 			dur = time.Duration(ts-s.lastVideoTS) * time.Millisecond
 		}
+
 		s.lastVideoTS = ts
 
 		return av.Packet{
@@ -407,16 +430,21 @@ func (s *Server) pvaToPacket(pva *data_models.FramePVA) (av.Packet, bool) {
 		// Strip ADTS header from AAC frames when present.
 		if frm.GetMediaType() == mediaTypeAAC && len(data) >= 7 &&
 			data[0] == 0xFF && data[1]&0xF6 == 0xF0 {
-			if _, hdrLen, _, _, err := aacparser.ParseADTSHeader(data); err == nil && hdrLen < len(data) {
+			if _, hdrLen, _, _, err := aacparser.ParseADTSHeader(
+				data,
+			); err == nil &&
+				hdrLen < len(data) {
 				data = data[hdrLen:]
 			}
 		}
 
 		ts := frm.GetTimestamp()
+
 		var dur time.Duration
 		if s.lastAudioTS != 0 && ts > s.lastAudioTS {
 			dur = time.Duration(ts-s.lastAudioTS) * time.Millisecond
 		}
+
 		s.lastAudioTS = ts
 
 		return av.Packet{
@@ -437,6 +465,7 @@ func (s *Server) rebuildStreams() {
 	if s.videoCodec != nil {
 		s.streams = append(s.streams, av.Stream{Idx: s.videoIdx, Codec: s.videoCodec})
 	}
+
 	if s.audioCodec != nil {
 		s.streams = append(s.streams, av.Stream{Idx: s.audioIdx, Codec: s.audioCodec})
 	}
@@ -469,16 +498,19 @@ func parseVideoCodec(mediaType int32, data []byte) av.CodecData {
 	switch mediaType {
 	case mediaTypeH264:
 		var sps, pps []byte
+
 		for _, nalu := range nalus {
 			if len(nalu) == 0 {
 				continue
 			}
+
 			if h264parser.IsSPSNALU(nalu) && sps == nil {
 				sps = nalu
 			} else if h264parser.IsPPSNALU(nalu) && pps == nil {
 				pps = nalu
 			}
 		}
+
 		if sps != nil && pps != nil {
 			if c, err := h264parser.NewCodecDataFromSPSAndPPS(sps, pps); err == nil {
 				return c
@@ -487,10 +519,12 @@ func parseVideoCodec(mediaType int32, data []byte) av.CodecData {
 
 	case mediaTypeH265:
 		var vps, sps, pps []byte
+
 		for _, nalu := range nalus {
 			if len(nalu) == 0 {
 				continue
 			}
+
 			switch {
 			case h265parser.IsVPSNALU(nalu) && vps == nil:
 				vps = nalu
@@ -500,6 +534,7 @@ func parseVideoCodec(mediaType int32, data []byte) av.CodecData {
 				pps = nalu
 			}
 		}
+
 		if vps != nil && sps != nil && pps != nil {
 			if c, err := h265parser.NewCodecDataFromVPSAndSPSAndPPS(vps, sps, pps); err == nil {
 				return c
@@ -540,6 +575,7 @@ func parseAudioCodec(mediaType int32, data []byte) av.CodecData {
 			ChannelConfig:   1,  // mono
 		}
 		fallback.Complete()
+
 		if c, err := aacparser.NewCodecDataFromMPEG4AudioConfig(fallback); err == nil {
 			return c
 		}
@@ -553,5 +589,6 @@ func stripVideoPrefix(data []byte) []byte {
 	if len(data) <= 4 {
 		return data
 	}
+
 	return data[4:]
 }

@@ -26,11 +26,12 @@ PLATFORMS := \
 
 .PHONY: all prerequisite fmt lint update gen build test docker-build clean
 
-all: build
+all: fmt lint build
 
 prerequisite:
 	@go get -tool github.com/golangci/golangci-lint/v2/cmd/golangci-lint@latest	
 	@go get -tool mvdan.cc/gofumpt@latest
+	@go get -tool github.com/fullstorydev/grpcurl/cmd/grpcurl@latest
 
 fmt:
 	go tool gofumpt -l -w -extra .
@@ -82,3 +83,8 @@ docker-build:
 
 clean:
 	rm -rf bin/ data/ hls/
+
+test-hosting:
+	go tool grpcurl -plaintext 172.16.1.144:8083 list
+	go tool grpcurl -plaintext 172.16.1.144:8083 describe central_service_frs.CentralService
+	go tool grpcurl -plaintext 172.16.1.144:8083 describe stream_service_frs.StreamService

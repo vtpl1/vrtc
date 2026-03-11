@@ -12,8 +12,6 @@ import (
 	"github.com/vtpl1/vrtc/pkg/av"
 )
 
-type Option func(*StreamManager)
-
 type StreamManager struct {
 	demuxerFactory av.DemuxerFactory
 	demuxerRemover av.DemuxerRemover
@@ -31,16 +29,12 @@ type StreamManager struct {
 func New(
 	demuxerFactory av.DemuxerFactory,
 	demuxerRemover av.DemuxerRemover,
-	opts ...Option,
 ) *StreamManager {
 	m := &StreamManager{
 		demuxerFactory:   demuxerFactory,
 		demuxerRemover:   demuxerRemover,
 		producers:        make(map[string]*Producer),
 		producersToStart: make(chan *Producer, 10),
-	}
-	for _, o := range opts {
-		o(m)
 	}
 
 	return m
