@@ -1,10 +1,12 @@
-package av
+package proxy
 
 import (
 	"context"
 	"errors"
 	"io"
 	"sync"
+
+	"github.com/vtpl1/vrtc/pkg/av"
 )
 
 var ErrProxyIsClosing = errors.New("proxy is closing")
@@ -25,19 +27,28 @@ var ErrProxyIsClosing = errors.New("proxy is closing")
 // embed ProxyMuxDemuxCloser and implement them explicitly when needed.
 type ProxyMuxDemuxCloser struct {
 	packetsCloseOnce sync.Once // guards close(packets)
-	packets          chan Packet
-	streams          []Stream
+	packets          chan av.Packet
+	streams          []av.Stream
 	ready            chan struct{} // closed once WriteHeader stores streams
 	closedCloseOnce  sync.Once
 	closed           chan struct{} // flag that proxy is closing
+}
 
+// WriteFrame implements [av.AVFFrameMuxCloser].
+func (p *ProxyMuxDemuxCloser) WriteFrame(ctx context.Context, frm av.AVFFrame) error {
+	panic("unimplemented")
+}
+
+// ReadFrame implements [av.AVFFrameDemuxCloser].
+func (p *ProxyMuxDemuxCloser) ReadFrame(ctx context.Context) (av.AVFFrame, error) {
+	panic("unimplemented")
 }
 
 // NewProxyMuxDemuxCloser creates a ProxyMuxDemuxCloser with a packet channel
 // of the given buffer size (0 for unbuffered).
 func NewProxyMuxDemuxCloser(bufSize int) *ProxyMuxDemuxCloser {
 	return &ProxyMuxDemuxCloser{
-		packets: make(chan Packet, bufSize),
+		packets: make(chan av.Packet, bufSize),
 		ready:   make(chan struct{}),
 	}
 }
@@ -46,7 +57,7 @@ func NewProxyMuxDemuxCloser(bufSize int) *ProxyMuxDemuxCloser {
 
 // GetCodecs blocks until WriteHeader has been called (or ctx is cancelled),
 // then returns the stream list provided to WriteHeader.
-func (p *ProxyMuxDemuxCloser) GetCodecs(ctx context.Context) ([]Stream, error) {
+func (p *ProxyMuxDemuxCloser) GetCodecs(ctx context.Context) ([]av.Stream, error) {
 	select {
 	case <-p.ready:
 		return p.streams, nil
@@ -59,29 +70,31 @@ func (p *ProxyMuxDemuxCloser) GetCodecs(ctx context.Context) ([]Stream, error) {
 
 // ReadPacket returns the next packet from the shared channel.
 // Returns io.EOF when the mux side calls WriteTrailer or Close.
-func (p *ProxyMuxDemuxCloser) ReadPacket(ctx context.Context) (Packet, error) {
+func (p *ProxyMuxDemuxCloser) ReadPacket(ctx context.Context) (av.Packet, error) {
 	select {
 	case pkt, ok := <-p.packets:
 		if !ok {
-			return Packet{}, errors.Join(io.EOF, ErrProxyIsClosing)
+			return av.Packet{}, errors.Join(io.EOF, ErrProxyIsClosing)
 		}
+
 		return pkt, nil
 	case <-ctx.Done():
-		return Packet{}, ctx.Err()
+		return av.Packet{}, ctx.Err()
 	}
 }
 
 // --- MuxCloser ---
 
 // WriteHeader stores the stream list and unblocks any GetCodecs call.
-func (p *ProxyMuxDemuxCloser) WriteHeader(_ context.Context, streams []Stream) error {
+func (p *ProxyMuxDemuxCloser) WriteHeader(_ context.Context, streams []av.Stream) error {
 	p.streams = streams
 	close(p.ready)
+
 	return nil
 }
 
 // WritePacket enqueues a packet for the demux side to read.
-func (p *ProxyMuxDemuxCloser) WritePacket(ctx context.Context, pkt Packet) error {
+func (p *ProxyMuxDemuxCloser) WritePacket(ctx context.Context, pkt av.Packet) error {
 	select {
 	case p.packets <- pkt:
 		return nil
@@ -93,6 +106,7 @@ func (p *ProxyMuxDemuxCloser) WritePacket(ctx context.Context, pkt Packet) error
 // WriteTrailer closes the packet channel, causing ReadPacket to return io.EOF.
 func (p *ProxyMuxDemuxCloser) WriteTrailer(_ context.Context, _ error) error {
 	p.packetsCloseOnce.Do(func() { close(p.packets) })
+
 	return nil
 }
 
@@ -104,5 +118,6 @@ func (p *ProxyMuxDemuxCloser) Close() error {
 	p.closedCloseOnce.Do(func() {
 		close(p.closed)
 	})
+
 	return nil
 }

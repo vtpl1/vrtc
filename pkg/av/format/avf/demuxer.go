@@ -36,36 +36,10 @@ var (
 
 // ── AVF format constants (§4 and §5 of the specification) ────────────────────
 
-// MediaType field values (§4).
-const (
-	mediaTypeMJPG    = uint32(0)
-	mediaTypeMPEG    = uint32(1)
-	mediaTypeH264    = uint32(2)
-	mediaTypeG711U   = uint32(3) // PCM µ-law (G.711 µ-law)
-	mediaTypeG711A   = uint32(4) // PCM A-law (G.711 A-law)
-	mediaTypeL16     = uint32(5) // PCM 16-bit linear
-	mediaTypeAAC     = uint32(6)
-	mediaTypeUnknown = uint32(7)
-	mediaTypeH265    = uint32(8)
-	mediaTypeG722    = uint32(9)
-	mediaTypeG726    = uint32(10)
-	mediaTypeOPUS    = uint32(11)
-	mediaTypeMP2L2   = uint32(12)
-)
-
-// FrameType field values (§5).
-const (
-	frameTypeHFrame        = uint32(0)  // Non-reference / header frame
-	frameTypeIFrame        = uint32(1)  // Keyframe
-	frameTypePFrame        = uint32(2)  // Non-keyframe
-	frameTypeConnectHeader = uint32(3)  // Codec parameter sets (SPS/PPS/VPS)
-	frameTypeAudioFrame    = uint32(16) // Audio sample data
-)
-
 // ── Internal sizing constants (§8) ───────────────────────────────────────────
 
 const (
-	// frameHeaderSize: magic(4)+refFrameOff(8)+mediaType(4)+frameType(4)+timestamp(8)+frameSize(4).
+	// frameHeaderSize: magic(4)+refFrameOff(8)+MediaType(4)+FrameType(4)+Timestamp(8)+frameSize(4).
 	frameHeaderSize = 32
 	// frameTrailerSize: currentFrameOff(8).
 	frameTrailerSize = 8
@@ -80,29 +54,6 @@ const (
 )
 
 var avfMagic = [4]byte{'0', '0', 'd', 'c'} //nolint:gochecknoglobals
-
-// ── rawFrame ──────────────────────────────────────────────────────────────────
-
-// rawFrame holds one unparsed AVF frame record.
-type rawFrame struct {
-	mediaType uint32
-	frameType uint32
-	timestamp int64 // milliseconds from the TimeStamp field
-	data      []byte
-
-	frameID int64
-}
-
-func (m *rawFrame) String() string {
-	return fmt.Sprintf(
-		"ID=%d Time=%dms Media=%d Frame=%d DataLen=%d",
-		m.frameID,
-		m.timestamp,
-		m.mediaType,
-		m.frameType,
-		len(m.data),
-	)
-}
 
 // ── Demuxer ───────────────────────────────────────────────────────────────────
 
@@ -124,7 +75,7 @@ type Demuxer struct {
 	streams []av.Stream
 
 	// frames buffered during GetCodecs that have not yet been emitted
-	buffered []rawFrame
+	buffered []av.AVFFrame
 	bufPos   int
 
 	// pendingCodecChange is attached to the next emitted packet's NewCodecs field
@@ -133,7 +84,7 @@ type Demuxer struct {
 	probed     bool // GetCodecs has run
 	frameCount int64
 
-	// lastVideoTS and lastAudioTS track the timestamp (ms) of the most recently
+	// lastVideoTS and lastAudioTS track the Timestamp (ms) of the most recently
 	// emitted video/audio packet so that packet Duration can be derived from the
 	// difference between consecutive timestamps.
 	lastVideoTS int64 // 0 = not yet set
@@ -142,7 +93,7 @@ type Demuxer struct {
 	disableAudio bool
 }
 
-// New creates a Demuxer that reads AVF data from r.
+// New creates a Demuxer that reads AVF Data from r.
 // If r implements io.Closer, Close will delegate to it.
 func New(r io.Reader, opts ...Option) *Demuxer {
 	d := &Demuxer{
@@ -200,21 +151,21 @@ func (d *Demuxer) GetCodecs(_ context.Context) ([]av.Stream, error) {
 		d.buffered = append(d.buffered, frm)
 		probeCount++
 
-		switch frm.frameType {
-		case frameTypeAudioFrame:
+		switch frm.FrameType {
+		case av.AVFFrameTypeAudioFrame:
 			if !d.disableAudio && d.audioCodec == nil {
-				d.audioCodec = parseAudioCodec(frm.mediaType, frm.data)
+				d.audioCodec = parseAudioCodec(frm.MediaType, frm.Data)
 			}
-		case frameTypeConnectHeader:
-			connectHeader = append(connectHeader, frm.data...)
+		case av.AVFFrameTypeConnectHeader:
+			connectHeader = append(connectHeader, frm.Data...)
 			appendingToConnectHeader = true
 		default:
 			if appendingToConnectHeader {
 				appendingToConnectHeader = false
-				d.videoCodec = parseVideoCodec(frm.mediaType, connectHeader)
-			} else if frm.frameType == frameTypeIFrame {
+				d.videoCodec = parseVideoCodec(frm.MediaType, connectHeader)
+			} else if frm.FrameType == av.AVFFrameTypeIFrame {
 				// MJPEG does not use CONNECT_HEADER; detect from first I_FRAME.
-				if d.videoCodec == nil && frm.mediaType == mediaTypeMJPG {
+				if d.videoCodec == nil && frm.MediaType == av.AVFMediaTypeMJPG {
 					d.videoCodec = mjpeg.CodecData{}
 				}
 			}
@@ -240,8 +191,8 @@ func (d *Demuxer) GetCodecs(_ context.Context) ([]av.Stream, error) {
 		d.buffered = append(d.buffered, frm)
 		probeCount++
 
-		if frm.frameType == frameTypeAudioFrame && d.audioCodec == nil {
-			d.audioCodec = parseAudioCodec(frm.mediaType, frm.data)
+		if frm.FrameType == av.AVFFrameTypeAudioFrame && d.audioCodec == nil {
+			d.audioCodec = parseAudioCodec(frm.MediaType, frm.Data)
 		}
 	}
 
@@ -275,7 +226,7 @@ func (d *Demuxer) ReadPacket(ctx context.Context) (av.Packet, error) {
 			return av.Packet{}, ctx.Err()
 		}
 
-		var frm rawFrame
+		var frm av.AVFFrame
 
 		if d.bufPos < len(d.buffered) {
 			frm = d.buffered[d.bufPos]
@@ -319,46 +270,46 @@ func (d *Demuxer) Close() error {
 // ── Frame reading ─────────────────────────────────────────────────────────────
 
 // readFrame reads one complete AVF frame record (header + payload + trailer).
-func (d *Demuxer) readFrame() (rawFrame, error) {
+func (d *Demuxer) readFrame() (av.AVFFrame, error) {
 	var hdr [frameHeaderSize]byte
 	if _, err := io.ReadFull(d.r, hdr[:]); err != nil {
-		return rawFrame{}, err
+		return av.AVFFrame{}, err
 	}
 
 	if hdr[0] != avfMagic[0] || hdr[1] != avfMagic[1] ||
 		hdr[2] != avfMagic[2] || hdr[3] != avfMagic[3] {
-		return rawFrame{}, fmt.Errorf("%w: got %q", ErrBadMagic, string(hdr[0:4]))
+		return av.AVFFrame{}, fmt.Errorf("%w: got %q", ErrBadMagic, string(hdr[0:4]))
 	}
 
 	// refFrameOff at [4:12] — not needed for demuxing.
-	mediaType := binary.BigEndian.Uint32(hdr[12:16])
-	frameType := binary.BigEndian.Uint32(hdr[16:20])
-	timestamp := int64(binary.BigEndian.Uint64(hdr[20:28]))
+	MediaType := binary.BigEndian.Uint32(hdr[12:16])
+	FrameType := binary.BigEndian.Uint32(hdr[16:20])
+	Timestamp := int64(binary.BigEndian.Uint64(hdr[20:28]))
 	frameSize := binary.BigEndian.Uint32(hdr[28:32])
 
 	if frameSize > maxFrameSize {
-		return rawFrame{}, fmt.Errorf("%w: %d bytes", ErrFrameTooLarge, frameSize)
+		return av.AVFFrame{}, fmt.Errorf("%w: %d bytes", ErrFrameTooLarge, frameSize)
 	}
 
-	data := make([]byte, frameSize)
-	if _, err := io.ReadFull(d.r, data); err != nil {
-		return rawFrame{}, err
+	Data := make([]byte, frameSize)
+	if _, err := io.ReadFull(d.r, Data); err != nil {
+		return av.AVFFrame{}, err
 	}
 
 	// Discard the trailing CurrentFrameOff field.
 	var trailer [frameTrailerSize]byte
 	if _, err := io.ReadFull(d.r, trailer[:]); err != nil {
-		return rawFrame{}, err
+		return av.AVFFrame{}, err
 	}
 
 	d.frameCount++
 
-	return rawFrame{
-		mediaType: mediaType,
-		frameType: frameType,
-		timestamp: timestamp,
-		data:      data,
-		frameID:   d.frameCount,
+	return av.AVFFrame{
+		MediaType: MediaType,
+		FrameType: FrameType,
+		Timestamp: Timestamp,
+		Data:      Data,
+		FrameID:   d.frameCount,
 	}, nil
 }
 
@@ -366,7 +317,7 @@ func (d *Demuxer) readFrame() (rawFrame, error) {
 
 func isVideoMediaType(mt uint32) bool {
 	switch mt {
-	case mediaTypeMJPG, mediaTypeMPEG, mediaTypeH264, mediaTypeH265:
+	case av.AVFMediaTypeMJPG, av.AVFMediaTypeMPEG, av.AVFMediaTypeH264, av.AVFMediaTypeH265:
 		return true
 	}
 
@@ -378,7 +329,7 @@ func parseVideoCodec(mediaType uint32, data []byte) av.CodecData {
 	nalus, _ := parser.SplitNALUs(data)
 
 	switch mediaType {
-	case mediaTypeH264:
+	case av.AVFMediaTypeH264:
 		var sps, pps []byte
 
 		for _, nalu := range nalus {
@@ -399,7 +350,7 @@ func parseVideoCodec(mediaType uint32, data []byte) av.CodecData {
 			}
 		}
 
-	case mediaTypeH265:
+	case av.AVFMediaTypeH265:
 		var vps, sps, pps []byte
 
 		for _, nalu := range nalus {
@@ -431,16 +382,16 @@ func parseVideoCodec(mediaType uint32, data []byte) av.CodecData {
 // audio frame payload (used to detect AAC parameters via ADTS header parsing).
 func parseAudioCodec(mediaType uint32, data []byte) av.CodecData {
 	switch mediaType {
-	case mediaTypeG711U:
+	case av.AVFMediaTypeG711U:
 		return pcm.NewPCMMulawCodecData()
 
-	case mediaTypeG711A:
+	case av.AVFMediaTypeG711A:
 		return pcm.NewPCMAlawCodecData()
 
-	case mediaTypeOPUS:
+	case av.AVFMediaTypeOPUS:
 		return avcodec.NewOpusCodecData(48000, av.ChStereo)
 
-	case mediaTypeAAC:
+	case av.AVFMediaTypeAAC:
 		// Attempt ADTS header parse for sample rate / channel config.
 		if len(data) >= 7 {
 			if cfg, _, _, _, err := aacparser.ParseADTSHeader(data); err == nil {
@@ -471,16 +422,16 @@ func parseAudioCodec(mediaType uint32, data []byte) av.CodecData {
 // frameToPacket converts one rawFrame into an av.Packet.
 // skip=true means the frame carries no decodable media (e.g. CONNECT_HEADER).
 func (d *Demuxer) frameToPacket(
-	frm rawFrame,
+	frm av.AVFFrame,
 ) (pkt av.Packet, skip bool, err error) { //nolint:unparam
-	dts := time.Duration(frm.timestamp) * time.Millisecond
+	dts := time.Duration(frm.Timestamp) * time.Millisecond
 
-	switch frm.frameType {
-	case frameTypeConnectHeader:
+	switch frm.FrameType {
+	case av.AVFFrameTypeConnectHeader:
 		// Codec parameter update — parse and queue a codec-change notification
 		// so downstream decoders can re-initialise.
-		if isVideoMediaType(frm.mediaType) && d.probed {
-			if newCodec := parseVideoCodec(frm.mediaType, frm.data); newCodec != nil {
+		if isVideoMediaType(frm.MediaType) && d.probed {
+			if newCodec := parseVideoCodec(frm.MediaType, frm.Data); newCodec != nil {
 				d.videoCodec = newCodec
 				d.rebuildStreams()
 				d.pendingCodecChange = d.streams
@@ -489,15 +440,15 @@ func (d *Demuxer) frameToPacket(
 
 		return av.Packet{}, true, nil
 
-	case frameTypeIFrame, frameTypePFrame, frameTypeHFrame:
-		if !isVideoMediaType(frm.mediaType) || d.videoCodec == nil {
+	case av.AVFFrameTypeIFrame, av.AVFFrameTypePFrame, av.AVFFrameTypeHFrame:
+		if !isVideoMediaType(frm.MediaType) || d.videoCodec == nil {
 			return av.Packet{}, true, nil
 		}
 
 		// Clamp to enforce strictly-increasing DTS. Rare camera clock glitches
-		// can produce a backward step in the video timestamp; clamping to
+		// can produce a backward step in the video Timestamp; clamping to
 		// lastVideoTS+1 keeps downstream consumers (fMP4, LL-HLS) valid.
-		ts := frm.timestamp
+		ts := frm.Timestamp
 		if d.lastVideoTS != 0 && ts <= d.lastVideoTS {
 			ts = d.lastVideoTS + 1
 		}
@@ -511,14 +462,14 @@ func (d *Demuxer) frameToPacket(
 
 		return av.Packet{
 			Idx:       d.videoIdx,
-			KeyFrame:  frm.frameType == frameTypeIFrame,
+			KeyFrame:  frm.FrameType == av.AVFFrameTypeIFrame,
 			DTS:       time.Duration(ts) * time.Millisecond,
 			Duration:  dur,
 			CodecType: d.videoCodec.Type(),
-			Data:      stripVideoPrefix(frm.data),
+			Data:      stripVideoPrefix(frm.Data),
 		}, false, nil
 
-	case frameTypeAudioFrame:
+	case av.AVFFrameTypeAudioFrame:
 		// Honour the disableAudio option: skip all audio frames including
 		// late-detection ones so that audio packets are never emitted when
 		// the caller has opted out of audio.
@@ -528,7 +479,7 @@ func (d *Demuxer) frameToPacket(
 
 		if d.audioCodec == nil {
 			// Late audio codec detection for streams that had no audio during probe.
-			if c := parseAudioCodec(frm.mediaType, frm.data); c != nil {
+			if c := parseAudioCodec(frm.MediaType, frm.Data); c != nil {
 				d.audioCodec = c
 				d.rebuildStreams()
 				d.pendingCodecChange = d.streams
@@ -537,32 +488,32 @@ func (d *Demuxer) frameToPacket(
 			}
 		}
 
-		data := frm.data
+		Data := frm.Data
 
 		// Strip ADTS header from AAC frames when present.
-		if frm.mediaType == mediaTypeAAC && len(data) >= 7 &&
-			data[0] == 0xFF && data[1]&0xF6 == 0xF0 {
+		if frm.MediaType == av.AVFMediaTypeAAC && len(Data) >= 7 &&
+			Data[0] == 0xFF && Data[1]&0xF6 == 0xF0 {
 			if _, hdrLen, _, _, adtsErr := aacparser.ParseADTSHeader(
-				data,
+				Data,
 			); adtsErr == nil &&
-				hdrLen < len(data) {
-				data = data[hdrLen:]
+				hdrLen < len(Data) {
+				Data = Data[hdrLen:]
 			}
 		}
 
 		var dur time.Duration
-		if d.lastAudioTS != 0 && frm.timestamp > d.lastAudioTS {
-			dur = time.Duration(frm.timestamp-d.lastAudioTS) * time.Millisecond
+		if d.lastAudioTS != 0 && frm.Timestamp > d.lastAudioTS {
+			dur = time.Duration(frm.Timestamp-d.lastAudioTS) * time.Millisecond
 		}
 
-		d.lastAudioTS = frm.timestamp
+		d.lastAudioTS = frm.Timestamp
 
 		return av.Packet{
 			Idx:       d.audioIdx,
 			DTS:       dts,
 			Duration:  dur,
 			CodecType: d.audioCodec.Type(),
-			Data:      data,
+			Data:      Data,
 		}, false, nil
 	}
 

@@ -66,7 +66,7 @@ func (m *Producer) Start(ctx context.Context) error {
 		defer cancel()
 
 		demuxer, err := m.demuxerFactory(sctx, m.id)
-		if err != nil {
+		if err != nil || demuxer == nil {
 			m.setLastCodecError(errors.Join(ErrProducerDemuxFactory, err))
 
 			return

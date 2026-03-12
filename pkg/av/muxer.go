@@ -29,7 +29,7 @@ type Muxer interface {
 // This is the primary type returned by sink-opening functions.
 type MuxCloser interface {
 	Muxer
-	Close() error
+	Closer
 }
 
 // CodecChanger is an optional capability a Muxer may implement to handle mid-stream

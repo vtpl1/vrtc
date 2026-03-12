@@ -97,7 +97,7 @@ func (m *Consumer) Start(ctx context.Context) error {
 			}
 
 			muxer, err := m.muxerFactory(sctx, m.id)
-			if err != nil {
+			if err != nil || muxer == nil {
 				m.setLastError(errors.Join(ErrConsumerMuxFactory, err))
 
 				return

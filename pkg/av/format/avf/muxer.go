@@ -189,7 +189,7 @@ func (m *Muxer) WriteCodecChange(_ context.Context, changed []av.Stream) error {
 // ── per-frame write helpers ───────────────────────────────────────────────────
 
 func (m *Muxer) writeVideoPacket(si streamInfo, pkt av.Packet, tsMs int64) error {
-	if pkt.KeyFrame && si.mediaType != mediaTypeMJPG {
+	if pkt.KeyFrame && si.mediaType != av.AVFMediaTypeMJPG {
 		// Emit CONNECT_HEADER before every I_FRAME (§6.1).
 		hdrData := buildConnectHeaderPayload(si.codec)
 		if len(hdrData) > 0 {
@@ -198,7 +198,7 @@ func (m *Muxer) writeVideoPacket(si streamInfo, pkt av.Packet, tsMs int64) error
 			m.lastConnectHdrOff = m.currentOffset
 			if err := m.writeFrame(
 				si.mediaType,
-				frameTypeConnectHeader,
+				av.AVFFrameTypeConnectHeader,
 				tsMs,
 				hdrData,
 			); err != nil {
@@ -207,9 +207,9 @@ func (m *Muxer) writeVideoPacket(si streamInfo, pkt av.Packet, tsMs int64) error
 		}
 	}
 
-	frameType := frameTypePFrame
+	frameType := av.AVFFrameTypePFrame
 	if pkt.KeyFrame {
-		frameType = frameTypeIFrame
+		frameType = av.AVFFrameTypeIFrame
 	}
 
 	// §6.2: video payload is stored with a 4-byte start-code prefix.
@@ -219,7 +219,7 @@ func (m *Muxer) writeVideoPacket(si streamInfo, pkt av.Packet, tsMs int64) error
 }
 
 func (m *Muxer) writeAudioPacket(si streamInfo, tsMs int64, data []byte) error {
-	return m.writeFrame(si.mediaType, frameTypeAudioFrame, tsMs, data)
+	return m.writeFrame(si.mediaType, av.AVFFrameTypeAudioFrame, tsMs, data)
 }
 
 // writeFrame emits one complete AVF frame record:
@@ -269,23 +269,23 @@ func (m *Muxer) writeFrame(mediaType, frameType uint32, tsMs int64, data []byte)
 func mediaTypeForCodec(ct av.CodecType) (uint32, bool) {
 	switch ct {
 	case av.H264:
-		return mediaTypeH264, true
+		return av.AVFMediaTypeH264, true
 	case av.H265:
-		return mediaTypeH265, true
+		return av.AVFMediaTypeH265, true
 	case av.MJPEG:
-		return mediaTypeMJPG, true
+		return av.AVFMediaTypeMJPG, true
 	case av.PCM_MULAW:
-		return mediaTypeG711U, true
+		return av.AVFMediaTypeG711U, true
 	case av.PCM_ALAW:
-		return mediaTypeG711A, true
+		return av.AVFMediaTypeG711A, true
 	case av.PCM, av.PCML:
-		return mediaTypeL16, true
+		return av.AVFMediaTypeL16, true
 	case av.AAC:
-		return mediaTypeAAC, true
+		return av.AVFMediaTypeAAC, true
 	case av.OPUS:
-		return mediaTypeOPUS, true
+		return av.AVFMediaTypeOPUS, true
 	case av.MP3:
-		return mediaTypeMP2L2, true
+		return av.AVFMediaTypeMP2L2, true
 	}
 
 	return 0, false

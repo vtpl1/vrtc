@@ -1,12 +1,14 @@
 package centralservicefrsimpl
 
 import (
+	"errors"
 	"sync"
 	"time"
 
 	"github.com/rs/zerolog/log"
 	centralservicefrs "github.com/vtpl1/vrtc/gen/central_service_frs"
 	"github.com/vtpl1/vrtc/gen/data_models"
+	"github.com/vtpl1/vrtc/pkg/av"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/peer"
 )
@@ -16,6 +18,16 @@ type CentralServicefFrsImpl struct {
 
 	closed    chan struct{}
 	closeOnce sync.Once
+
+	mu      sync.RWMutex
+	sources map[string]*Source
+	filters map[string]map[string]av.Filter
+}
+
+type Source struct {
+	id               string
+	mu               sync.RWMutex
+	consumersChanged chan struct{}
 }
 
 func New() (*CentralServicefFrsImpl, error) {
@@ -41,7 +53,24 @@ func (m *CentralServicefFrsImpl) ReadEngines(
 		Str("rpc", "rpc(ReadEngines)").Logger()
 
 	log.Info().Msg("request")
-	defer log.Info().Msg("request finished")
+
+	var nodeID string
+
+	defer func() {
+		if len(nodeID) == 0 {
+			return
+		}
+
+		m.mu.Lock()
+
+		s, ok := m.sources[nodeID]
+		if ok {
+			delete(m.sources, s.id)
+		}
+		m.mu.Unlock()
+
+		log.Info().Msg("request finished")
+	}()
 
 	sendUpdate := func() error {
 		if err := stream.Send(
@@ -101,5 +130,34 @@ func (m *CentralServicefFrsImpl) Close() error {
 		close(m.closed)
 	})
 
+	return nil
+}
+
+func (m *CentralServicefFrsImpl) GetDemuxCloser(
+	sourceID, producerID string,
+) (av.DemuxCloser, error) {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+
+	if f, ok := m.filters[sourceID]; ok {
+		if f, ok := f[producerID]; ok {
+			return f, nil
+		}
+	}
+
+	return nil, errors.New("fff")
+}
+
+func (m *CentralServicefFrsImpl) RemoveDemuxCloser(sourceID, producerID string) error {
+	return nil
+}
+
+func (m *CentralServicefFrsImpl) GetAVFMuxCloser(
+	sourceID, producerID string,
+) (av.AVFFrameMuxCloser, error) {
+	return nil, nil
+}
+
+func (m *CentralServicefFrsImpl) RemoveAVFMuxCloser(sourceID, producerID string) error {
 	return nil
 }

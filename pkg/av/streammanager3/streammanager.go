@@ -75,7 +75,11 @@ func (m *StreamManager) AddConsumer(
 		}
 
 		if err := p.LastError(); err != nil {
-			return fmt.Errorf("%s: %w", producerID, errors.Join(ErrProducerLastError, err))
+			return fmt.Errorf(
+				"producerID: %s:\n%w",
+				producerID,
+				errors.Join(ErrProducerLastError, err),
+			)
 		}
 
 		if err := p.AddConsumer(ctx, consumerID, muxerFactory, muxerRemover, errChan); err != nil {

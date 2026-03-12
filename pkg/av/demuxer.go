@@ -35,7 +35,7 @@ type Demuxer interface {
 //	if s, ok := dmx.(av.TimeSeeker); ok { s.SeekToTime(ctx, 30*time.Second) }
 type DemuxCloser interface {
 	Demuxer
-	Close() error
+	Closer
 }
 
 // Pauser is an optional capability a Demuxer may implement to pause and resume delivery.

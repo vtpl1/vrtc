@@ -14,6 +14,8 @@ import (
 	centralservicefrs "github.com/vtpl1/vrtc/gen/central_service_frs"
 	streamservicefrs "github.com/vtpl1/vrtc/gen/stream_service_frs"
 	"github.com/vtpl1/vrtc/internal/httprouter"
+	"github.com/vtpl1/vrtc/pkg/av"
+	"github.com/vtpl1/vrtc/pkg/av/streammanager3"
 	"github.com/vtpl1/vrtc/pkg/configpath"
 	"github.com/vtpl1/vrtc/pkg/lifecycle"
 	"github.com/vtpl1/vrtc/pkg/logger"
@@ -62,24 +64,47 @@ func Run(appName, appMode string, cfg Config) error {
 	}
 	defer centralServer.Close()
 
-	streamServer, err := streamservicefrsimpl.New()
+	streamServer, err := streamservicefrsimpl.New(
+		func(ctx context.Context, sourceID, producerID string) (av.AVFFrameMuxCloser, error) {
+			return centralServer.GetAVFMuxCloser(sourceID, producerID)
+		},
+		func(ctx context.Context, sourceID, producerID string) error {
+			return centralServer.RemoveAVFMuxCloser(sourceID, producerID)
+		},
+	)
 	if err != nil {
 		return err
 	}
 	defer streamServer.Close()
-
-	wg := sync.WaitGroup{}
-
-	httpServer := &http.Server{
-		Handler:           httprouter.NewRouter(),
-		ReadHeaderTimeout: 5 * time.Second,
-	}
 
 	grpcServer := grpc.NewServer()
 	centralservicefrs.RegisterCentralServiceServer(grpcServer, centralServer)
 	streamservicefrs.RegisterStreamServiceServer(grpcServer, streamServer)
 	reflection.Register(grpcServer)
 
+	sm := streammanager3.New(
+		func(ctx context.Context, producerID string) (av.DemuxCloser, error) {
+			sourceID := ""
+
+			return centralServer.GetDemuxCloser(sourceID, producerID)
+		},
+		func(ctx context.Context, producerID string) error {
+			sourceID := ""
+
+			return centralServer.RemoveDemuxCloser(sourceID, producerID)
+		},
+	)
+	if err := sm.Start(ctx); err != nil {
+		log.Error().Err(err).Msg("Streammanager start error")
+
+		return err
+	}
+
+	httpServer := &http.Server{
+		Handler:           httprouter.NewRouter(ctx, sm),
+		ReadHeaderTimeout: 5 * time.Second,
+	}
+	wg := sync.WaitGroup{}
 	wg.Go(func() {
 		log.Info().Int("port", port).Msgf("[grpc-server] started")
 
@@ -117,9 +142,14 @@ func Run(appName, appMode string, cfg Config) error {
 	fmt.Println("waiting for termination request") //nolint:forbidigo
 	lifecycle.WaitForTerminationRequest(errChan)
 	fmt.Println("\nafter termination request") //nolint:forbidigo
+
+	if err := sm.Stop(); err != nil {
+		log.Error().Err(err).Msg("Streammanager error")
+	}
+
+	fmt.Println("\nafter sm.Stop") //nolint:forbidigo
 	cancel()
-	s.Close()
-	fmt.Println("\nafter cmux close") //nolint:forbidigo
+	fmt.Println("\nafter cancel") //nolint:forbidigo
 	grpcServer.GracefulStop()
 	fmt.Println("\nafter grpc close") //nolint:forbidigo
 
@@ -133,6 +163,8 @@ func Run(appName, appMode string, cfg Config) error {
 	}
 
 	fmt.Println("\nafter http close") //nolint:forbidigo
+	s.Close()
+	fmt.Println("\nafter cmux close") //nolint:forbidigo
 	wg.Wait()
 	log.Info().Msg("Server shut down gracefully")
 	fmt.Println("Server shut down gracefully") //nolint:forbidigo
