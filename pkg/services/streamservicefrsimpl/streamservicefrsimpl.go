@@ -2,7 +2,6 @@ package streamservicefrsimpl
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -11,25 +10,27 @@ import (
 
 	"github.com/rs/zerolog/log"
 	streamservicefrs "github.com/vtpl1/vrtc/gen/stream_service_frs"
-	"github.com/vtpl1/vrtc/pkg/av"
+	"github.com/vtpl1/vrtc/pkg/avf"
 	"github.com/vtpl1/vrtc/pkg/utils"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/peer"
 )
 
+var errServerSendStatus = errors.New("server send status")
+
 type StreamServicefFrsImpl struct {
 	streamservicefrs.UnimplementedStreamServiceServer
 
-	muxerFactory av.AVFFrameMuxerFactory
-	muxerRemover av.AVFFrameMuxerRemover
+	muxerFactory avf.FrameMuxerFactory
+	muxerRemover avf.AVFFrameMuxerRemover
 
 	closed    chan struct{}
 	closeOnce sync.Once
 }
 
 func New(
-	muxerFactory av.AVFFrameMuxerFactory,
-	muxerRemover av.AVFFrameMuxerRemover,
+	muxerFactory avf.FrameMuxerFactory,
+	muxerRemover avf.AVFFrameMuxerRemover,
 ) (*StreamServicefFrsImpl, error) {
 	m := &StreamServicefFrsImpl{
 		muxerFactory: muxerFactory,
@@ -58,7 +59,7 @@ func (m *StreamServicefFrsImpl) WriteFramePva(
 
 	var (
 		nodeID, engineID, producerID string
-		muxCloser                    av.AVFFrameMuxCloser
+		muxCloser                    avf.FrameMuxCloser
 	)
 
 	defer func() {
@@ -109,27 +110,77 @@ func (m *StreamServicefFrsImpl) WriteFramePva(
 			muxCloser = mux
 		}
 
-		framePva := req.GetFramePva()
-		if framePva == nil {
-			return errors.New("GetFramePva error") //nolint:err113
-		}
-
 		select {
 		case <-m.closed:
 			return nil
 		default:
+			framePva := req.GetFramePva()
+			if framePva == nil {
+				return errors.New("GetFramePva error") //nolint:err113
+			}
+
 			frame := framePva.GetFrame()
 			pva := framePva.GetPva()
-			pavaData, _ := json.Marshal(pva)
-			muxCloser.WriteFrame(ctx,
-				av.AVFFrame{
-					MediaType: uint32(frame.GetMediaType()),
-					FrameType: uint32(frame.GetFrameType()),
-					Timestamp: frame.GetTimestamp(),
-					FrameID:   frame.GetFrameId(),
-					Data:      frame.GetBuffer(),
-					ExtraData: pavaData,
+
+			status1 := framePva.GetStatus()
+			if status1.GetState() < 0 {
+				err := fmt.Errorf(
+					"%w %d, %s",
+					errServerSendStatus,
+					status1.GetState(),
+					status1.GetStateMessage(),
+				)
+
+				return err
+			}
+			// fmt.Printf("recv: [id:%v, codec:%v, nalU:%v, ts:%v, size:%v, pvaObjs:%v]\n",
+			// 	frame.GetFrameId(), frame.GetMediaType(), frame.GetFrameType(), frame.GetTimestamp(), frame.GetBufferSize(), len(pva.GetObjectList()))
+
+			if frame.GetFrameType() == 0 {
+				continue
+			}
+
+			var objList []avf.ObjectInfo
+			for _, v := range pva.GetObjectList() {
+				objList = append(objList, avf.ObjectInfo{
+					X: v.GetX(),
+					Y: v.GetY(),
+					W: v.GetW(),
+					H: v.GetH(),
+					T: v.GetT(),
+					C: v.GetC(),
+					I: v.GetI(),
+				})
+			}
+
+			pvaData := avf.PVAData{
+				FrameID:          pva.GetFrameId(),
+				StartTimestamp:   pva.GetTimeStamp(),
+				EndTimestamp:     pva.GetTimeStampEnd(),
+				EncodedTimestamp: pva.GetTimeStampEncoded(),
+				VehicleCount:     pva.GetVehicleCount(),
+				PeopleCount:      pva.GetPeopleCount(),
+				RefWidth:         pva.GetRefWidth(),
+				RefHeight:        pva.GetRefHeight(),
+				ObjectList:       objList,
+			}
+
+			frameInfo := avf.Frame{
+				BasicFrame: avf.BasicFrame{
+					MediaType: avf.MediaType(frame.GetMediaType()),
+					FrameType: avf.FrameType(frame.GetFrameType()),
+					TimeStamp: frame.GetTimestamp(),
 				},
+				Bitrate:         frame.GetBitrate(),
+				Fps:             frame.GetFps(),
+				MotionAvailable: int8(frame.GetMotionAvailable()),
+				FrameID:         frame.GetFrameId(),
+				Data:            frame.GetBuffer(),
+				Pvadata:         pvaData,
+			}
+
+			muxCloser.WriteFrame(ctx,
+				frameInfo,
 			)
 
 			fmt.Println( //nolint:forbidigo

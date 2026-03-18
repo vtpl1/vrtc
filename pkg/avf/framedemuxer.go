@@ -1,11 +1,9 @@
-package av
+package avf
 
-import (
-	"context"
-)
+import "context"
 
 type AVFFrameDemuxer interface {
-	ReadFrame(ctx context.Context) (AVFFrame, error)
+	ReadFrame(ctx context.Context) (Frame, error)
 }
 
 type AVFFrameDemuxCloser interface {

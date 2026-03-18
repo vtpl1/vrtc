@@ -11,6 +11,53 @@ import (
 	"github.com/vtpl1/vrtc/pkg/av/format/mp4"
 )
 
+// closingReadSeeker implements io.ReadSeeker and io.Closer with an onClose hook.
+type closingReadSeeker struct {
+	r       *bytes.Reader
+	onClose func()
+}
+
+func (c *closingReadSeeker) Read(p []byte) (int, error)                { return c.r.Read(p) }
+func (c *closingReadSeeker) Seek(off int64, whence int) (int64, error) { return c.r.Seek(off, whence) }
+func (c *closingReadSeeker) Close() error                              { c.onClose(); return nil }
+
+// demuxFmt demuxes all packets from the given container bytes using the format spec.
+// Returns the detected streams and the full packet list.
+func demuxFmt(t *testing.T, f formatSpec, data []byte) ([]av.Stream, []av.Packet) {
+	t.Helper()
+
+	ctx := context.Background()
+	d := f.newDemuxer(bytes.NewReader(data))
+
+	defer func() {
+		if err := d.Close(); err != nil {
+			t.Errorf("[%s] DemuxClose: %v", f.name, err)
+		}
+	}()
+
+	streams, err := d.GetCodecs(ctx)
+	if err != nil {
+		t.Fatalf("[%s] GetCodecs: %v", f.name, err)
+	}
+
+	var pkts []av.Packet
+
+	for {
+		pkt, err := d.ReadPacket(ctx)
+		if errors.Is(err, io.EOF) {
+			break
+		}
+
+		if err != nil {
+			t.Fatalf("[%s] ReadPacket: %v", f.name, err)
+		}
+
+		pkts = append(pkts, pkt)
+	}
+
+	return streams, pkts
+}
+
 // ── mp4 demuxer lifecycle tests ───────────────────────────────────────────────
 
 func TestMP4Demuxer_GetCodecs_NoMoov(t *testing.T) {

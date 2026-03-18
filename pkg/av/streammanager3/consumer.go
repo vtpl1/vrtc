@@ -30,7 +30,7 @@ type Consumer struct {
 	headers          []av.Stream
 	headersErr       error
 	headersAvailable chan []av.Stream
-	queue            chan av.Packet
+	packets          chan av.Packet
 }
 
 func NewConsumer(
@@ -45,7 +45,7 @@ func NewConsumer(
 		muxerRemover:     muxerRemover,
 		errCh:            errCh,
 		headersAvailable: make(chan []av.Stream, 1),
-		queue:            make(chan av.Packet, 50),
+		packets:          make(chan av.Packet, 50),
 	}
 
 	return m
@@ -127,7 +127,7 @@ func (m *Consumer) Start(ctx context.Context) error {
 				select {
 				case <-sctx.Done():
 					return
-				case pkt, ok := <-m.queue:
+				case pkt, ok := <-m.packets:
 					if !ok {
 						return
 					}
@@ -208,7 +208,7 @@ func (m *Consumer) WritePacket(ctx context.Context, pkt av.Packet) error {
 	select {
 	case <-ctx.Done():
 		return ctx.Err()
-	case m.queue <- pkt:
+	case m.packets <- pkt:
 	}
 
 	return nil
@@ -218,7 +218,7 @@ func (m *Consumer) WritePacketLeaky(ctx context.Context, pkt av.Packet) error {
 	select {
 	case <-ctx.Done():
 		return ctx.Err()
-	case m.queue <- pkt:
+	case m.packets <- pkt:
 	default:
 		return ErrDroppingPacket
 	}

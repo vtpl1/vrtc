@@ -16,6 +16,7 @@ import (
 	"github.com/vtpl1/vrtc/internal/httprouter"
 	"github.com/vtpl1/vrtc/pkg/av"
 	"github.com/vtpl1/vrtc/pkg/av/streammanager3"
+	"github.com/vtpl1/vrtc/pkg/avf"
 	"github.com/vtpl1/vrtc/pkg/configpath"
 	"github.com/vtpl1/vrtc/pkg/lifecycle"
 	"github.com/vtpl1/vrtc/pkg/logger"
@@ -65,7 +66,7 @@ func Run(appName, appMode string, cfg Config) error {
 	defer centralServer.Close()
 
 	streamServer, err := streamservicefrsimpl.New(
-		func(ctx context.Context, sourceID, producerID string) (av.AVFFrameMuxCloser, error) {
+		func(ctx context.Context, sourceID, producerID string) (avf.FrameMuxCloser, error) {
 			return centralServer.GetAVFMuxCloser(sourceID, producerID)
 		},
 		func(ctx context.Context, sourceID, producerID string) error {

@@ -37,6 +37,6 @@ type ProducerRemover func(ctx context.Context, producerID string) error
 // It must be called after the associated MuxCloser has been closed.
 type ConsumerRemover func(ctx context.Context, consumerID string) error
 
-type AVFFrameMuxerFactory func(ctx context.Context, sourceID, producerID string) (AVFFrameMuxCloser, error)
+// type AVFFrameMuxerFactory func(ctx context.Context, sourceID, producerID string) (AVFFrameMuxCloser, error)
 
-type AVFFrameMuxerRemover func(ctx context.Context, sourceID, producerID string) error
+// type AVFFrameMuxerRemover func(ctx context.Context, sourceID, producerID string) error

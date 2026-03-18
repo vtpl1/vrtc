@@ -9,6 +9,7 @@ import (
 	centralservicefrs "github.com/vtpl1/vrtc/gen/central_service_frs"
 	"github.com/vtpl1/vrtc/gen/data_models"
 	"github.com/vtpl1/vrtc/pkg/av"
+	"github.com/vtpl1/vrtc/pkg/avf"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/peer"
 )
@@ -21,7 +22,7 @@ type CentralServicefFrsImpl struct {
 
 	mu      sync.RWMutex
 	sources map[string]*Source
-	filters map[string]map[string]av.Filter
+	filters map[string]map[string]avf.Filter
 }
 
 type Source struct {
@@ -154,7 +155,7 @@ func (m *CentralServicefFrsImpl) RemoveDemuxCloser(sourceID, producerID string) 
 
 func (m *CentralServicefFrsImpl) GetAVFMuxCloser(
 	sourceID, producerID string,
-) (av.AVFFrameMuxCloser, error) {
+) (avf.FrameMuxCloser, error) {
 	return nil, nil
 }
 

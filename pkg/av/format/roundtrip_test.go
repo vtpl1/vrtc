@@ -1,7 +1,7 @@
 // Package mp4_test contains unit tests for the mp4 package and comprehensive
 // cross-format round-trip tests covering all 9 combinations of the three
 // DemuxCloser/MuxCloser implementations: avf, fmp4, and mp4.
-package mp4_test
+package format_test
 
 import (
 	"bytes"
@@ -13,7 +13,6 @@ import (
 
 	"github.com/vtpl1/vrtc/pkg/av"
 	"github.com/vtpl1/vrtc/pkg/av/codec/aacparser"
-	"github.com/vtpl1/vrtc/pkg/av/codec/h264parser"
 	"github.com/vtpl1/vrtc/pkg/av/codec/h265parser"
 	"github.com/vtpl1/vrtc/pkg/av/format/avf"
 	"github.com/vtpl1/vrtc/pkg/av/format/fmp4"
@@ -33,37 +32,9 @@ var (
 
 // ── shared codec fixtures ─────────────────────────────────────────────────────
 
-// minimalAVCRecord is a synthetic AVCDecoderConfigurationRecord for a 320×240
-// Baseline-profile H.264 stream (profile 66, level 30).
-var minimalAVCRecord = []byte{
-	0x01,
-	0x42, 0x00, 0x1E,
-	0xFF,
-	0xE1,
-	0x00, 0x0F,
-	0x67, 0x42, 0x00, 0x1E,
-	0xAC, 0xD9, 0x40, 0xA0,
-	0x3D, 0xA1, 0x00, 0x00,
-	0x03, 0x00, 0x00,
-	0x01,
-	0x00, 0x04,
-	0x68, 0xCE, 0x38, 0x80,
-}
-
 // minimalAAC is a 2-byte AudioSpecificConfig for AAC-LC 44100 Hz stereo.
 // ObjectType=2 (LC), SampleRateIndex=4 (44100), ChannelConfig=2 (stereo).
 var minimalAAC = []byte{0x12, 0x10}
-
-func makeH264Codec(t *testing.T) h264parser.CodecData {
-	t.Helper()
-
-	c, err := h264parser.NewCodecDataFromAVCDecoderConfRecord(minimalAVCRecord)
-	if err != nil {
-		t.Fatalf("h264parser: %v", err)
-	}
-
-	return c
-}
 
 func makeAACCodec(t *testing.T) aacparser.CodecData {
 	t.Helper()

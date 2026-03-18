@@ -34,3 +34,5 @@ hls/
 logs/
 session/
 .claude/
+.gocache/
+.golangci-cache/

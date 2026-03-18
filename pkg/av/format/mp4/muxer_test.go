@@ -5,9 +5,55 @@ import (
 	"context"
 	"io"
 	"testing"
+	"time"
 
 	"github.com/vtpl1/vrtc/pkg/av"
 	"github.com/vtpl1/vrtc/pkg/av/format/mp4"
+)
+
+// ── test helpers ──────────────────────────────────────────────────────────────
+
+// readBoxType reads an ISO BMFF box header from r and returns the 4-char box
+// type, advancing r past the entire box.
+func readBoxType(t *testing.T, r *bytes.Reader) string {
+	t.Helper()
+
+	var hdr [8]byte
+	if _, err := io.ReadFull(r, hdr[:]); err != nil {
+		t.Fatalf("readBoxType: %v", err)
+	}
+
+	size := int(hdr[0])<<24 | int(hdr[1])<<16 | int(hdr[2])<<8 | int(hdr[3])
+	typ := string(hdr[4:8])
+
+	if size < 8 {
+		t.Fatalf("readBoxType: box size %d < 8", size)
+	}
+
+	payload := make([]byte, size-8)
+	if _, err := io.ReadFull(r, payload); err != nil {
+		t.Fatalf("readBoxType: read payload for %q: %v", typ, err)
+	}
+
+	return typ
+}
+
+// closingWriter is a bytes.Buffer that records whether Close was called.
+type closingWriter struct {
+	bytes.Buffer
+	closed bool
+}
+
+func (cw *closingWriter) Close() error {
+	cw.closed = true
+	return nil
+}
+
+// All durations are exact ms multiples so they round-trip through AVF (1ms
+// precision) and FMP4/MP4 (timescale units) without rounding error.
+const (
+	vidDur = 33 * time.Millisecond // 2970 ticks @ 90000 Hz
+	audDur = 20 * time.Millisecond // 882 ticks  @ 44100 Hz
 )
 
 // ── mp4 package lifecycle tests ───────────────────────────────────────────────
