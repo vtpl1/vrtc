@@ -653,7 +653,7 @@ func findMFHD(t *testing.T, data []byte, seqs *[]uint32) {
 }
 
 // TestEmsg_BoundingBoxes verifies that a packet carrying bounding-box JSON in
-// its Extra field results in an emsg box appearing before the moof box in the
+// its Metadata field results in an emsg box appearing before the moof box in the
 // flushed fragment, and that the emsg payload matches the original JSON.
 func TestEmsg_BoundingBoxes(t *testing.T) {
 	t.Parallel()
@@ -674,7 +674,7 @@ func TestEmsg_BoundingBoxes(t *testing.T) {
 		DTS:      33 * time.Millisecond,
 		Duration: 33 * time.Millisecond,
 		Data:     []byte{0x65, 0x88},
-		Extra:    bboxJSON,
+		Metadata: bboxJSON,
 	})
 
 	fragment := fw.Flush()

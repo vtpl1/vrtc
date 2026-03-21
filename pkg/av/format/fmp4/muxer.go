@@ -312,8 +312,8 @@ func makeSample(pkt av.Packet, ts *trackState) sample {
 
 	var extra []byte
 
-	if pkt.Extra != nil {
-		if b, ok := pkt.Extra.([]byte); ok {
+	if pkt.Metadata != nil {
+		if b, ok := pkt.Metadata.([]byte); ok {
 			extra = b
 		}
 	}

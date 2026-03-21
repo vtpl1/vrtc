@@ -171,12 +171,14 @@ func (m *StreamServicefFrsImpl) WriteFramePva(
 					FrameType: avf.FrameType(frame.GetFrameType()),
 					TimeStamp: frame.GetTimestamp(),
 				},
-				Bitrate:         frame.GetBitrate(),
-				Fps:             frame.GetFps(),
-				MotionAvailable: int8(frame.GetMotionAvailable()),
-				FrameID:         frame.GetFrameId(),
-				Data:            frame.GetBuffer(),
-				Pvadata:         pvaData,
+				StreamMeta: avf.StreamMeta{
+					Bitrate:         frame.GetBitrate(),
+					Fps:             frame.GetFps(),
+					MotionAvailable: int8(frame.GetMotionAvailable()),
+				},
+				FrameID: frame.GetFrameId(),
+				Data:    frame.GetBuffer(),
+				Pvadata: pvaData,
 			}
 
 			muxCloser.WriteFrame(ctx,

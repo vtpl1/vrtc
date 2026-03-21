@@ -146,7 +146,7 @@ func (m *MSEWriter) WriteHeader(ctx context.Context, streams []av.Stream) error 
 }
 
 // WritePacket buffers a sample; flushes and broadcasts a binary fMP4 fragment on
-// each video keyframe (or immediately for audio-only streams). If pkt.Extra is
+// each video keyframe (or immediately for audio-only streams). If pkt.Metadata is
 // non-nil it is marshalled to JSON and broadcast as a text message.
 func (m *MSEWriter) WritePacket(ctx context.Context, pkt av.Packet) error {
 	m.mu.Lock()
@@ -161,8 +161,8 @@ func (m *MSEWriter) WritePacket(ctx context.Context, pkt av.Packet) error {
 		}
 	}
 	// Per-frame metadata: send before the binary so the client can prepare.
-	if pkt.Extra != nil {
-		if meta, jerr := json.Marshal(pkt.Extra); jerr == nil {
+	if pkt.Metadata != nil {
+		if meta, jerr := json.Marshal(pkt.Metadata); jerr == nil {
 			if err := m.broadcast(outFrame{websocket.MessageText, meta}); err != nil {
 				return err
 			}

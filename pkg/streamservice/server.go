@@ -412,7 +412,7 @@ func (s *Server) pvaToPacket(pva *data_models.FramePVA) (av.Packet, bool) {
 			CodecType: s.videoCodec.Type(),
 			FrameID:   frm.GetFrameId(),
 			Data:      stripVideoPrefix(frm.GetBuffer()),
-			Extra:     pva.GetPva(),
+			Metadata:  pva.GetPva(),
 		}, false
 
 	case frameTypeAudio:

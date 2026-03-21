@@ -2,11 +2,11 @@ package avf
 
 import "context"
 
-type AVFFrameDemuxer interface {
+type FrameDemuxer interface {
 	ReadFrame(ctx context.Context) (Frame, error)
 }
 
-type AVFFrameDemuxCloser interface {
-	AVFFrameDemuxer
+type FrameDemuxCloser interface {
+	FrameDemuxer
 	Closer
 }

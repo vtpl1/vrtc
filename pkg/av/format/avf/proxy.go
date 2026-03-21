@@ -5,6 +5,7 @@ import (
 	"errors"
 	"io"
 	"sync"
+	"time"
 
 	"github.com/vtpl1/vrtc/pkg/av"
 	"github.com/vtpl1/vrtc/pkg/av/codec"
@@ -35,7 +36,7 @@ type ProxyMuxDemuxCloser struct {
 	avfFrameMuxer bool
 	pktMuxer      bool
 
-	// detected codec state
+	// detected codec state (frame muxer mode)
 	videoCodec                    av.CodecData
 	audioCodec                    av.CodecData
 	disableAudio                  bool
@@ -58,110 +59,16 @@ type ProxyMuxDemuxCloser struct {
 
 	closingCloseOnce sync.Once
 	closing          chan struct{}
+
+	// frame demuxer mode state
+	readFrameHeaderSent bool
+	readFramePending    []avf.Frame
 }
 
-func (m *ProxyMuxDemuxCloser) writeHeaderFromCodecs(ctx context.Context) error {
-	idx := uint16(0)
-	streams := make([]av.Stream, 0)
-
-	if m.videoCodec != nil {
-		streams = append(streams, av.Stream{Idx: idx, Codec: m.videoCodec})
-		idx++
-	}
-
-	if m.audioCodec != nil {
-		streams = append(streams, av.Stream{Idx: idx, Codec: m.audioCodec})
-	}
-
-	return m.WriteHeader(ctx, streams)
-}
-
-// WriteFrame implements [avf.FrameMuxCloser].
-func (m *ProxyMuxDemuxCloser) WriteFrame(ctx context.Context, frm avf.Frame) error {
-	if m.pktMuxer {
-		return ErrConfiguredAsPacketMuxer
-	}
-
-	m.avfFrameMuxer = true
-
-	if m.videoProbeCount > videoProbeSize {
-		m.videoProbeDone = true
-	} else if m.videoCodec != nil {
-		m.videoProbeDone = true
-	}
-
-	if m.disableAudio || m.audioProbeCount > audioProbeSize || m.audioCodec != nil {
-		m.audioProbeDone = true
-	}
-
-	if m.videoProbeDone && m.audioProbeDone {
-		if !m.headersWritten {
-			if err := m.writeHeaderFromCodecs(ctx); err != nil {
-				return err
-			}
-		}
-
-		pkt := avf.FrameToAVPacket(&frm)
-		select {
-		case m.packets <- *pkt:
-		case <-m.closing:
-			return io.EOF
-		case <-ctx.Done():
-			return ctx.Err()
-		}
-	}
-
-	if !m.videoProbeDone {
-		m.videoProbeCount++
-
-		switch frm.FrameType {
-		case avf.AUDIO_FRAME:
-			if !m.disableAudio && m.audioCodec == nil {
-				m.audioCodec = parseAudioCodec(frm.MediaType, frm.Data)
-			}
-		case avf.CONNECT_HEADER:
-			m.videoConnectHeader = append(m.videoConnectHeader, frm.Data...)
-			m.appendingToVideoConnectHeader = true
-		case avf.H_FRAME, avf.I_FRAME, avf.P_FRAME, avf.UNKNOWN_FRAME:
-			if m.appendingToVideoConnectHeader {
-				m.appendingToVideoConnectHeader = false
-				m.videoCodec = parseVideoCodec(frm.MediaType, m.videoConnectHeader)
-			} else if frm.FrameType == avf.I_FRAME && m.videoCodec == nil && frm.MediaType == avf.MJPG {
-				// MJPEG does not use CONNECT_HEADER; detect from first I_FRAME.
-				m.videoCodec = mjpeg.CodecData{}
-			}
-		}
-	}
-
-	if !m.audioProbeDone {
-		if frm.FrameType == avf.AUDIO_FRAME && m.audioCodec == nil {
-			m.audioCodec = parseAudioCodec(frm.MediaType, frm.Data)
-		}
-
-		m.audioProbeCount++
-	}
-
-	return nil
-}
-
-// ReadFrame implements [avf.AVFFrameDemuxCloser].
-func (m *ProxyMuxDemuxCloser) ReadFrame(_ context.Context) (avf.Frame, error) {
-	if m.pktDemuxer {
-		return avf.Frame{}, ErrConfiguredAsPacketDemuxer
-	}
-
-	m.avfFrameMuxer = true
-
-	return avf.Frame{}, nil
-}
-
-// WriteHeader implements [av.MuxCloser].
-func (m *ProxyMuxDemuxCloser) WriteHeader(ctx context.Context, streams []av.Stream) error {
-	if m.avfFrameMuxer {
-		return ErrConfiguredAsFrameMuxer
-	}
-
-	m.pktMuxer = true
+// signalHeaders stores the header streams and unblocks any reader waiting on
+// headersAvailable. It is the shared implementation for WriteHeader (pktMuxer
+// mode) and writeHeaderFromCodecs (avfFrameMuxer mode).
+func (m *ProxyMuxDemuxCloser) signalHeaders(ctx context.Context, streams []av.Stream) error {
 	m.muHeaders.Lock()
 	defer m.muHeaders.Unlock()
 
@@ -180,6 +87,234 @@ func (m *ProxyMuxDemuxCloser) WriteHeader(ctx context.Context, streams []av.Stre
 	case <-m.closing:
 		return ErrProxyIsClosing
 	}
+}
+
+func (m *ProxyMuxDemuxCloser) writeHeaderFromCodecs(ctx context.Context) error {
+	idx := uint16(0)
+	streams := make([]av.Stream, 0)
+
+	if m.videoCodec != nil {
+		streams = append(streams, av.Stream{Idx: idx, Codec: m.videoCodec})
+		idx++
+	}
+
+	if m.audioCodec != nil {
+		streams = append(streams, av.Stream{Idx: idx, Codec: m.audioCodec})
+	}
+
+	return m.signalHeaders(ctx, streams)
+}
+
+// WriteFrame implements [avf.FrameMuxCloser].
+func (m *ProxyMuxDemuxCloser) WriteFrame(ctx context.Context, frm avf.Frame) error {
+	if m.pktMuxer {
+		return ErrConfiguredAsPacketMuxer
+	}
+
+	m.avfFrameMuxer = true
+
+	// ── Probe phase ──────────────────────────────────────────────────────────
+	// Run codec detection before checking done-conditions so that a codec
+	// detected in this frame immediately counts toward the done check.
+
+	if !m.videoProbeDone {
+		m.videoProbeCount++
+
+		switch frm.FrameType {
+		case avf.AUDIO_FRAME:
+			if !m.disableAudio && m.audioCodec == nil {
+				m.audioCodec = parseAudioCodec(frm.MediaType, frm.Data)
+			}
+		case avf.CONNECT_HEADER:
+			m.videoConnectHeader = append(m.videoConnectHeader, frm.Data...)
+			m.appendingToVideoConnectHeader = true
+		case avf.H_FRAME, avf.I_FRAME, avf.P_FRAME, avf.UNKNOWN_FRAME:
+			if m.appendingToVideoConnectHeader {
+				m.appendingToVideoConnectHeader = false
+				m.videoCodec = parseVideoCodec(frm.MediaType, m.videoConnectHeader)
+			} else if frm.FrameType == avf.I_FRAME && m.videoCodec == nil && frm.MediaType == avf.MJPG {
+				m.videoCodec = mjpeg.CodecData{}
+			}
+		}
+
+		if m.videoProbeCount > videoProbeSize || m.videoCodec != nil {
+			m.videoProbeDone = true
+		}
+	}
+
+	if !m.audioProbeDone {
+		if frm.FrameType == avf.AUDIO_FRAME && m.audioCodec == nil {
+			m.audioCodec = parseAudioCodec(frm.MediaType, frm.Data)
+		}
+
+		m.audioProbeCount++
+
+		if m.disableAudio || m.audioProbeCount > audioProbeSize || m.audioCodec != nil {
+			m.audioProbeDone = true
+		}
+
+		// Once video is confirmed and no audio has been found yet, declare the
+		// audio probe done immediately (no audio stream present).
+		if m.videoProbeDone && m.audioCodec == nil {
+			m.audioProbeDone = true
+		}
+	}
+
+	// ── Forward phase ─────────────────────────────────────────────────────────
+	if !m.videoProbeDone || !m.audioProbeDone {
+		return nil
+	}
+
+	if !m.headersWritten {
+		if err := m.writeHeaderFromCodecs(ctx); err != nil {
+			return err
+		}
+	}
+
+	// CONNECT_HEADER frames carry codec parameters, not media data — skip them.
+	if frm.FrameType == avf.CONNECT_HEADER {
+		return nil
+	}
+
+	pkt := avf.FrameToAVPacket(&frm)
+	pkt.DTS = time.Duration(frm.TimeStamp) * time.Millisecond
+
+	select {
+	case m.packets <- *pkt:
+	case <-m.closing:
+		return io.EOF
+	case <-ctx.Done():
+		return ctx.Err()
+	}
+
+	return nil
+}
+
+// ReadFrame implements [avf.FrameDemuxCloser].
+// It reads av.Packets written by the pktMuxer side and converts them to
+// avf.Frames, emitting a CONNECT_HEADER before every keyframe.
+func (m *ProxyMuxDemuxCloser) ReadFrame(ctx context.Context) (avf.Frame, error) {
+	if m.pktDemuxer {
+		return avf.Frame{}, ErrConfiguredAsPacketDemuxer
+	}
+
+	m.avfFrameDemuxer = true
+
+	// Return any queued frames (e.g. the I_FRAME queued after a CONNECT_HEADER).
+	if len(m.readFramePending) > 0 {
+		frm := m.readFramePending[0]
+		m.readFramePending = m.readFramePending[1:]
+
+		return frm, nil
+	}
+
+	// On the first call, wait for headers and emit a CONNECT_HEADER.
+	if !m.readFrameHeaderSent {
+		select {
+		case <-m.headersAvailable:
+		case <-m.closing:
+			return avf.Frame{}, io.EOF
+		case <-ctx.Done():
+			return avf.Frame{}, ctx.Err()
+		}
+
+		m.readFrameHeaderSent = true
+
+		return m.buildConnectHeaderFrame(), nil
+	}
+
+	// Read the next packet and convert it to a frame.
+	select {
+	case pkt, ok := <-m.packets:
+		if !ok {
+			return avf.Frame{}, errors.Join(io.EOF, ErrProxyIsClosing)
+		}
+
+		if pkt.KeyFrame {
+			// Emit CONNECT_HEADER now; queue the I_FRAME for the next call.
+			m.readFramePending = append(m.readFramePending, pktToAVFFrame(pkt))
+
+			return m.buildConnectHeaderFrame(), nil
+		}
+
+		return pktToAVFFrame(pkt), nil
+
+	case <-m.closing:
+		return avf.Frame{}, io.EOF
+	case <-ctx.Done():
+		return avf.Frame{}, ctx.Err()
+	}
+}
+
+// buildConnectHeaderFrame constructs a CONNECT_HEADER avf.Frame from the
+// first video stream in m.headers.
+func (m *ProxyMuxDemuxCloser) buildConnectHeaderFrame() avf.Frame {
+	m.muHeaders.Lock()
+	headers := m.headers
+	m.muHeaders.Unlock()
+
+	for _, s := range headers {
+		if !s.Codec.Type().IsVideo() {
+			continue
+		}
+
+		mt := avf.MediaTypeFromCodec(s.Codec.Type())
+		data := buildConnectHeaderPayload(s.Codec)
+
+		return avf.Frame{
+			BasicFrame: avf.BasicFrame{
+				MediaType: mt,
+				FrameType: avf.CONNECT_HEADER,
+			},
+			Data: data,
+		}
+	}
+
+	return avf.Frame{BasicFrame: avf.BasicFrame{FrameType: avf.CONNECT_HEADER}}
+}
+
+// pktToAVFFrame converts an av.Packet to an avf.Frame for ReadFrame output.
+func pktToAVFFrame(pkt av.Packet) avf.Frame {
+	mt := avf.MediaTypeFromCodec(pkt.CodecType)
+
+	var ft avf.FrameType
+
+	switch pkt.CodecType {
+	case av.H264, av.H265, av.MJPEG:
+		if pkt.KeyFrame {
+			ft = avf.I_FRAME
+		} else {
+			ft = avf.P_FRAME
+		}
+	default:
+		ft = avf.AUDIO_FRAME
+	}
+
+	data := pkt.Data
+	if pkt.CodecType == av.H264 || pkt.CodecType == av.H265 {
+		data = prependStartCode(pkt.Data)
+	}
+
+	return avf.Frame{
+		BasicFrame: avf.BasicFrame{
+			MediaType: mt,
+			FrameType: ft,
+			TimeStamp: pkt.DTS.Milliseconds(),
+		},
+		FrameID: pkt.FrameID,
+		Data:    data,
+	}
+}
+
+// WriteHeader implements [av.MuxCloser].
+func (m *ProxyMuxDemuxCloser) WriteHeader(ctx context.Context, streams []av.Stream) error {
+	if m.avfFrameMuxer {
+		return ErrConfiguredAsFrameMuxer
+	}
+
+	m.pktMuxer = true
+
+	return m.signalHeaders(ctx, streams)
 }
 
 // WritePacket implements [av.MuxCloser].

@@ -18,10 +18,10 @@ import (
 // go test ./pkg/av/format/avf/proxy_test.go
 
 var (
-	_ av.DemuxCloser          = (*avfformat.ProxyMuxDemuxCloser)(nil)
-	_ av.MuxCloser            = (*avfformat.ProxyMuxDemuxCloser)(nil)
-	_ avf.AVFFrameDemuxCloser = (*avfformat.ProxyMuxDemuxCloser)(nil)
-	_ avf.FrameMuxCloser      = (*avfformat.ProxyMuxDemuxCloser)(nil)
+	_ av.DemuxCloser       = (*avfformat.ProxyMuxDemuxCloser)(nil)
+	_ av.MuxCloser         = (*avfformat.ProxyMuxDemuxCloser)(nil)
+	_ avf.FrameDemuxCloser = (*avfformat.ProxyMuxDemuxCloser)(nil)
+	_ avf.FrameMuxCloser   = (*avfformat.ProxyMuxDemuxCloser)(nil)
 )
 
 var minimalAVCRecord = []byte{
@@ -137,7 +137,7 @@ func TestFrameDemuxToPacketMux(t *testing.T) {
 	if err := p.WriteFrame(ctx, avf.Frame{
 		BasicFrame: avf.BasicFrame{
 			MediaType: avf.H264,
-			FrameType: avf.CONNECT_HEADER,
+			FrameType: avf.I_FRAME,
 			TimeStamp: 99,
 		},
 		Data:    withLenPrefix([]byte{0x65, 0xBE}),

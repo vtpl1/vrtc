@@ -7,38 +7,68 @@ import (
 	"time"
 )
 
-// Packet stores compressed audio/video data.
+// Packet stores one unit of compressed audio or video data flowing through
+// the pipeline. See docs/av-packet-spec.md for the full field contract.
 type Packet struct {
-	KeyFrame        bool          // true if this video packet is a keyframe
-	IsDiscontinuity bool          // DTS does not follow from the previous packet; receivers must reinitialise timing
-	IsParamSetNALU  bool          // true if this packet contains parameter sets (SPS/PPS/VPS)
-	Idx             uint16        // stream index in container format (matches fMP4 uint32 track IDs; uint16 covers 65535 tracks)
-	DTS             time.Duration // decode timestamp; the time at which the decoder should process this packet
-	PTSOffset       time.Duration // presentation offset: PTS = DTS + PTSOffset; non-zero only for B-frames (H.264/H.265)
-	Duration        time.Duration // packet duration
-	WallClockTime   time.Time     // wall-clock capture/arrival time (e.g. NTP for live streams); zero means unset
-	Data            []byte        // raw packet data; empty for pure codec-change notification packets
-	Extra           any           // optional extra metadata
-	FrameID         int64         // unique frame identifier
-	CodecType       CodecType     // codec type (H.264, H.265, etc.)
-	NewCodecs       []Stream      // non-nil signals a mid-stream codec change; contains only the changed streams
+	// ── Flags ─────────────────────────────────────────────────────────────
+	KeyFrame        bool // true iff this is an IDR/keyframe video packet; always false for audio
+	IsDiscontinuity bool // DTS does not follow from the previous packet; receivers must reinitialise timing
+
+	// ── Identity / routing ────────────────────────────────────────────────
+	Idx      uint16    // stream index; matches Stream.Idx from GetCodecs
+	CodecType CodecType // codec of this packet
+
+	// FrameID is a stable identity assigned by the source device or stream.
+	// Comparable across sessions for the same source. 0 means not assigned.
+	FrameID int64
+
+	// ── Timing ────────────────────────────────────────────────────────────
+	DTS           time.Duration // decode timestamp; monotonically non-decreasing within a stream
+	PTSOffset     time.Duration // PTS = DTS + PTSOffset; zero for codecs without B-frames
+	Duration      time.Duration // nominal presentation duration; never 0 from a well-behaved demuxer
+	WallClockTime time.Time     // wall-clock capture/arrival time; zero means not set
+
+	// ── Payload ───────────────────────────────────────────────────────────
+	// Data is raw NALU bytes with no prefix of any kind:
+	//   H.264/H.265 video — single NALU, no \x00\x00\x00\x01 start code and
+	//                        no 4-byte AVCC length prefix; NALU header at Data[0].
+	//   Audio             — raw encoded samples, no container framing.
+	//   Empty (nil/len=0) — valid only for a pure codec-change notification
+	//                        (KeyFrame==true, NewCodecs!=nil, no media data).
+	// See docs/av-packet-spec.md §3.10.
+	Data []byte
+
+	// Metadata carries optional per-packet metadata (e.g. *avf.PVAData for
+	// object-detection analytics, or []byte for serialised payloads).
+	// nil when not set. Consumers that do not understand the concrete type
+	// must treat it as opaque and forward or discard it.
+	//
+	// Note: typed as any to avoid a circular import between pkg/av and pkg/avf.
+	// In practice the value is either *avf.PVAData or []byte depending on the
+	// pipeline stage.
+	Metadata any
+
+	// ── Codec change ──────────────────────────────────────────────────────
+	// NewCodecs is non-nil on the I_FRAME packet that immediately follows a
+	// CONNECT_HEADER sequence. Contains only the streams whose codec changed.
+	// Receivers must update per-stream codec state when this is non-nil.
+	NewCodecs []Stream
 }
 
 // PTS returns the presentation timestamp (DTS + PTSOffset).
-// For streams without B-frames, PTS == DTS and PTSOffset is zero.
+// For streams without B-frames PTS == DTS and PTSOffset is zero.
 func (m *Packet) PTS() time.Duration {
 	return m.DTS + m.PTSOffset
 }
 
-// HasWallClockTime reports whether a wall-clock capture/arrival time has been set on this packet.
+// HasWallClockTime reports whether a wall-clock capture time has been set.
 func (m *Packet) HasWallClockTime() bool {
 	return !m.WallClockTime.IsZero()
 }
 
-// String returns a compact human-readable description of the packet.
-// Suitable for logging.
+// String returns a compact human-readable description of the packet for logging.
 //
-// Format: #<id> <codec>:<idx> dts=<ms>ms [pts=<ms>ms] dur=<ms>ms <size> [K] [DISC] [PS] [<nalu>]
+// Format: #<id> <codec>:<idx> dts=<ms>ms [pts=<ms>ms] dur=<ms>ms <size> [K] [DISC] [<nalu>]
 //
 // Examples:
 //
@@ -63,10 +93,6 @@ func (m *Packet) String() string {
 
 	if m.IsDiscontinuity {
 		b.WriteString(" DISC")
-	}
-
-	if m.IsParamSetNALU {
-		b.WriteString(" PS")
 	}
 
 	if m.CodecType.IsVideo() && len(m.Data) > 0 {
@@ -96,11 +122,11 @@ func packetSizeString(n int) string {
 // GoString returns a detailed developer-friendly representation of the packet.
 // Used when printing with %#v.
 func (m *Packet) GoString() string {
-	var extraType string
-	if m.Extra != nil {
-		extraType = reflect.TypeOf(m.Extra).String()
+	var metaType string
+	if m.Metadata != nil {
+		metaType = reflect.TypeOf(m.Metadata).String()
 	} else {
-		extraType = "nil"
+		metaType = "nil"
 	}
 
 	wallStr := "not set"
@@ -111,9 +137,8 @@ func (m *Packet) GoString() string {
 	return fmt.Sprintf(
 		"&av.Packet{\n"+
 			"  FrameID:         %d,\n"+
-			"  IsKeyFrame:      %t,\n"+
+			"  KeyFrame:        %t,\n"+
 			"  IsDiscontinuity: %t,\n"+
-			"  IsParamSetNALU:  %t,\n"+
 			"  Idx:             %d,\n"+
 			"  CodecType:       %s,\n"+
 			"  DTS:             %s,\n"+
@@ -122,12 +147,11 @@ func (m *Packet) GoString() string {
 			"  Duration:        %s,\n"+
 			"  WallClockTime:   %s,\n"+
 			"  DataLen:         %d,\n"+
-			"  Extra:           %s (%s),\n"+
+			"  Metadata:        %v (%s),\n"+
 			"}",
 		m.FrameID,
 		m.KeyFrame,
 		m.IsDiscontinuity,
-		m.IsParamSetNALU,
 		m.Idx,
 		m.CodecType.String(),
 		m.DTS,
@@ -136,8 +160,8 @@ func (m *Packet) GoString() string {
 		m.Duration,
 		wallStr,
 		len(m.Data),
-		fmt.Sprintf("%v", m.Extra),
-		extraType,
+		fmt.Sprintf("%v", m.Metadata),
+		metaType,
 	)
 }
 

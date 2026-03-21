@@ -4,7 +4,7 @@ import "github.com/vtpl1/vrtc/pkg/av"
 
 type Filter interface {
 	av.Demuxer
-	AVFFrameDemuxer
+	FrameDemuxer
 	av.Muxer
 	FrameMuxer
 	Closer
