@@ -46,10 +46,6 @@ type ProxyMuxDemuxCloser struct {
 	videoProbeDone                bool
 	audioProbeDone                bool
 
-	// stream index assignment (set by GetCodecs)
-	videoIdx uint16
-	audioIdx uint16
-
 	muHeaders                 sync.Mutex
 	headersWritten            bool
 	headers                   []av.Stream
@@ -62,6 +58,22 @@ type ProxyMuxDemuxCloser struct {
 
 	closingCloseOnce sync.Once
 	closing          chan struct{}
+}
+
+func (m *ProxyMuxDemuxCloser) writeHeaderFromCodecs(ctx context.Context) error {
+	idx := uint16(0)
+	streams := make([]av.Stream, 0)
+
+	if m.videoCodec != nil {
+		streams = append(streams, av.Stream{Idx: idx, Codec: m.videoCodec})
+		idx++
+	}
+
+	if m.audioCodec != nil {
+		streams = append(streams, av.Stream{Idx: idx, Codec: m.audioCodec})
+	}
+
+	return m.WriteHeader(ctx, streams)
 }
 
 // WriteFrame implements [avf.FrameMuxCloser].
@@ -78,30 +90,13 @@ func (m *ProxyMuxDemuxCloser) WriteFrame(ctx context.Context, frm avf.Frame) err
 		m.videoProbeDone = true
 	}
 
-	if m.disableAudio {
-		m.audioProbeDone = true
-	} else if m.audioProbeCount > audioProbeSize {
-		m.audioProbeDone = true
-	} else if m.audioCodec != nil {
+	if m.disableAudio || m.audioProbeCount > audioProbeSize || m.audioCodec != nil {
 		m.audioProbeDone = true
 	}
 
 	if m.videoProbeDone && m.audioProbeDone {
 		if !m.headersWritten {
-			idx := uint16(0)
-
-			streams := make([]av.Stream, 0)
-			if m.videoCodec != nil {
-				streams = append(streams, av.Stream{Idx: idx, Codec: m.videoCodec})
-				idx++
-			}
-
-			if m.audioCodec != nil {
-				streams = append(streams, av.Stream{Idx: idx, Codec: m.audioCodec})
-				idx++
-			}
-
-			if err := m.WriteHeader(ctx, streams); err != nil {
+			if err := m.writeHeaderFromCodecs(ctx); err != nil {
 				return err
 			}
 		}
@@ -117,6 +112,8 @@ func (m *ProxyMuxDemuxCloser) WriteFrame(ctx context.Context, frm avf.Frame) err
 	}
 
 	if !m.videoProbeDone {
+		m.videoProbeCount++
+
 		switch frm.FrameType {
 		case avf.AUDIO_FRAME:
 			if !m.disableAudio && m.audioCodec == nil {
@@ -125,19 +122,15 @@ func (m *ProxyMuxDemuxCloser) WriteFrame(ctx context.Context, frm avf.Frame) err
 		case avf.CONNECT_HEADER:
 			m.videoConnectHeader = append(m.videoConnectHeader, frm.Data...)
 			m.appendingToVideoConnectHeader = true
-		default:
+		case avf.H_FRAME, avf.I_FRAME, avf.P_FRAME, avf.UNKNOWN_FRAME:
 			if m.appendingToVideoConnectHeader {
 				m.appendingToVideoConnectHeader = false
 				m.videoCodec = parseVideoCodec(frm.MediaType, m.videoConnectHeader)
-			} else if frm.FrameType == avf.I_FRAME {
+			} else if frm.FrameType == avf.I_FRAME && m.videoCodec == nil && frm.MediaType == avf.MJPG {
 				// MJPEG does not use CONNECT_HEADER; detect from first I_FRAME.
-				if m.videoCodec == nil && frm.MediaType == avf.MJPG {
-					m.videoCodec = mjpeg.CodecData{}
-				}
+				m.videoCodec = mjpeg.CodecData{}
 			}
 		}
-
-		m.videoProbeCount++
 	}
 
 	if !m.audioProbeDone {
@@ -152,7 +145,7 @@ func (m *ProxyMuxDemuxCloser) WriteFrame(ctx context.Context, frm avf.Frame) err
 }
 
 // ReadFrame implements [avf.AVFFrameDemuxCloser].
-func (m *ProxyMuxDemuxCloser) ReadFrame(ctx context.Context) (avf.Frame, error) {
+func (m *ProxyMuxDemuxCloser) ReadFrame(_ context.Context) (avf.Frame, error) {
 	if m.pktDemuxer {
 		return avf.Frame{}, ErrConfiguredAsPacketDemuxer
 	}
@@ -211,7 +204,7 @@ func (m *ProxyMuxDemuxCloser) WritePacket(ctx context.Context, pkt av.Packet) er
 }
 
 // WriteTrailer implements [av.MuxCloser].
-func (m *ProxyMuxDemuxCloser) WriteTrailer(ctx context.Context, upstreamError error) error {
+func (m *ProxyMuxDemuxCloser) WriteTrailer(_ context.Context, _ error) error {
 	if m.avfFrameMuxer {
 		return ErrConfiguredAsFrameMuxer
 	}
@@ -338,6 +331,19 @@ func parseVideoCodec(mediaType avf.MediaType, data []byte) av.CodecData {
 				return c
 			}
 		}
+
+	case avf.MJPG,
+		avf.MPEG,
+		avf.G711U,
+		avf.G711A,
+		avf.L16,
+		avf.AAC,
+		avf.UNKNOWN,
+		avf.G722,
+		avf.G726,
+		avf.OPUS,
+		avf.MP2L2:
+		return nil
 	}
 
 	return nil
@@ -377,6 +383,17 @@ func parseAudioCodec(mediaType avf.MediaType, data []byte) av.CodecData {
 		if c, err := aacparser.NewCodecDataFromMPEG4AudioConfig(fallback); err == nil {
 			return c
 		}
+
+	case avf.MJPG,
+		avf.MPEG,
+		avf.H264,
+		avf.L16,
+		avf.UNKNOWN,
+		avf.H265,
+		avf.G722,
+		avf.G726,
+		avf.MP2L2:
+		return nil
 	}
 
 	return nil

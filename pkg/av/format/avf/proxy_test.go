@@ -11,9 +11,8 @@ import (
 
 	"github.com/vtpl1/vrtc/pkg/av"
 	"github.com/vtpl1/vrtc/pkg/av/codec/h264parser"
-	"github.com/vtpl1/vrtc/pkg/avf"
-
 	avfformat "github.com/vtpl1/vrtc/pkg/av/format/avf"
+	"github.com/vtpl1/vrtc/pkg/avf"
 )
 
 // go test ./pkg/av/format/avf/proxy_test.go
@@ -231,7 +230,10 @@ func TestModeConflict(t *testing.T) {
 
 	p := avfformat.NewProxyMuxDemuxCloser(1)
 
-	if err := p.WriteHeader(context.Background(), []av.Stream{{Idx: 0, Codec: makeH264Codec(t)}}); err != nil {
+	if err := p.WriteHeader(
+		context.Background(),
+		[]av.Stream{{Idx: 0, Codec: makeH264Codec(t)}},
+	); err != nil {
 		t.Fatalf("WriteHeader() error = %v", err)
 	}
 
