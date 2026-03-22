@@ -57,7 +57,7 @@ func FrameToPacket(frm *Frame, idx uint16, codec av.CodecData) (av.Packet, bool)
 | `TimeStamp` (ms) | → | `WallClockTime` | `time.UnixMilli(TimeStamp)` |
 | `DurationMs` | → | `Duration` | if `DurationMs == 0`: derive nominal from `codec` |
 | `FrameID` | → | `FrameID` | direct copy |
-| `Data[4:]` | → | `Data` | H.264/H.265 video: strip 4-byte Annex-B start code |
+| `Data[4:]` | → | `Data` | H.264/H.265 video: strip 4-byte Annex-B start code; frame is guaranteed single-NALU after `SplitFrame` |
 | `Data` | → | `Data` | Audio: as-is; strip ADTS header for AAC |
 | `Pvadata` | → | `Metadata` | `&frame.Pvadata` (or nil if zero value) |
 | *(caller)* | → | `Idx` | assigned by demuxer / proxy |
@@ -191,3 +191,69 @@ Before implementing any muxer, demuxer, or proxy that converts between
 - [ ] `FrameID = 0` is forwarded as-is; receivers must not treat it as identity
 - [ ] `NewCodecs` is set on the `I_FRAME` packet when codec changed; not before
 - [ ] The MP4 demuxer strips AVCC length prefixes before emitting `av.Packet.Data`
+- [ ] Multi-NALU AVF wire frames are split via `avf.SplitFrame` before calling
+      `FrameToPacket` (see §6)
+
+---
+
+## 6. NALU splitting for multi-NALU AVF wire records
+
+### 6.1 Background
+
+Legacy IP cameras pack entire H.264/H.265 **access units** — multiple NALUs
+concatenated in Annex-B format — into a single `I_FRAME`, `P_FRAME`, or
+`NON_REF_FRAME` wire record. Examples:
+
+- `\x00\x00\x00\x01[SEI]\x00\x00\x00\x01[IDR]` — SEI + keyframe
+- `\x00\x00\x00\x01[SPS]\x00\x00\x00\x01[PPS]\x00\x00\x00\x01[IDR]` — param sets + keyframe
+
+Passing such a record directly to `FrameToPacket` would violate the
+single-NALU invariant of `av.Packet.Data`.
+
+### 6.2 SplitFrame function
+
+```go
+// SplitFrame splits an I_FRAME/P_FRAME/NON_REF_FRAME that contains a
+// multi-NALU Annex-B access unit into individual single-NALU frames.
+//
+// Returns [frm] unchanged for single-NALU frames, non-video frames, or
+// non-H.264/H.265 codecs (MJPEG, audio).
+//
+// Inline parameter-set NALUs (SPS/PPS for H.264; VPS/SPS/PPS for H.265)
+// are silently dropped — they duplicate the preceding CONNECT_HEADER records.
+//
+// DurationMs is assigned only to the last output frame; all others get 0.
+func SplitFrame(frm Frame) []Frame
+```
+
+### 6.3 NALU classification after splitting
+
+| NALU content | FrameType assigned | Emitted as av.Packet? |
+|---|---|---|
+| H.264 SPS / PPS | `CONNECT_HEADER` | No — dropped by `SplitFrame` |
+| H.265 VPS / SPS / PPS | `CONNECT_HEADER` | No — dropped by `SplitFrame` |
+| H.264 IDR (type 5) | `I_FRAME` | Yes, `KeyFrame=true` |
+| H.265 IRAP (IDR/BLA/CRA) | `I_FRAME` | Yes, `KeyFrame=true` |
+| H.264/H.265 non-IDR VCL | `P_FRAME` | Yes, `KeyFrame=false` |
+| SEI, AUD, filler | `NON_REF_FRAME` | Yes, `KeyFrame=false` |
+
+### 6.4 Usage pattern (demuxer and proxy)
+
+```go
+// Before calling FrameToPacket, split any multi-NALU video data frames.
+split := avf.SplitFrame(frm)   // no-op for single-NALU or non-H264/H265
+for i, sf := range split {
+    pkt, ok := FrameToPacket(&sf, idx, codec)
+    if !ok {
+        continue
+    }
+    if i == 0 && codecChanged {
+        pkt.NewCodecs = updatedStreams
+    }
+    emit(pkt)
+}
+```
+
+All output frames from a single `SplitFrame` call share the same `TimeStamp`,
+`FrameID`, `MediaType`, `StreamMeta`, and `Pvadata`. Only the last frame
+carries the original `DurationMs`; all others get `DurationMs = 0`.

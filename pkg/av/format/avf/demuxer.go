@@ -65,6 +65,15 @@ type Demuxer struct {
 	lastVideoTS int64 // 0 = not yet set
 	lastAudioTS int64 // 0 = not yet set
 
+	// connectHeaderBuf accumulates Annex-B CONNECT_HEADER data after probe.
+	// Each CONNECT_HEADER frame's Data is appended here; when the next video
+	// data frame arrives the buffer is parsed to detect a codec change.
+	connectHeaderBuf []byte
+
+	// pendingNALUs holds packets that were split from a multi-NALU frame and
+	// have not yet been returned by ReadPacket.
+	pendingNALUs []av.Packet
+
 	disableAudio bool
 }
 
@@ -134,7 +143,8 @@ func (d *Demuxer) GetCodecs(_ context.Context) ([]av.Stream, error) {
 		case avf.CONNECT_HEADER:
 			connectHeader = append(connectHeader, frm.Data...)
 			appendingToConnectHeader = true
-		case avf.H_FRAME, avf.I_FRAME, avf.P_FRAME, avf.UNKNOWN_FRAME:
+		case avf.NON_REF_FRAME, avf.I_FRAME, avf.P_FRAME:
+			// Data frames terminate a CONNECT_HEADER accumulation sequence.
 			if appendingToConnectHeader {
 				appendingToConnectHeader = false
 				d.videoCodec = parseVideoCodec(frm.MediaType, connectHeader)
@@ -144,6 +154,8 @@ func (d *Demuxer) GetCodecs(_ context.Context) ([]av.Stream, error) {
 					d.videoCodec = mjpeg.CodecData{}
 				}
 			}
+		case avf.UNKNOWN_FRAME:
+			// Skip silently — does NOT terminate CONNECT_HEADER accumulation (R1).
 		}
 	}
 
@@ -206,6 +218,14 @@ func (d *Demuxer) ReadPacket(ctx context.Context) (av.Packet, error) {
 			return av.Packet{}, ctx.Err()
 		}
 
+		// Drain split NALUs from the previous multi-NALU frame first.
+		if len(d.pendingNALUs) > 0 {
+			pkt := d.pendingNALUs[0]
+			d.pendingNALUs = d.pendingNALUs[1:]
+
+			return pkt, nil
+		}
+
 		var frm avf.Frame
 
 		if d.bufPos < len(d.buffered) {
@@ -217,6 +237,34 @@ func (d *Demuxer) ReadPacket(ctx context.Context) (av.Packet, error) {
 			frm, err = d.readFrame()
 			if err != nil {
 				return av.Packet{}, err
+			}
+		}
+
+		// For video data frames, split multi-NALU Annex-B access units into
+		// individual single-NALU frames before converting to packets.
+		switch frm.FrameType {
+		case avf.I_FRAME, avf.P_FRAME, avf.NON_REF_FRAME:
+			split := avf.SplitFrame(frm)
+			if len(split) > 1 {
+				// Convert all split frames; collect valid packets.
+				var pkts []av.Packet
+				for _, sf := range split {
+					pkt, skip := d.frameToPacket(sf)
+					if skip {
+						continue
+					}
+					pkts = append(pkts, pkt)
+				}
+				if len(pkts) == 0 {
+					continue
+				}
+				first := pkts[0]
+				if len(d.pendingCodecChange) > 0 {
+					first.NewCodecs = d.pendingCodecChange
+					d.pendingCodecChange = nil
+				}
+				d.pendingNALUs = pkts[1:]
+				return first, nil
 			}
 		}
 
@@ -321,21 +369,30 @@ func (d *Demuxer) frameToPacket(frm avf.Frame) (pkt av.Packet, skip bool) {
 
 	switch frm.FrameType {
 	case avf.CONNECT_HEADER:
-		// Codec parameter update — parse and queue a codec-change notification
-		// so downstream decoders can re-initialise.
+		// Accumulate per-NALU CONNECT_HEADER data. Codec change detection
+		// is deferred to the next video data frame (I/P/NON_REF) so that
+		// all parameter set NALUs (SPS+PPS or VPS+SPS+PPS) are collected
+		// before attempting a parse.
 		if isVideoMediaType(frm.MediaType) && d.probed {
-			if newCodec := parseVideoCodec(frm.MediaType, frm.Data); newCodec != nil {
-				d.videoCodec = newCodec
-				d.rebuildStreams()
-				d.pendingCodecChange = d.streams
-			}
+			d.connectHeaderBuf = append(d.connectHeaderBuf, frm.Data...)
 		}
 
 		return av.Packet{}, true
 
-	case avf.I_FRAME, avf.P_FRAME, avf.H_FRAME:
+	case avf.I_FRAME, avf.P_FRAME, avf.NON_REF_FRAME:
 		if !isVideoMediaType(frm.MediaType) || d.videoCodec == nil {
 			return av.Packet{}, true
+		}
+
+		// If CONNECT_HEADER(s) preceded this frame, attempt a codec update.
+		if len(d.connectHeaderBuf) > 0 {
+			if newCodec := parseVideoCodec(frm.MediaType, d.connectHeaderBuf); newCodec != nil {
+				d.videoCodec = newCodec
+				d.rebuildStreams()
+				d.pendingCodecChange = d.streams
+			}
+
+			d.connectHeaderBuf = d.connectHeaderBuf[:0]
 		}
 
 		// Clamp to enforce strictly-increasing DTS. Rare camera clock glitches
@@ -354,12 +411,14 @@ func (d *Demuxer) frameToPacket(frm avf.Frame) (pkt av.Packet, skip bool) {
 		d.lastVideoTS = ts
 
 		return av.Packet{
-			Idx:       d.videoIdx,
-			KeyFrame:  frm.FrameType == avf.I_FRAME,
-			DTS:       time.Duration(ts) * time.Millisecond,
-			Duration:  dur,
-			CodecType: d.videoCodec.Type(),
-			Data:      stripVideoPrefix(frm.Data),
+			Idx:           d.videoIdx,
+			KeyFrame:      frm.FrameType == avf.I_FRAME,
+			DTS:           time.Duration(ts) * time.Millisecond,
+			WallClockTime: time.UnixMilli(ts),
+			Duration:      dur,
+			CodecType:     d.videoCodec.Type(),
+			FrameID:       frm.FrameID,
+			Data:          stripVideoPrefix(frm.Data),
 		}, false
 
 	case avf.AUDIO_FRAME:
@@ -402,11 +461,13 @@ func (d *Demuxer) frameToPacket(frm avf.Frame) (pkt av.Packet, skip bool) {
 		d.lastAudioTS = frm.TimeStamp
 
 		return av.Packet{
-			Idx:       d.audioIdx,
-			DTS:       dts,
-			Duration:  dur,
-			CodecType: d.audioCodec.Type(),
-			Data:      data,
+			Idx:           d.audioIdx,
+			DTS:           dts,
+			WallClockTime: time.UnixMilli(frm.TimeStamp),
+			Duration:      dur,
+			CodecType:     d.audioCodec.Type(),
+			FrameID:       frm.FrameID,
+			Data:          data,
 		}, false
 
 	case avf.UNKNOWN_FRAME:

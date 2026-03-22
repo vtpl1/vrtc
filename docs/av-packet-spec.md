@@ -39,8 +39,11 @@ type Packet struct {
     // See §4 for the full format contract.
     Data []byte
 
-    // Metadata carries object-detection analytics. nil when not available.
-    Metadata *avf.PVAData
+    // Metadata carries optional per-packet metadata (e.g. *avf.PVAData for
+    // object-detection analytics). nil when not set. Type is any to avoid
+    // a circular import; consumers that do not understand the concrete type
+    // must treat it as opaque.
+    Metadata any
 
     // ── Codec change ──────────────────────────────────────────────────────
     // NewCodecs is non-nil on the I_FRAME packet that immediately follows a
@@ -118,23 +121,30 @@ for synchronisation when zero.
 
 ### 3.10 Data
 
-Compressed payload. **Format contract:**
+Compressed payload. **Format contract — exactly one encoded unit per packet:**
 
-- **H.264 / H.265 video** — single raw NALU bytes. No `\x00\x00\x00\x01`
+- **H.264 / H.265 video** — **exactly one raw NALU**. No `\x00\x00\x00\x01`
   Annex-B start code, no 4-byte AVCC length prefix. The NALU header byte is
   at `Data[0]`.
+  **Forbidden:** start codes (`\x00\x00\x00\x01`) anywhere in `Data`,
+  AVCC length prefixes, or concatenated (multi-NALU) payloads.
 - **MJPEG** — complete JPEG frame bytes.
 - **Audio** — raw encoded samples. No container framing (no ADTS header for
   AAC; demuxer strips it).
 - **Empty (`nil` or `len == 0`)** — valid only for a pure codec-change
   notification packet (`KeyFrame == true`, `NewCodecs != nil`, no media data).
 
+Legacy AVF wire frames may pack an entire **access unit** (multiple NALUs —
+e.g. SEI + IDR, or inline SPS + PPS + IDR) into a single record. The AVF
+demuxer and proxy **must** split these into individual single-NALU packets
+using `avf.SplitFrame` before emitting. See `docs/frame-packet-conversion-spec.md §6`.
+
 Every muxer is responsible for adding its own framing at the write boundary:
 
 | Muxer / transport | Framing added |
 |-------------------|---------------|
-| AVF muxer | prepend `\x00\x00\x00\x01` (Annex-B) |
-| fMP4 / MP4 muxer | wrap with 4-byte BE length (AVCC) |
+| AVF muxer | prepend `\x00\x00\x00\x01` (Annex-B) per NALU |
+| fMP4 / MP4 muxer | 4-byte BE length + raw NALU (AVCC, ISO 14496-15) per NALU |
 | MPEG-TS / HLS | prepend `\x00\x00\x00\x01` (Annex-B) |
 | RTP packetizer | raw NALU slice passed directly |
 
@@ -142,17 +152,19 @@ Every demuxer is responsible for stripping that framing before emitting:
 
 | Demuxer | Stripping applied |
 |---------|-------------------|
-| AVF demuxer | strip 4-byte start code (`stripVideoPrefix`) |
+| AVF demuxer | strip 4-byte start code; split multi-NALU access units via `avf.SplitFrame` |
 | fMP4 demuxer | strip 4-byte AVCC length prefix (`normalizeVideoFromAVCC`) |
 | MP4 demuxer | strip 4-byte AVCC length prefix *(gap — not yet implemented)* |
 | RTP reassembler | raw NALU slices assembled into single `Data` |
 
 ### 3.11 Metadata
 
-Typed pointer to `avf.PVAData` carrying object-detection analytics (vehicle
-count, people count, bounding boxes, etc.). `nil` when no analytics are
-attached. Must not be inspected by muxers that do not understand it — treat
-as opaque and forward or discard.
+Optional per-packet metadata typed as `any`. The concrete value is typically
+`*avf.PVAData` (object-detection analytics: vehicle count, people count,
+bounding boxes, etc.) or `[]byte` (serialised payload). `nil` when not set.
+The field is typed `any` to avoid a circular import between `pkg/av` and
+`pkg/avf`. Muxers that do not understand the concrete type must treat it as
+opaque and forward or discard it.
 
 ### 3.12 NewCodecs
 
@@ -181,6 +193,7 @@ Any code path that previously set `IsParamSetNALU = true` is a bug.
 2. `DTS` is monotonically non-decreasing per stream index.
 3. `Duration > 0` from any well-behaved demuxer.
 4. `Data[0]` is the NALU header byte for H.264/H.265 video packets with data.
-5. `KeyFrame == true` implies video codec or `NewCodecs != nil`.
-6. `NewCodecs != nil` implies `KeyFrame == true`.
-7. `FrameID == 0` must not be treated as a meaningful frame identity.
+5. `Data` contains exactly one NALU for H.264/H.265; no embedded start codes or AVCC length prefixes.
+6. `KeyFrame == true` implies video codec or `NewCodecs != nil`.
+7. `NewCodecs != nil` implies `KeyFrame == true`.
+8. `FrameID == 0` must not be treated as a meaningful frame identity.

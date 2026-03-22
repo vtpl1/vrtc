@@ -1,7 +1,6 @@
 package avf
 
 import (
-	"bytes"
 	"context"
 	"encoding/binary"
 	"errors"
@@ -189,22 +188,19 @@ func (m *Muxer) WriteCodecChange(_ context.Context, changed []av.Stream) error {
 
 // ── per-frame write helpers ───────────────────────────────────────────────────
 
+// writeVideoPacket writes one video av.Packet to the AVF stream.
+// pkt.Data must contain exactly one raw NALU (no start code, no length prefix)
+// per the av.Packet single-NALU invariant. This function prepends the 4-byte
+// Annex-B start code (\x00\x00\x00\x01) when constructing the wire frame.
+// For H.264/H.265 keyframes it first emits the CONNECT_HEADER group via
+// writeConnectHeaderFrames (one frame per parameter set NALU).
 func (m *Muxer) writeVideoPacket(si streamInfo, pkt av.Packet, tsMs int64) error {
 	if pkt.KeyFrame && si.mediaType != avf.MJPG {
-		// Emit CONNECT_HEADER before every I_FRAME (§6.1).
-		hdrData := buildConnectHeaderPayload(si.codec)
-		if len(hdrData) > 0 {
-			// The CONNECT_HEADER's RefFrameOff points to itself (it IS the
-			// current parameter set reference).
-			m.lastConnectHdrOff = m.currentOffset
-			if err := m.writeFrame(
-				si.mediaType,
-				avf.CONNECT_HEADER,
-				tsMs,
-				hdrData,
-			); err != nil {
-				return err
-			}
+		// Emit one CONNECT_HEADER per parameter set NALU before every I_FRAME
+		// (H.264: SPS, PPS; H.265: VPS, SPS, PPS). Per §6.1 each CONNECT_HEADER
+		// carries exactly one NALU in Annex-B format.
+		if err := m.writeConnectHeaderFrames(si, tsMs); err != nil {
+			return err
 		}
 	}
 
@@ -268,6 +264,40 @@ func (m *Muxer) writeFrame(
 	return nil
 }
 
+// writeConnectHeaderFrames emits one CONNECT_HEADER frame per parameter set
+// NALU for the stream's codec. Each CONNECT_HEADER carries exactly one NALU in
+// Annex-B format (\x00\x00\x00\x01 + raw NALU bytes). Sets lastConnectHdrOff
+// to the offset of the first CONNECT_HEADER written (the SPS/VPS frame).
+// No-op for codecs without
+// parameter sets (e.g. MJPEG).
+func (m *Muxer) writeConnectHeaderFrames(si streamInfo, tsMs int64) error {
+	var nalus [][]byte
+
+	switch c := si.codec.(type) {
+	case h264parser.CodecData:
+		nalus = [][]byte{c.SPS(), c.PPS()}
+	case h265parser.CodecData:
+		nalus = [][]byte{c.VPS(), c.SPS(), c.PPS()}
+	default:
+		return nil
+	}
+
+	// Set lastConnectHdrOff to point at the first CONNECT_HEADER of this group.
+	m.lastConnectHdrOff = m.currentOffset
+
+	for _, nalu := range nalus {
+		if len(nalu) == 0 {
+			continue
+		}
+
+		if err := m.writeFrame(si.mediaType, avf.CONNECT_HEADER, tsMs, prependStartCode(nalu)); err != nil {
+			return err
+		}
+	}
+
+	return nil
+}
+
 // ── codec helpers ─────────────────────────────────────────────────────────────
 
 // mediaTypeForCodec maps an av.CodecType to the corresponding AVF MediaType
@@ -295,40 +325,6 @@ func mediaTypeForCodec(ct av.CodecType) (avf.MediaType, bool) {
 	}
 
 	return 0, false
-}
-
-// buildConnectHeaderPayload returns the Annex-B encoded parameter sets for
-// the given video codec (H.264: SPS+PPS; H.265: VPS+SPS+PPS).
-// Returns nil for codec types that do not use a CONNECT_HEADER (e.g. MJPEG).
-func buildConnectHeaderPayload(codec av.CodecData) []byte {
-	switch c := codec.(type) {
-	case h264parser.CodecData:
-		var b bytes.Buffer
-		writeAnnexBNALU(&b, c.SPS())
-		writeAnnexBNALU(&b, c.PPS())
-
-		return b.Bytes()
-
-	case h265parser.CodecData:
-		var b bytes.Buffer
-		writeAnnexBNALU(&b, c.VPS())
-		writeAnnexBNALU(&b, c.SPS())
-		writeAnnexBNALU(&b, c.PPS())
-
-		return b.Bytes()
-	}
-
-	return nil
-}
-
-// writeAnnexBNALU appends a 4-byte start code followed by nalu to b.
-func writeAnnexBNALU(b *bytes.Buffer, nalu []byte) {
-	if len(nalu) == 0 {
-		return
-	}
-
-	b.Write([]byte{0x00, 0x00, 0x00, 0x01})
-	b.Write(nalu)
 }
 
 // prependStartCode returns a new slice with a 4-byte start code prepended.

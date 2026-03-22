@@ -9,6 +9,7 @@ import (
 	"github.com/vtpl1/vrtc/pkg/av/codec/aacparser"
 	"github.com/vtpl1/vrtc/pkg/av/codec/h264parser"
 	"github.com/vtpl1/vrtc/pkg/av/codec/h265parser"
+	"github.com/vtpl1/vrtc/pkg/av/codec/parser"
 )
 
 type (
@@ -344,6 +345,82 @@ func FrameTypeFromPktData(data []byte, codec av.CodecType) FrameType {
 	return UNKNOWN_FRAME
 }
 
+// SplitFrame splits an I_FRAME/P_FRAME/NON_REF_FRAME that contains a multi-NALU
+// Annex-B access unit into individual single-NALU frames.
+//
+// Each output Frame shares the same MediaType, TimeStamp, FrameID, StreamMeta,
+// and Pvadata as the input. DurationMs is assigned only to the last frame;
+// all preceding frames get DurationMs=0.
+//
+// Parameter-set NALUs (SPS/PPS for H.264; VPS/SPS/PPS for H.265) embedded
+// inline in a data frame are silently dropped — they duplicate the
+// CONNECT_HEADER records that precede keyframe groups.
+//
+// Returns [frm] unchanged for:
+//   - frames that already contain a single NALU
+//   - CONNECT_HEADER, AUDIO_FRAME, UNKNOWN_FRAME
+//   - non-H.264/H.265 codecs (MJPEG etc.)
+func SplitFrame(frm Frame) []Frame {
+	// Only split video data frames for H.264/H.265.
+	switch frm.FrameType {
+	case I_FRAME, P_FRAME, NON_REF_FRAME:
+		// continue below
+	default:
+		return []Frame{frm}
+	}
+
+	codecType := frm.CodecType()
+	if codecType != av.H264 && codecType != av.H265 {
+		return []Frame{frm}
+	}
+
+	nalus, _ := parser.SplitNALUs(frm.Data)
+	if len(nalus) <= 1 {
+		return []Frame{frm}
+	}
+
+	// Filter out parameter-set NALUs; build one Frame per remaining NALU.
+	out := make([]Frame, 0, len(nalus))
+
+	for _, nalu := range nalus {
+		if len(nalu) == 0 {
+			continue
+		}
+
+		ft := FrameTypeFromPktData(nalu, codecType)
+		if ft == CONNECT_HEADER {
+			// Inline SPS/PPS/VPS — skip; already held in codec state.
+			continue
+		}
+
+		if ft == UNKNOWN_FRAME {
+			continue
+		}
+
+		out = append(out, Frame{
+			BasicFrame: BasicFrame{
+				MediaType: frm.MediaType,
+				FrameType: ft,
+				TimeStamp: frm.TimeStamp,
+			},
+			FrameID:    frm.FrameID,
+			DurationMs: 0, // assigned to last frame below
+			Data:       prependStartCode(nalu),
+			StreamMeta: frm.StreamMeta,
+			Pvadata:    frm.Pvadata,
+		})
+	}
+
+	if len(out) == 0 {
+		return []Frame{frm}
+	}
+
+	// Assign DurationMs only to the last frame to avoid double-counting.
+	out[len(out)-1].DurationMs = frm.DurationMs
+
+	return out
+}
+
 // ── Conversion: Frame → Packet ────────────────────────────────────────────────
 
 // FrameToPacket converts one media Frame to an av.Packet.
@@ -516,6 +593,20 @@ func PacketToFrames(pkt av.Packet, codec av.CodecData) []Frame {
 		Data:       data,
 		Pvadata:    pvadata,
 	}}
+}
+
+// BuildConnectHeaderFrames returns one CONNECT_HEADER Frame per parameter set
+// NALU for the given codec (SPS+PPS for H.264; VPS+SPS+PPS for H.265).
+// Returns nil for codec types that do not use CONNECT_HEADER frames (e.g. MJPEG).
+// See docs/frame-packet-conversion-spec.md §3.
+func BuildConnectHeaderFrames(codec av.CodecData, tsMs int64) []Frame {
+	if codec == nil {
+		return nil
+	}
+
+	mt := MediaTypeFromCodec(codec.Type())
+
+	return buildConnectHeaderFrames(mt, tsMs, codec)
 }
 
 // buildConnectHeaderFrames returns one CONNECT_HEADER Frame per parameter set

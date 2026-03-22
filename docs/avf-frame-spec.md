@@ -139,10 +139,23 @@ codec only when the first subsequent video frame (`I_FRAME`, `P_FRAME`, or
 
 ### 5.2 I_FRAME and P_FRAME / NON_REF_FRAME
 
-Data = `\x00\x00\x00\x01` + NALU bytes (Annex-B, 4-byte start-code prefix).
+The canonical format is **exactly one NALU in Annex-B format**:
 
-The 4-byte prefix is stripped by `FrameToPacket` before populating
-`av.Packet.Data` (which carries raw NALU bytes — see packet spec).
+```
+Data = \x00\x00\x00\x01 + single raw NALU bytes
+```
+
+The 4-byte start code is stripped by `FrameToPacket` before populating
+`av.Packet.Data` (which carries a single raw NALU — see packet spec).
+
+**Multi-NALU wire records (legacy cameras):** Some camera firmware packs an
+entire access unit (multiple NALUs — e.g. SEI + IDR, or inline SPS + PPS + IDR)
+into a single I_FRAME or P_FRAME wire record. This is a **wire-only artefact**.
+The AVF demuxer and proxy **must** detect and split such records into individual
+single-NALU `Frame` values using `avf.SplitFrame` before emitting packets.
+Inline parameter-set NALUs (SPS/PPS for H.264; VPS/SPS/PPS for H.265) are
+silently dropped during splitting — they duplicate the `CONNECT_HEADER` records
+that precede keyframe groups.
 
 ### 5.3 AUDIO_FRAME
 
@@ -166,8 +179,11 @@ in-memory `Frame` struct.
 1. `len(Data) == 0` is valid for `CONNECT_HEADER` frames with no payload.
 2. For `I_FRAME` and `P_FRAME`/`NON_REF_FRAME`, `len(Data) >= 5`
    (4-byte start code + at least 1 NALU byte).
-3. `FrameID == 0` means the source did not assign a stable identity.
-4. `DurationMs == 0` means the consumer has not yet computed the duration
+3. After demuxing, each `I_FRAME`/`P_FRAME`/`NON_REF_FRAME` contains
+   **exactly one NALU** in Annex-B format. Multi-NALU wire records must be
+   split by the demuxer or proxy using `avf.SplitFrame` before further processing.
+4. `FrameID == 0` means the source did not assign a stable identity.
+5. `DurationMs == 0` means the consumer has not yet computed the duration
    (valid only before the consumer sets it).
-5. `StreamMeta` fields are informational only and must not influence codec
+6. `StreamMeta` fields are informational only and must not influence codec
    detection or frame routing logic.
