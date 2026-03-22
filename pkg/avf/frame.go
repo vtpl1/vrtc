@@ -468,7 +468,10 @@ func FrameToPacket(frm *Frame, idx uint16, codec av.CodecData) (av.Packet, bool)
 		// Strip ADTS header from AAC frames when present.
 		if frm.MediaType == AAC && len(data) >= 7 &&
 			data[0] == 0xFF && data[1]&0xF6 == 0xF0 {
-			if _, hdrLen, _, _, err := aacparser.ParseADTSHeader(data); err == nil && hdrLen < len(data) {
+			if _, hdrLen, _, _, err := aacparser.ParseADTSHeader(
+				data,
+			); err == nil &&
+				hdrLen < len(data) {
 				data = data[hdrLen:]
 			}
 		}
@@ -564,8 +567,10 @@ func PacketToFrames(pkt av.Packet, codec av.CodecData) []Frame {
 	}
 
 	// All other cases: exactly one frame.
-	var ft FrameType
-	var data []byte
+	var (
+		ft   FrameType
+		data []byte
+	)
 
 	switch {
 	case pkt.KeyFrame:

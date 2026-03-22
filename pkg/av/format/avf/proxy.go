@@ -48,10 +48,10 @@ type ProxyMuxDemuxCloser struct {
 	audioProbeDone                bool
 
 	// ── Frame→Packet mode forward-phase state ─────────────────────────────────
-	videoStreamIdx         uint16 // assigned after probe (always 0)
-	audioStreamIdx         uint16 // assigned after probe (1 when audio stream present)
-	postProbeConnectHeader []byte // accumulates CONNECT_HEADER data post-probe
-	accumulatingPostProbe  bool   // true while gathering post-probe CONNECT_HEADERs
+	videoStreamIdx         uint16      // assigned after probe (always 0)
+	audioStreamIdx         uint16      // assigned after probe (1 when audio stream present)
+	postProbeConnectHeader []byte      // accumulates CONNECT_HEADER data post-probe
+	accumulatingPostProbe  bool        // true while gathering post-probe CONNECT_HEADERs
 	pendingNewCodecs       []av.Stream // attached to next packet after codec change
 
 	muHeaders                 sync.Mutex
@@ -233,8 +233,10 @@ func (m *ProxyMuxDemuxCloser) WriteFrame(ctx context.Context, frm avf.Frame) err
 	}
 
 	// Resolve stream index and codec for this frame.
-	var idx uint16
-	var pktCodec av.CodecData
+	var (
+		idx      uint16
+		pktCodec av.CodecData
+	)
 
 	if frm.FrameType == avf.AUDIO_FRAME {
 		if m.audioCodec == nil {
@@ -256,6 +258,7 @@ func (m *ProxyMuxDemuxCloser) WriteFrame(ctx context.Context, frm avf.Frame) err
 
 	for i := range split {
 		sf := split[i]
+
 		pkt, ok := avf.FrameToPacket(&sf, idx, pktCodec)
 		if !ok {
 			continue

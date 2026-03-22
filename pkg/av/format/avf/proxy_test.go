@@ -86,7 +86,7 @@ func makePPSFrame(t *testing.T) avf.Frame {
 }
 
 // makeIFrame returns an I_FRAME avf.Frame with Annex-B IDR data.
-func makeIFrame(ts int64, frameID int64) avf.Frame {
+func makeIFrame(ts, frameID int64) avf.Frame {
 	return avf.Frame{
 		BasicFrame: avf.BasicFrame{MediaType: avf.H264, FrameType: avf.I_FRAME, TimeStamp: ts},
 		FrameID:    frameID,
@@ -95,7 +95,7 @@ func makeIFrame(ts int64, frameID int64) avf.Frame {
 }
 
 // makePFrame returns a P_FRAME avf.Frame with Annex-B non-IDR data.
-func makePFrame(ts int64, frameID int64) avf.Frame {
+func makePFrame(ts, frameID int64) avf.Frame {
 	return avf.Frame{
 		BasicFrame: avf.BasicFrame{MediaType: avf.H264, FrameType: avf.P_FRAME, TimeStamp: ts},
 		FrameID:    frameID,

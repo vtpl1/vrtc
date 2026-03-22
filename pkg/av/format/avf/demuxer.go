@@ -248,22 +248,28 @@ func (d *Demuxer) ReadPacket(ctx context.Context) (av.Packet, error) {
 			if len(split) > 1 {
 				// Convert all split frames; collect valid packets.
 				var pkts []av.Packet
+
 				for _, sf := range split {
 					pkt, skip := d.frameToPacket(sf)
 					if skip {
 						continue
 					}
+
 					pkts = append(pkts, pkt)
 				}
+
 				if len(pkts) == 0 {
 					continue
 				}
+
 				first := pkts[0]
 				if len(d.pendingCodecChange) > 0 {
 					first.NewCodecs = d.pendingCodecChange
 					d.pendingCodecChange = nil
 				}
+
 				d.pendingNALUs = pkts[1:]
+
 				return first, nil
 			}
 		}

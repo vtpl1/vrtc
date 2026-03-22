@@ -15,7 +15,7 @@ type Packet struct {
 	IsDiscontinuity bool // DTS does not follow from the previous packet; receivers must reinitialise timing
 
 	// ── Identity / routing ────────────────────────────────────────────────
-	Idx      uint16    // stream index; matches Stream.Idx from GetCodecs
+	Idx       uint16    // stream index; matches Stream.Idx from GetCodecs
 	CodecType CodecType // codec of this packet
 
 	// FrameID is a stable identity assigned by the source device or stream.

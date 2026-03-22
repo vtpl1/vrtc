@@ -290,7 +290,12 @@ func (m *Muxer) writeConnectHeaderFrames(si streamInfo, tsMs int64) error {
 			continue
 		}
 
-		if err := m.writeFrame(si.mediaType, avf.CONNECT_HEADER, tsMs, prependStartCode(nalu)); err != nil {
+		if err := m.writeFrame(
+			si.mediaType,
+			avf.CONNECT_HEADER,
+			tsMs,
+			prependStartCode(nalu),
+		); err != nil {
 			return err
 		}
 	}
