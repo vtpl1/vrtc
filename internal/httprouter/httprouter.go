@@ -62,6 +62,7 @@ func (l *Lazy) Do(f func() error) error {
 	return l.err
 }
 
+//nolint:gocognit // WebSocket handler — lifecycle complexity is inherent, not incidental.
 func WSHandler(
 	ctx context.Context,
 	w http.ResponseWriter,
@@ -96,7 +97,10 @@ func WSHandler(
 	errWriteChan := make(chan error, 1)
 	errReadChan := make(chan error, 1)
 
-	var ms *mse.MSEWriter
+	var (
+		msMu sync.Mutex
+		ms   *mse.MSEWriter
+	)
 
 	wg := sync.WaitGroup{}
 	muxerOnce := Lazy{}
@@ -129,20 +133,27 @@ func WSHandler(
 							return wsConn.Writer(ctx, websocket.MessageText)
 						}
 
-						ms, err = mse.NewFromFactories(binaryWriterFactory, textWriterFactory)
-						if err != nil {
-							WriteErrorResponse(ctx, wsConn, err, "AddConsumer failed")
+						localMs, merr := mse.NewFromFactories(
+							binaryWriterFactory,
+							textWriterFactory,
+						)
+						if merr != nil {
+							WriteErrorResponse(ctx, wsConn, merr, "AddConsumer failed")
 
-							return err
+							return merr
 						}
+
+						msMu.Lock()
+						ms = localMs
+						msMu.Unlock()
 
 						if err := streamManager.AddConsumer(
 							ctx,
 							producerID,
 							consumerID,
-							func(_ context.Context, _ string) (av.MuxCloser, error) { return ms, nil },
+							func(_ context.Context, _ string) (av.MuxCloser, error) { return localMs, nil },
 							func(_ context.Context, _ string) error {
-								ms.Close() //nolint:contextcheck
+								localMs.Close() //nolint:contextcheck
 
 								return nil
 							},
@@ -159,6 +170,7 @@ func WSHandler(
 					}
 
 					switch cmd.Value {
+					case "": // initial subscription — no action needed
 					case "pause":
 						if err := streamManager.PauseProducer(ctx, producerID); err != nil {
 							errReadChan <- err
@@ -190,8 +202,12 @@ func WSHandler(
 	case <-errReadChan:
 	}
 
-	if ms != nil {
-		ms.Close() //nolint:contextcheck
+	msMu.Lock()
+	msCopy := ms
+	msMu.Unlock()
+
+	if msCopy != nil {
+		msCopy.Close() //nolint:contextcheck
 	}
 
 	if err := streamManager.RemoveConsumer(ctx, producerID, consumerID); err != nil {

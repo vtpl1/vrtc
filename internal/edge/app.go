@@ -11,6 +11,7 @@ import (
 
 	"github.com/rs/zerolog/log"
 	"github.com/vtpl1/vrtc/internal/avgrabber"
+	"github.com/vtpl1/vrtc/internal/httprouter"
 	"github.com/vtpl1/vrtc/pkg/av"
 	"github.com/vtpl1/vrtc/pkg/av/format/avf"
 	"github.com/vtpl1/vrtc/pkg/av/format/llhls"
@@ -368,6 +369,11 @@ func Run(appName, appMode string, cfg Config) error {
 			next.ServeHTTP(w, r)
 		})
 	}
+
+	// WebSocket MSE endpoint — same protocol as the cloud node.
+	mux.HandleFunc("/v3/api/ws", func(w http.ResponseWriter, r *http.Request) {
+		httprouter.WSHandler(ctx, w, r, sm)
+	})
 
 	// GET /hls/<consumerID>/index.m3u8   → playlist  (auto-creates consumer)
 	// GET /hls/<consumerID>/init.mp4     → init segment

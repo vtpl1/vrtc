@@ -148,6 +148,10 @@ func (m *MSEWriter) WriteHeader(ctx context.Context, streams []av.Stream) error 
 // WritePacket buffers a sample; flushes and broadcasts a binary fMP4 fragment on
 // each video keyframe (or immediately for audio-only streams). If pkt.Metadata is
 // non-nil it is marshalled to JSON and broadcast as a text message.
+//
+// Ordering: when pkt is a keyframe it triggers a flush of the previous GOP.
+// The completed fragment (binary) is sent first, followed by any per-frame
+// metadata that annotates the keyframe that just opened the next segment.
 func (m *MSEWriter) WritePacket(ctx context.Context, pkt av.Packet) error {
 	m.mu.Lock()
 	m.buf.Reset()
@@ -160,7 +164,7 @@ func (m *MSEWriter) WritePacket(ctx context.Context, pkt av.Packet) error {
 			return err
 		}
 	}
-	// Per-frame metadata: send before the binary so the client can prepare.
+
 	if pkt.Metadata != nil {
 		if meta, jerr := json.Marshal(pkt.Metadata); jerr == nil {
 			if err := m.broadcast(outFrame{websocket.MessageText, meta}); err != nil {
@@ -215,17 +219,25 @@ func (m *MSEWriter) WriteCodecChange(ctx context.Context, changed []av.Stream) e
 	// Rebuild a clean init-only segment for late joiners (no fragment prefix).
 	var initBuf bytes.Buffer
 
-	detachedCtx := context.WithoutCancel(ctx)
-
-	timeOutCtx, cancel := context.WithTimeout(detachedCtx, 5*time.Second)
+	timeOutCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
 	defer cancel()
+
+	newCodecStr := buildCodecString(updatedStreams)
 
 	tmp := fmp4.NewMuxer(&initBuf)
 	if herr := tmp.WriteHeader(timeOutCtx, updatedStreams); herr == nil {
 		m.codecsMu.Lock()
-		m.codecStr = buildCodecString(updatedStreams)
+		m.codecStr = newCodecStr
 		m.initSeg = cloneBytes(initBuf.Bytes())
 		m.codecsMu.Unlock()
+	}
+
+	// Notify the connected client of the codec change before the new segment
+	// data arrives so the browser can call sourceBuffer.changeType() in time.
+	if meta, jerr := json.Marshal(wsMessage{Type: "mse", Value: newCodecStr}); jerr == nil {
+		if err := m.broadcast(outFrame{websocket.MessageText, meta}); err != nil {
+			return err
+		}
 	}
 
 	if err := m.broadcast(outFrame{websocket.MessageBinary, data}); err != nil {
