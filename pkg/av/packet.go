@@ -38,14 +38,12 @@ type Packet struct {
 	// See docs/av-packet-spec.md §3.10.
 	Data []byte
 
-	// Metadata carries optional per-packet metadata (e.g. *avf.PVAData for
-	// object-detection analytics, or []byte for serialised payloads).
-	// nil when not set. Consumers that do not understand the concrete type
-	// must treat it as opaque and forward or discard it.
+	// Metadata carries optional per-packet metadata (e.g. *pva.PVAData for
+	// object-detection analytics). nil when not set. Consumers that do not
+	// understand the concrete type must treat it as opaque and forward or
+	// discard it.
 	//
-	// Note: typed as any to avoid a circular import between pkg/av and pkg/avf.
-	// In practice the value is either *avf.PVAData or []byte depending on the
-	// pipeline stage.
+	// Typed as any to avoid a circular import between pkg/av and pkg/pva.
 	Metadata any
 
 	// ── Codec change ──────────────────────────────────────────────────────

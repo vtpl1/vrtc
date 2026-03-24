@@ -11,31 +11,17 @@ import (
 
 	"github.com/rs/zerolog/log"
 	"github.com/soheilhy/cmux"
-	centralservicefrs "github.com/vtpl1/vrtc/gen/central_service_frs"
-	streamservicefrs "github.com/vtpl1/vrtc/gen/stream_service_frs"
 	"github.com/vtpl1/vrtc/internal/httprouter"
 	"github.com/vtpl1/vrtc/pkg/av"
 	"github.com/vtpl1/vrtc/pkg/av/streammanager3"
-	"github.com/vtpl1/vrtc/pkg/avf"
-	"github.com/vtpl1/vrtc/pkg/configpath"
 	"github.com/vtpl1/vrtc/pkg/lifecycle"
-	"github.com/vtpl1/vrtc/pkg/logger"
-	"github.com/vtpl1/vrtc/pkg/services/centralservicefrsimpl"
-	"github.com/vtpl1/vrtc/pkg/services/streamservicefrsimpl"
-	"google.golang.org/grpc"
-	"google.golang.org/grpc/reflection"
 )
 
+// errNotImplemented is returned by the stub demuxer factory until the gRPC
+// source layer is rewritten.
+var errNotImplemented = errors.New("cloud demuxer: not implemented")
+
 func Run(appName, appMode string, cfg Config) error {
-	logfile := configpath.GetLogFilePath(appName + "_" + appMode)
-
-	closeLogger, err := logger.InitLogger(logfile, "info")
-	if err != nil {
-		return fmt.Errorf("init logger: %w", err)
-	}
-
-	defer closeLogger()
-
 	log.Info().Msgf("%+v", cfg)
 
 	ctx, cancel := context.WithCancel(context.Background())
@@ -53,50 +39,23 @@ func Run(appName, appMode string, cfg Config) error {
 	}
 
 	errChan := make(chan error)
+
 	s := cmux.New(listener)
-	grpcL := s.MatchWithWriters(
-		cmux.HTTP2MatchHeaderFieldSendSettings("content-type", "application/grpc"),
-	)
-	httpL := s.Match(cmux.HTTP1Fast())
+	httpL := s.Match(cmux.Any())
 
-	centralServer, err := centralservicefrsimpl.New()
-	if err != nil {
-		return err
-	}
-	defer centralServer.Close()
-
-	streamServer, err := streamservicefrsimpl.New(
-		func(ctx context.Context, sourceID, producerID string) (avf.FrameMuxCloser, error) {
-			return centralServer.GetAVFMuxCloser(sourceID, producerID)
-		},
-		func(ctx context.Context, sourceID, producerID string) error {
-			return centralServer.RemoveAVFMuxCloser(sourceID, producerID)
+	// Stub demuxer factory — replaced when gRPC source layer is rewritten.
+	demuxerFactory := av.DemuxerFactory(
+		func(_ context.Context, producerID string) (av.DemuxCloser, error) {
+			return nil, fmt.Errorf("%w: producerID=%s", errNotImplemented, producerID)
 		},
 	)
-	if err != nil {
-		return err
-	}
-	defer streamServer.Close()
 
-	grpcServer := grpc.NewServer()
-	centralservicefrs.RegisterCentralServiceServer(grpcServer, centralServer)
-	streamservicefrs.RegisterStreamServiceServer(grpcServer, streamServer)
-	reflection.Register(grpcServer)
+	demuxerRemover := av.DemuxerRemover(func(_ context.Context, _ string) error { return nil })
 
-	sm := streammanager3.New(
-		func(ctx context.Context, producerID string) (av.DemuxCloser, error) {
-			sourceID := ""
+	sm := streammanager3.New(demuxerFactory, demuxerRemover)
 
-			return centralServer.GetDemuxCloser(sourceID, producerID)
-		},
-		func(ctx context.Context, producerID string) error {
-			sourceID := ""
-
-			return centralServer.RemoveDemuxCloser(sourceID, producerID)
-		},
-	)
 	if err := sm.Start(ctx); err != nil {
-		log.Error().Err(err).Msg("Streammanager start error")
+		log.Error().Err(err).Msg("stream manager start error")
 
 		return err
 	}
@@ -105,20 +64,11 @@ func Run(appName, appMode string, cfg Config) error {
 		Handler:           httprouter.NewRouter(ctx, sm),
 		ReadHeaderTimeout: 5 * time.Second,
 	}
+
 	wg := sync.WaitGroup{}
-	wg.Go(func() {
-		log.Info().Int("port", port).Msgf("[grpc-server] started")
 
-		if err := grpcServer.Serve(grpcL); err != nil {
-			if errors.Is(err, cmux.ErrServerClosed) || errors.Is(err, net.ErrClosed) {
-				return
-			}
-
-			log.Error().Err(err).Msg("[grpc-server] error")
-		}
-	})
 	wg.Go(func() {
-		log.Info().Int("port", port).Msgf("[http-server] started")
+		log.Info().Int("port", port).Msg("[http-server] started")
 
 		if err := httpServer.Serve(httpL); err != nil {
 			if errors.Is(err, cmux.ErrServerClosed) || errors.Is(err, net.ErrClosed) {
@@ -128,8 +78,9 @@ func Run(appName, appMode string, cfg Config) error {
 			log.Error().Err(err).Msg("[http-server] error")
 		}
 	})
+
 	wg.Go(func() {
-		log.Info().Int("port", port).Msgf("[cmux-server] started")
+		log.Info().Int("port", port).Msg("[cmux-server] started")
 
 		if err := s.Serve(); err != nil {
 			if errors.Is(err, cmux.ErrServerClosed) || errors.Is(err, net.ErrClosed) {
@@ -140,35 +91,31 @@ func Run(appName, appMode string, cfg Config) error {
 		}
 	})
 
-	fmt.Println("waiting for termination request") //nolint:forbidigo
+	log.Info().
+		Str("appName", appName).
+		Str("appMode", appMode).
+		Int("port", port).
+		Msg("cloud node starting")
+
 	lifecycle.WaitForTerminationRequest(errChan)
-	fmt.Println("\nafter termination request") //nolint:forbidigo
 
 	if err := sm.Stop(); err != nil {
-		log.Error().Err(err).Msg("Streammanager error")
+		log.Error().Err(err).Msg("stream manager stop error")
 	}
 
-	fmt.Println("\nafter sm.Stop") //nolint:forbidigo
 	cancel()
-	fmt.Println("\nafter cancel") //nolint:forbidigo
-	grpcServer.GracefulStop()
-	fmt.Println("\nafter grpc close") //nolint:forbidigo
 
-	detachedCtx := context.WithoutCancel(ctx)
-
-	shutCtx, cancel := context.WithTimeout(detachedCtx, 5*time.Second)
-	defer cancel()
+	shutCtx, shutCancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer shutCancel()
 
 	if err := httpServer.Shutdown(shutCtx); err != nil {
-		log.Error().Err(err).Msg("HTTP shutdown error")
+		log.Error().Err(err).Msg("http shutdown error")
 	}
 
-	fmt.Println("\nafter http close") //nolint:forbidigo
 	s.Close()
-	fmt.Println("\nafter cmux close") //nolint:forbidigo
 	wg.Wait()
-	log.Info().Msg("Server shut down gracefully")
-	fmt.Println("Server shut down gracefully") //nolint:forbidigo
+
+	log.Info().Msg("cloud node shut down gracefully")
 
 	return nil
 }
