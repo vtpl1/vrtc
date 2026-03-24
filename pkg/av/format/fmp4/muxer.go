@@ -108,14 +108,25 @@ func (m *Muxer) WriteHeader(_ context.Context, streams []av.Stream) error {
 		return ErrHeaderAlreadyWritten
 	}
 
-	for i, s := range streams {
-		ts, err := newTrackState(s, uint32(i+1))
+	nextTrackID := uint32(1)
+
+	for _, s := range streams {
+		ts, err := newTrackState(s, nextTrackID)
+		if errors.Is(err, ErrUnsupportedCodec) {
+			continue // silently skip codecs fMP4 cannot represent
+		}
+
 		if err != nil {
 			return err
 		}
 
 		m.tracks = append(m.tracks, ts)
 		m.trackMap[s.Idx] = ts
+		nextTrackID++
+	}
+
+	if len(m.tracks) == 0 {
+		return ErrUnsupportedCodec
 	}
 
 	init := buildInitSegment(m.tracks)

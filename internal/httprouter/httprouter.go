@@ -97,6 +97,11 @@ func WSHandler(
 	errWriteChan := make(chan error, 1)
 	errReadChan := make(chan error, 1)
 
+	// rCtx is cancelled when the write side errors or the connection closes,
+	// unblocking the reader goroutine so wg.Wait() can return promptly.
+	rCtx, rCancel := context.WithCancel(ctx)
+	defer rCancel()
+
 	var (
 		msMu sync.Mutex
 		ms   *mse.MSEWriter
@@ -113,12 +118,13 @@ func WSHandler(
 
 		for {
 			select {
-			case <-ctx.Done():
+			case <-rCtx.Done():
 				return
 			default:
-				cmd, err := ReadCommand(ctx, wsConn)
+				cmd, err := ReadCommand(rCtx, wsConn)
 				if err != nil {
-					if !errors.Is(err, context.Canceled) {
+					if !errors.Is(err, context.Canceled) &&
+						!errors.Is(err, context.DeadlineExceeded) {
 						errReadChan <- err
 
 						log.Error().Err(err).Msg("Client disconnected or read failed.")
@@ -209,6 +215,8 @@ func WSHandler(
 	case <-errWriteChan:
 	case <-errReadChan:
 	}
+
+	rCancel() // unblock the reader goroutine so wg.Wait() returns promptly
 
 	msMu.Lock()
 	msCopy := ms

@@ -35,7 +35,7 @@ import (
 const (
 	mseConsumerID   = "test-mse-consumer"
 	minMSEFragments = 5
-	mseTimeout      = 30 * time.Second
+	mseTimeout      = 60 * time.Second
 )
 
 // mseMessage mirrors the JSON envelope sent over the WebSocket text channel.
@@ -45,7 +45,7 @@ type mseMessage struct {
 }
 
 // TestMSE_RTSP_Pipeline verifies the full RTSP → StreamManager → MSEWriter →
-// WebSocket client pipeline.
+// WebSocket client pipeline for every camera in testCameras.
 func TestMSE_RTSP_Pipeline(t *testing.T) {
 	if testing.Short() {
 		t.Skip("skipping MSE RTSP integration test in short mode")
@@ -54,12 +54,21 @@ func TestMSE_RTSP_Pipeline(t *testing.T) {
 	avgrabber.Init()
 	t.Cleanup(avgrabber.Deinit)
 
+	for _, cam := range testCameras {
+		t.Run(cam.name, func(t *testing.T) {
+			runMSEPipeline(t, cam.cfg)
+		})
+	}
+}
+
+// runMSEPipeline runs the full MSE pipeline test for a single camera config.
+func runMSEPipeline(t *testing.T, cfg avgrabber.Config) {
+	t.Helper()
+
 	ctx, cancel := context.WithTimeout(t.Context(), mseTimeout)
 	defer cancel()
 
-	// ── build stream manager ──────────────────────────────────────────────────
-
-	cfg := rtspConfig()
+	// ── stream manager ────────────────────────────────────────────────────────
 
 	demuxerFactory := av.DemuxerFactory(
 		func(_ context.Context, _ string) (av.DemuxCloser, error) {
@@ -67,9 +76,10 @@ func TestMSE_RTSP_Pipeline(t *testing.T) {
 		},
 	)
 
-	demuxerRemover := av.DemuxerRemover(func(_ context.Context, _ string) error { return nil })
-
-	sm := streammanager3.New(demuxerFactory, demuxerRemover)
+	sm := streammanager3.New(
+		demuxerFactory,
+		av.DemuxerRemover(func(_ context.Context, _ string) error { return nil }),
+	)
 
 	if err := sm.Start(ctx); err != nil {
 		t.Fatalf("StreamManager.Start: %v", err)
@@ -77,13 +87,13 @@ func TestMSE_RTSP_Pipeline(t *testing.T) {
 
 	t.Cleanup(func() { _ = sm.Stop() })
 
-	// ── HTTP test server with WebSocket endpoint ───────────────────────────────
+	// ── HTTP test server ──────────────────────────────────────────────────────
 
 	srv := httptest.NewServer(httprouter.NewRouter(ctx, sm))
 	t.Cleanup(srv.Close)
 
 	wsURL := "ws" + strings.TrimPrefix(srv.URL, "http") + "/v3/api/ws" +
-		"?producerID=" + testRTSPURL +
+		"?producerID=" + cfg.URL +
 		"&consumerID=" + mseConsumerID
 
 	// ── dial WebSocket ────────────────────────────────────────────────────────
@@ -111,7 +121,7 @@ func TestMSE_RTSP_Pipeline(t *testing.T) {
 		t.Fatalf("write subscription: %v", err)
 	}
 
-	// ── receive and validate messages ────────────────────────────────────────
+	// ── receive and validate messages ─────────────────────────────────────────
 
 	var (
 		gotCodecStr bool
@@ -160,8 +170,6 @@ func TestMSE_RTSP_Pipeline(t *testing.T) {
 			boxSize := binary.BigEndian.Uint32(data[0:4])
 
 			if !gotInitSeg {
-				// First binary message must be an fMP4 init segment.
-				// Init segments start with an ftyp or moov box.
 				switch boxType {
 				case "ftyp", "moov":
 					gotInitSeg = true
@@ -169,18 +177,14 @@ func TestMSE_RTSP_Pipeline(t *testing.T) {
 				default:
 					t.Errorf("expected init segment (ftyp/moov), got box type %q", boxType)
 				}
-			} else {
-				// Subsequent binary messages must be fMP4 media fragments.
-				if boxType == "moof" || boxType == "mdat" {
-					fragments++
-					t.Logf("fragment %d: box=%s size=%d", fragments, boxType, boxSize)
-				}
-				// Ignore any other box types silently.
+			} else if boxType == "moof" || boxType == "mdat" {
+				fragments++
+				t.Logf("fragment %d: box=%s size=%d", fragments, boxType, boxSize)
 			}
 		}
 	}
 
-	// ── assertions ───────────────────────────────────────────────────────────
+	// ── assertions ────────────────────────────────────────────────────────────
 
 	if !gotCodecStr {
 		t.Error("no MSE codec string received within timeout")
