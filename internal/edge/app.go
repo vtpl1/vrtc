@@ -10,11 +10,13 @@ import (
 	"time"
 
 	"github.com/rs/zerolog/log"
+	"github.com/vtpl1/vrtc/internal/avgrabber"
 	"github.com/vtpl1/vrtc/pkg/av"
 	"github.com/vtpl1/vrtc/pkg/av/format/avf"
 	"github.com/vtpl1/vrtc/pkg/av/format/llhls"
 	"github.com/vtpl1/vrtc/pkg/av/streammanager3"
 	"github.com/vtpl1/vrtc/pkg/lifecycle"
+	"github.com/vtpl1/vrtc/pkg/pva"
 )
 
 var errNoSupportedStreams = errors.New("streamFilterMuxer: no supported streams")
@@ -147,7 +149,11 @@ func Run(appName, appMode string, cfg Config) error {
 
 	errChan := make(chan error)
 
-	producerID := cfg.Edge.StoragePath // AVF base directory (from config)
+	// producerID is either the RTSP URL (avgrabber) or the AVF directory path.
+	producerID := cfg.Edge.StreamAddr
+	if producerID == "" {
+		producerID = cfg.Edge.StoragePath
+	}
 
 	// ── LL-HLS muxer registry ─────────────────────────────────────────────────
 
@@ -185,24 +191,70 @@ func Run(appName, appMode string, cfg Config) error {
 		return nil
 	})
 
-	// ── AVF continuous demuxer factory ───────────────────────────────────────
+	// ── demuxer factory: avgrabber (RTSP) or AVF (file playback) ─────────────
 
-	demuxerFactory := av.DemuxerFactory(func(_ context.Context, _ string) (av.DemuxCloser, error) {
-		dmx, err := avf.NewContinuous(producerID)
-		if err != nil {
-			return nil, fmt.Errorf("avf continuous %q: %w", producerID, err)
+	var demuxerFactory av.DemuxerFactory
+
+	var demuxerRemover av.DemuxerRemover
+
+	if cfg.Edge.StreamAddr != "" {
+		// RTSP source via avgrabber.
+		avgrabber.Init()
+
+		defer avgrabber.Deinit()
+
+		proto := avgrabber.ProtoTCP
+		if cfg.Edge.RTSPProto == "udp" {
+			proto = avgrabber.ProtoUDP
 		}
 
-		log.Info().Str("dir", producerID).Msg("avf continuous demuxer opened")
+		rtspCfg := avgrabber.Config{
+			URL:      cfg.Edge.StreamAddr,
+			Username: cfg.Edge.RTSPUsername,
+			Password: cfg.Edge.RTSPPassword,
+			Protocol: int32(proto),
+			Audio:    true,
+		}
 
-		return dmx, nil
-	})
+		demuxerFactory = av.DemuxerFactory(
+			func(_ context.Context, _ string) (av.DemuxCloser, error) {
+				dmx, err := avgrabber.NewDemuxer(rtspCfg)
+				if err != nil {
+					return nil, fmt.Errorf("avgrabber open %q: %w", rtspCfg.URL, err)
+				}
 
-	demuxerRemover := av.DemuxerRemover(func(_ context.Context, _ string) error {
-		log.Info().Str("dir", producerID).Msg("avf continuous demuxer closed")
+				log.Info().Str("url", rtspCfg.URL).Msg("avgrabber demuxer opened")
 
-		return nil
-	})
+				return pva.NewMetadataMerger(dmx, pva.NilSource{}), nil
+			},
+		)
+
+		demuxerRemover = av.DemuxerRemover(func(_ context.Context, _ string) error {
+			log.Info().Str("url", rtspCfg.URL).Msg("avgrabber demuxer closed")
+
+			return nil
+		})
+	} else {
+		// AVF file source (legacy / playback path).
+		demuxerFactory = av.DemuxerFactory(
+			func(_ context.Context, _ string) (av.DemuxCloser, error) {
+				dmx, err := avf.NewContinuous(producerID)
+				if err != nil {
+					return nil, fmt.Errorf("avf continuous %q: %w", producerID, err)
+				}
+
+				log.Info().Str("dir", producerID).Msg("avf continuous demuxer opened")
+
+				return dmx, nil
+			},
+		)
+
+		demuxerRemover = av.DemuxerRemover(func(_ context.Context, _ string) error {
+			log.Info().Str("dir", producerID).Msg("avf continuous demuxer closed")
+
+			return nil
+		})
+	}
 
 	// ── stream manager ────────────────────────────────────────────────────────
 

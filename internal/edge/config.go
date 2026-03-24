@@ -21,6 +21,12 @@ type Edge struct {
 	DontListen    bool     `json:"dont_listen,omitempty"     mapstructure:"dont_listen"     yaml:"dont_listen,omitempty"`     //nolint:tagliatelle
 	StreamAddr    string   `json:"stream_addr,omitempty"     mapstructure:"stream_addr"     yaml:"stream_addr,omitempty"`     //nolint:tagliatelle
 	StoragePath   string   `json:"storage_path,omitempty"    mapstructure:"storage_path"    yaml:"storage_path,omitempty"`    //nolint:tagliatelle
+
+	// RTSP credentials used when StreamAddr is set (avgrabber demuxer).
+	RTSPUsername string `json:"rtsp_username,omitempty" mapstructure:"rtsp_username" yaml:"rtsp_username,omitempty"` //nolint:tagliatelle
+	RTSPPassword string `json:"rtsp_password,omitempty" mapstructure:"rtsp_password" yaml:"rtsp_password,omitempty"` //nolint:tagliatelle
+	// RTSPProto selects the RTP transport: "tcp" (default) or "udp".
+	RTSPProto string `json:"rtsp_proto,omitempty" mapstructure:"rtsp_proto" yaml:"rtsp_proto,omitempty"` //nolint:tagliatelle
 }
 
 type API struct {
