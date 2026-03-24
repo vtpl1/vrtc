@@ -17,6 +17,7 @@ import (
 	"encoding/json"
 	"errors"
 	"io"
+	"maps"
 	"strings"
 	"sync"
 	"time"
@@ -64,7 +65,11 @@ type MSEWriter struct {
 	mu      sync.Mutex
 	buf     bytes.Buffer
 	mux     *fmp4.Muxer
-	streams []av.Stream // current codec state
+	streams []av.Stream // current codec state (after PCM→FLAC substitution)
+
+	// pcmEncoders maps stream Idx → FLAC frame encoder for G.711 µ/A-law streams.
+	// Populated in WriteHeader and updated in WriteCodecChange.
+	pcmEncoders map[uint16]func([]byte) []byte
 
 	// codecsReady is closed exactly once when WriteHeader succeeds.
 	// Clients block on it until codec info is available.
@@ -106,20 +111,70 @@ func NewFromFactories(
 	return m, nil
 }
 
+// ── PCM→FLAC transcoding ──────────────────────────────────────────────────────
+
+// transcodePCM replaces PCM_MULAW and PCM_ALAW streams with equivalent FLAC
+// streams and returns per-stream encoder functions for packet-level conversion.
+// Streams that are not G.711 are passed through unchanged.
+func transcodePCM(streams []av.Stream) ([]av.Stream, map[uint16]func([]byte) []byte) {
+	out := make([]av.Stream, len(streams))
+	encoders := make(map[uint16]func([]byte) []byte, len(streams))
+
+	for i, s := range streams {
+		switch c := s.Codec.(type) {
+		case pcm.PCMMulawCodecData:
+			if enc := pcm.FLACEncoder(av.PCM_MULAW, uint32(c.SampleRate())); enc != nil {
+				encoders[s.Idx] = enc
+				out[i] = av.Stream{
+					Idx: s.Idx,
+					Codec: pcm.NewFLACCodecData(
+						av.PCM_MULAW,
+						uint32(c.SampleRate()),
+						c.ChannelLayout(),
+					),
+				}
+
+				continue
+			}
+		case pcm.PCMAlawCodecData:
+			if enc := pcm.FLACEncoder(av.PCM_ALAW, uint32(c.SampleRate())); enc != nil {
+				encoders[s.Idx] = enc
+				out[i] = av.Stream{
+					Idx: s.Idx,
+					Codec: pcm.NewFLACCodecData(
+						av.PCM_ALAW,
+						uint32(c.SampleRate()),
+						c.ChannelLayout(),
+					),
+				}
+
+				continue
+			}
+		}
+
+		out[i] = s
+	}
+
+	return out, encoders
+}
+
 // ── av.MuxCloser ───────────────────────────────────────────────────────────────
 
 // WriteHeader declares all streams, writes the fMP4 init segment, and unblocks
 // any WebSocket clients that are waiting for codec information.
 func (m *MSEWriter) WriteHeader(ctx context.Context, streams []av.Stream) error {
+	transcoded, encoders := transcodePCM(streams)
+
 	m.mu.Lock()
-	m.streams = cloneStreams(streams)
+	m.streams = cloneStreams(transcoded)
+	m.pcmEncoders = encoders
 	m.buf.Reset()
-	err := m.mux.WriteHeader(ctx, streams)
+	err := m.mux.WriteHeader(ctx, transcoded)
 	data := cloneBytes(m.buf.Bytes())
 	m.mu.Unlock()
 
 	m.codecsMu.Lock()
-	codecStr := buildCodecString(streams)
+	codecStr := buildCodecString(transcoded)
 	m.codecStr = codecStr
 	m.initSeg = data
 	m.codecsMu.Unlock()
@@ -155,6 +210,10 @@ func (m *MSEWriter) WriteHeader(ctx context.Context, streams []av.Stream) error 
 // metadata that annotates the keyframe that just opened the next segment.
 func (m *MSEWriter) WritePacket(ctx context.Context, pkt av.Packet) error {
 	m.mu.Lock()
+	if enc, ok := m.pcmEncoders[pkt.Idx]; ok {
+		pkt.Data = enc(pkt.Data)
+	}
+
 	m.buf.Reset()
 	err := m.mux.WritePacket(ctx, pkt)
 	data := cloneBytes(m.buf.Bytes())
@@ -198,9 +257,13 @@ func (m *MSEWriter) WriteTrailer(ctx context.Context, upstreamErr error) error {
 // broadcasts the codec-change data to existing clients, and stores a fresh init
 // segment and updated codec string for clients that connect after the change.
 func (m *MSEWriter) WriteCodecChange(ctx context.Context, changed []av.Stream) error {
+	transcodedChanged, newEncoders := transcodePCM(changed)
+
 	m.mu.Lock()
 
-	for _, c := range changed {
+	maps.Copy(m.pcmEncoders, newEncoders)
+
+	for _, c := range transcodedChanged {
 		for i, existing := range m.streams {
 			if existing.Idx == c.Idx {
 				m.streams[i] = c
@@ -213,7 +276,7 @@ func (m *MSEWriter) WriteCodecChange(ctx context.Context, changed []av.Stream) e
 	updatedStreams := cloneStreams(m.streams)
 
 	m.buf.Reset()
-	err := m.mux.WriteCodecChange(ctx, changed)
+	err := m.mux.WriteCodecChange(ctx, transcodedChanged)
 	data := cloneBytes(m.buf.Bytes())
 	m.mu.Unlock()
 
