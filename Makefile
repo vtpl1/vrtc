@@ -13,8 +13,6 @@ HOST_ARCH := $(shell go env GOARCH)
 
 OUTPUT_DIR := bin
 APPS := \
-	avftomp4 \
-	cloud \
 	edge \
 	liverecservice
 
