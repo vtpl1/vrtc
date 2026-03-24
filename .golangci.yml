@@ -89,6 +89,13 @@ linters:
       - linters:
           - funcorder
         path: 'pkg/av'  # constructor placement follows original file organisation
+      - linters:
+          - gocritic
+        text: 'dupSubExpr'
+        path: 'internal/avgrabber'  # CGO call results are distinct values; gocritic false positive
+      - linters:
+          - nlreturn
+        path: 'internal/avgrabber'  # CGO assignment + return is a single logical unit
 
 formatters:
   enable:
