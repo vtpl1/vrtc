@@ -276,9 +276,9 @@ func TestMultipleStopCalls(t *testing.T) {
 	}
 }
 
-// TestAddConsumerAfterStop verifies that AddConsumer returns ErrStreamManagerClosing
+// TestConsumeAfterStop verifies that Consume returns ErrStreamManagerClosing
 // once Stop has been called, regardless of whether the producer previously existed.
-func TestAddConsumerAfterStop(t *testing.T) {
+func TestConsumeAfterStop(t *testing.T) {
 	t.Parallel()
 
 	ctx := context.Background()
@@ -294,9 +294,12 @@ func TestAddConsumerAfterStop(t *testing.T) {
 
 	factory, _ := makeMuxerFactory()
 
-	err := sm.AddConsumer(ctx, "producer-1", "consumer-1", factory, nil, nil)
+	_, err := sm.Consume(ctx, "producer-1", av.ConsumeOptions{
+		ConsumerID:   "consumer-1",
+		MuxerFactory: factory,
+	})
 	if !errors.Is(err, streammanager3.ErrStreamManagerClosing) {
-		t.Errorf("AddConsumer after Stop returned %v, want ErrStreamManagerClosing", err)
+		t.Errorf("Consume after Stop returned %v, want ErrStreamManagerClosing", err)
 	}
 }
 
@@ -341,10 +344,11 @@ func TestRemoveNonExistentConsumer(t *testing.T) {
 	}
 }
 
-// TestProducerAutoStopsWhenIdle verifies that a producer with no remaining
-// consumers is automatically removed within the cleanup ticker period (~1 s
-// for the producer ticker + ~1 s for the StreamManager ticker = ≤ 2 s).
-func TestProducerAutoStopsWhenIdle(t *testing.T) {
+// TestConsumerHandleCloseAutoStopsProducer verifies that a producer with no
+// remaining consumers is automatically removed after its handle is closed
+// within the cleanup ticker period (~1 s for the producer ticker + ~1 s for
+// the StreamManager ticker = <= 2 s).
+func TestConsumerHandleCloseAutoStopsProducer(t *testing.T) {
 	t.Parallel()
 
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
@@ -353,7 +357,11 @@ func TestProducerAutoStopsWhenIdle(t *testing.T) {
 	sm := startedSM(t, ctx)
 	factory, _ := makeMuxerFactory()
 
-	if err := sm.AddConsumer(ctx, "producer-1", "consumer-1", factory, nil, nil); err != nil {
+	handle, err := sm.Consume(ctx, "producer-1", av.ConsumeOptions{
+		ConsumerID:   "consumer-1",
+		MuxerFactory: factory,
+	})
+	if err != nil {
 		t.Fatal(err)
 	}
 
@@ -361,7 +369,15 @@ func TestProducerAutoStopsWhenIdle(t *testing.T) {
 		t.Fatalf("expected 1 active producer after add, got %d", n)
 	}
 
-	if err := sm.RemoveConsumer(ctx, "producer-1", "consumer-1"); err != nil {
+	if handle.ID() != "consumer-1" {
+		t.Fatalf("handle ID = %q, want consumer-1", handle.ID())
+	}
+
+	if err := handle.Close(ctx); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := handle.Close(ctx); err != nil {
 		t.Fatal(err)
 	}
 

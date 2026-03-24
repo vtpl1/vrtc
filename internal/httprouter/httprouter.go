@@ -100,6 +100,9 @@ func WSHandler(
 	var (
 		msMu sync.Mutex
 		ms   *mse.MSEWriter
+
+		consumerMu sync.Mutex
+		consumer   av.ConsumerHandle
 	)
 
 	wg := sync.WaitGroup{}
@@ -138,7 +141,7 @@ func WSHandler(
 							textWriterFactory,
 						)
 						if merr != nil {
-							WriteErrorResponse(ctx, wsConn, merr, "AddConsumer failed")
+							WriteErrorResponse(ctx, wsConn, merr, "Consume failed")
 
 							return merr
 						}
@@ -147,22 +150,27 @@ func WSHandler(
 						ms = localMs
 						msMu.Unlock()
 
-						if err := streamManager.AddConsumer(
-							ctx,
-							producerID,
-							consumerID,
-							func(_ context.Context, _ string) (av.MuxCloser, error) { return localMs, nil },
-							func(_ context.Context, _ string) error {
+						handle, err := streamManager.Consume(ctx, producerID, av.ConsumeOptions{
+							ConsumerID: consumerID,
+							MuxerFactory: func(_ context.Context, _ string) (av.MuxCloser, error) {
+								return localMs, nil
+							},
+							MuxerRemover: func(_ context.Context, _ string) error {
 								localMs.Close() //nolint:contextcheck
 
 								return nil
 							},
-							errWriteChan,
-						); err != nil {
-							WriteErrorResponse(ctx, wsConn, err, "AddConsumer failed")
+							ErrChan: errWriteChan,
+						})
+						if err != nil {
+							WriteErrorResponse(ctx, wsConn, err, "Consume failed")
 
 							return err
 						}
+
+						consumerMu.Lock()
+						consumer = handle
+						consumerMu.Unlock()
 
 						return nil
 					}); err != nil {
@@ -210,8 +218,14 @@ func WSHandler(
 		msCopy.Close() //nolint:contextcheck
 	}
 
-	if err := streamManager.RemoveConsumer(ctx, producerID, consumerID); err != nil {
-		log.Error().Err(err).Msg("RemoveConsumer")
+	consumerMu.Lock()
+	consumerCopy := consumer
+	consumerMu.Unlock()
+
+	if consumerCopy != nil {
+		if err := consumerCopy.Close(ctx); err != nil {
+			log.Error().Err(err).Msg("ConsumerHandle.Close")
+		}
 	}
 
 	wg.Wait()

@@ -13,6 +13,7 @@ make fmt          # Format with gofumpt
 make lint         # Run golangci-lint with auto-fixes
 make build        # Build all binaries (windows/amd64, linux/amd64, linux/arm64)
 make test         # Run tests with race detector: go test -race -count=1 ./...
+make test-edge-cgo # Run ./internal/edge with CGO enabled and AVGrabber/MSYS2 paths set
 make gen          # Regenerate protobuf: buf format -w && buf generate
 make update       # Update and tidy Go modules
 make clean        # Remove build artifacts from bin/

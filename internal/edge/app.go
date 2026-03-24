@@ -120,6 +120,7 @@ func (f *streamFilterMuxer) Handler(prefix string) http.Handler {
 
 // consumerEntry tracks one LL-HLS consumer that was auto-created on first request.
 type consumerEntry struct {
+	handle      av.ConsumerHandle
 	muxer       *streamFilterMuxer
 	mu          sync.Mutex
 	lastRequest time.Time
@@ -248,20 +249,28 @@ func Run(appName, appMode string, cfg Config) error {
 			case <-ticker.C:
 				consumersMu.RLock()
 
-				var idle []string
+				type idleConsumer struct {
+					id     string
+					handle av.ConsumerHandle
+				}
+
+				var idle []idleConsumer
 
 				for id, e := range consumers {
 					if e.idleSince() > consumerIdleTimeout {
-						idle = append(idle, id)
+						idle = append(idle, idleConsumer{id: id, handle: e.handle})
 					}
 				}
 
 				consumersMu.RUnlock()
 
-				for _, id := range idle {
-					log.Info().Str("consumer", id).Msg("removing idle consumer")
-					_ = sm.RemoveConsumer(ctx, producerID, id)
-					// muxerRemover deletes from the map; double-delete is harmless.
+				for _, entry := range idle {
+					if entry.handle == nil {
+						continue
+					}
+
+					log.Info().Str("consumer", entry.id).Msg("removing idle consumer")
+					_ = entry.handle.Close(ctx)
 				}
 			}
 		}
@@ -304,14 +313,23 @@ func Run(appName, appMode string, cfg Config) error {
 
 		errCh := make(chan error, 1)
 
-		if err := sm.AddConsumer(r.Context(), producerID, consumerID,
-			muxerFactory, muxerRemover, errCh); err != nil {
+		handle, err := sm.Consume(r.Context(), producerID, av.ConsumeOptions{
+			ConsumerID:   consumerID,
+			MuxerFactory: muxerFactory,
+			MuxerRemover: muxerRemover,
+			ErrChan:      errCh,
+		})
+		if err != nil {
 			consumersMu.Lock()
 			delete(consumers, consumerID)
 			consumersMu.Unlock()
 
-			return nil, fmt.Errorf("add consumer %q: %w", consumerID, err)
+			return nil, fmt.Errorf("consume %q: %w", consumerID, err)
 		}
+
+		consumersMu.Lock()
+		e.handle = handle
+		consumersMu.Unlock()
 
 		log.Info().Str("consumer", consumerID).Str("dir", producerID).Msg("consumer added")
 

@@ -26,6 +26,13 @@ type StreamManager struct {
 	producersToStart chan *Producer
 }
 
+type consumerHandle struct {
+	manager    *StreamManager
+	producerID string
+	consumerID string
+	closed     atomic.Bool
+}
+
 func New(
 	demuxerFactory av.DemuxerFactory,
 	demuxerRemover av.DemuxerRemover,
@@ -40,20 +47,34 @@ func New(
 	return m
 }
 
-func (m *StreamManager) AddConsumer(
+func (h *consumerHandle) ID() string {
+	return h.consumerID
+}
+
+func (h *consumerHandle) Close(ctx context.Context) error {
+	if !h.closed.CompareAndSwap(false, true) {
+		return nil
+	}
+
+	err := h.manager.removeConsumer(ctx, h.producerID, h.consumerID)
+	if errors.Is(err, ErrProducerNotFound) {
+		return nil
+	}
+
+	return err
+}
+
+func (m *StreamManager) Consume(
 	ctx context.Context,
 	producerID string,
-	consumerID string,
-	muxerFactory av.MuxerFactory,
-	muxerRemover av.MuxerRemover,
-	errChan chan<- error,
-) error {
+	opts av.ConsumeOptions,
+) (av.ConsumerHandle, error) {
 	if m.alreadyClosing.Load() {
-		return ErrStreamManagerClosing
+		return nil, ErrStreamManagerClosing
 	}
 
 	if !m.started.Load() {
-		return ErrStreamManagerNotStartedYet
+		return nil, ErrStreamManagerNotStartedYet
 	}
 
 	for {
@@ -69,38 +90,68 @@ func (m *StreamManager) AddConsumer(
 		if !existed {
 			select {
 			case <-ctx.Done():
-				return ctx.Err()
+				return nil, ctx.Err()
 			case m.producersToStart <- p:
 			}
 		}
 
 		if err := p.LastError(); err != nil {
-			return fmt.Errorf(
+			return nil, fmt.Errorf(
 				"producerID: %s:\n%w",
 				producerID,
 				errors.Join(ErrProducerLastError, err),
 			)
 		}
 
-		if err := p.AddConsumer(ctx, consumerID, muxerFactory, muxerRemover, errChan); err != nil {
+		if err := p.AddConsumer(
+			ctx,
+			opts.ConsumerID,
+			opts.MuxerFactory,
+			opts.MuxerRemover,
+			opts.ErrChan,
+		); err != nil {
 			if errors.Is(err, ErrProducerClosing) || errors.Is(err, ErrProducerNotStartedYet) {
 				select {
 				case <-ctx.Done():
-					return ctx.Err()
+					return nil, ctx.Err()
 				case <-time.After(10 * time.Millisecond):
 				}
 
 				continue
 			}
 
-			return fmt.Errorf("%s: %w", producerID, err)
+			return nil, fmt.Errorf("%s: %w", producerID, err)
 		}
 
-		return nil
+		return &consumerHandle{
+			manager:    m,
+			producerID: producerID,
+			consumerID: opts.ConsumerID,
+		}, nil
 	}
 }
 
-func (m *StreamManager) RemoveConsumer(
+// AddConsumer is kept as a compatibility shim for direct callers of the
+// concrete streammanager3 type. Prefer Consume.
+func (m *StreamManager) AddConsumer(
+	ctx context.Context,
+	producerID string,
+	consumerID string,
+	muxerFactory av.MuxerFactory,
+	muxerRemover av.MuxerRemover,
+	errChan chan<- error,
+) error {
+	_, err := m.Consume(ctx, producerID, av.ConsumeOptions{
+		ConsumerID:   consumerID,
+		MuxerFactory: muxerFactory,
+		MuxerRemover: muxerRemover,
+		ErrChan:      errChan,
+	})
+
+	return err
+}
+
+func (m *StreamManager) removeConsumer(
 	ctx context.Context,
 	producerID string,
 	consumerID string,
@@ -114,6 +165,16 @@ func (m *StreamManager) RemoveConsumer(
 	}
 
 	return p.RemoveConsumer(ctx, consumerID)
+}
+
+// RemoveConsumer is kept as a compatibility shim for direct callers of the
+// concrete streammanager3 type. Prefer ConsumerHandle.Close.
+func (m *StreamManager) RemoveConsumer(
+	ctx context.Context,
+	producerID string,
+	consumerID string,
+) error {
+	return m.removeConsumer(ctx, producerID, consumerID)
 }
 
 func (m *StreamManager) GetActiveProducersCount(_ context.Context) int {

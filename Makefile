@@ -22,7 +22,7 @@ PLATFORMS := \
     linux/amd64 \
 	linux/arm64
 
-.PHONY: all prerequisite fmt lint update gen build test docker-build clean
+.PHONY: all prerequisite fmt lint update gen build test test-edge-cgo docker-build clean
 
 all: fmt lint build
 
@@ -73,6 +73,14 @@ endef
 
 test:
 	go test -race -count=1 ./...
+
+test-edge-cgo:
+ifeq ($(HOST_OS),windows)
+	powershell -ExecutionPolicy Bypass -File ./scripts/test-go-cgo.ps1 -Package ./internal/edge
+else
+	@echo "test-edge-cgo is only supported on Windows hosts"
+	@exit 1
+endif
 
 docker-build:
 	docker build --build-arg NODE_TYPE=edge   -t $(BINARY):edge-$(VERSION) .
