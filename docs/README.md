@@ -12,6 +12,7 @@ spec first, then implement.
 | [`avf-frame-spec.md`](avf-frame-spec.md) | `avf.Frame` in-memory struct: field definitions, FrameType semantics, Data format per type, invariants |
 | [`av-packet-spec.md`](av-packet-spec.md) | `av.Packet` in-memory struct: all field contracts, Data format (raw NALU), Duration derivation, NewCodecs semantics |
 | [`frame-packet-conversion-spec.md`](frame-packet-conversion-spec.md) | `FrameToPacket` and `PacketToFrames` function signatures, field mappings, CONNECT_HEADER accumulation state machine, migration checklist |
+| [`mse-websocket-api.md`](mse-websocket-api.md) | WebSocket-based MSE streaming API: endpoint, command protocol, frame types, browser consumption guide |
 
 ## Key invariants (quick reference)
 

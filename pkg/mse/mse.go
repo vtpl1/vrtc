@@ -7,7 +7,8 @@
 //  2. Server sends:  {"type":"mse","value":"video/mp4; codecs=\"hvc1.1.6.L153.B0,flac\""} (text)
 //  3. Server sends:  fMP4 init segment (binary)
 //  4. Server sends:  fMP4 media fragments (binary) as they are produced
-//     For each packet with non-nil Extra, server also sends {"type":"mse","value":<extra>} (text)
+//  5. If a packet carries Metadata, the metadata object is JSON-marshalled and
+//     sent as an additional text frame.
 package mse
 
 import (
