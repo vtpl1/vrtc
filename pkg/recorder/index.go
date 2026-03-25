@@ -22,17 +22,31 @@ const (
 	// StatusDeleted is written by the retention enforcer after the segment file
 	// has been removed from disk. Deleted entries are excluded from all queries.
 	StatusDeleted = "deleted"
+
+	// StatusCorrupted is written when a segment is detected as corrupt (e.g.
+	// failed integrity check). Corrupted entries are excluded from playback
+	// queries the same way deleted entries are.
+	StatusCorrupted = "corrupted"
 )
 
 // RecordingEntry describes one recording segment stored on disk.
 type RecordingEntry struct {
-	ID        string    `json:"id"`
-	ChannelID string    `json:"channel_id"` //nolint:tagliatelle
-	StartTime time.Time `json:"start_time"` //nolint:tagliatelle
-	EndTime   time.Time `json:"end_time"`   //nolint:tagliatelle
-	FilePath  string    `json:"file_path"`  //nolint:tagliatelle
-	SizeBytes int64     `json:"size_bytes"` //nolint:tagliatelle
-	Status    string    `json:"status"`
+	ID         string    `json:"id"`
+	ChannelID  string    `json:"channel_id"` //nolint:tagliatelle
+	StartTime  time.Time `json:"start_time"` //nolint:tagliatelle
+	EndTime    time.Time `json:"end_time"`   //nolint:tagliatelle
+	FilePath   string    `json:"file_path"`  //nolint:tagliatelle
+	SizeBytes  int64     `json:"size_bytes"` //nolint:tagliatelle
+	Status     string    `json:"status"`
+	HasMotion  bool      `json:"has_motion"`  //nolint:tagliatelle
+	HasObjects bool      `json:"has_objects"` //nolint:tagliatelle
+}
+
+// SeekEntry represents a keyframe position within a recording segment,
+// mapping a DTS timestamp (in milliseconds) to a byte offset in the file.
+type SeekEntry struct {
+	DTSMS      int64
+	ByteOffset int64
 }
 
 // RecordingIndex persists segment metadata for later playback lookup.

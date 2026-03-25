@@ -2,43 +2,71 @@ package recorder
 
 import (
 	"context"
-	"fmt"
-	"os"
+	"io"
 	"time"
 
+	"github.com/rs/zerolog/log"
 	"github.com/vtpl1/vrtc/pkg/av"
 	"github.com/vtpl1/vrtc/pkg/av/format/fmp4"
 )
 
-// fmp4FileMuxer wraps an fmp4.Muxer writing to an os.File.
-// It satisfies av.MuxCloser and invokes an onClose callback after the file
-// is finalised so that RecordingManager can insert the completed entry into
-// the RecordingIndex without the muxer needing to know about the index.
-type fmp4FileMuxer struct {
-	inner     *fmp4.Muxer
-	path      string
-	startTime time.Time
-	onClose   func(path string, start, end time.Time, sizeBytes int64)
+// segmentCloseInfo is passed from fmp4FileMuxer.Close to the onClose callback.
+type segmentCloseInfo struct {
+	Path       string
+	Start      time.Time
+	End        time.Time
+	SizeBytes  int64
+	HasMotion  bool
+	HasObjects bool
 }
 
-// newFMP4FileMuxer creates the output file at path, constructs an fmp4.Muxer
-// writing to it, and returns the wrapper.  onClose is called from Close()
-// after the file has been fully written and closed.
+// fmp4FileMuxer wraps an fmp4.Muxer writing to an AdaptiveWriter.
+// It satisfies av.MuxCloser and tracks per-segment analytics flags
+// and seek entries for the recording index.
+type fmp4FileMuxer struct {
+	inner   *fmp4.Muxer
+	writer  *AdaptiveWriter
+	ring    *RingBuffer // optional; nil if ring buffer disabled
+	tee     io.Writer   // the writer passed to fmp4.Muxer (tee or adaptive)
+	path    string
+	start   time.Time
+	onClose func(segmentCloseInfo)
+
+	// analytics flags — set during WritePacket
+	hasMotion  bool
+	hasObjects bool
+}
+
+// newFMP4FileMuxer creates the output file at path with storage-optimised
+// buffering and returns the muxer wrapper. If ring is non-nil, fragment bytes
+// are tee'd to both disk and the ring buffer.
 func newFMP4FileMuxer(
 	path string,
 	startTime time.Time,
-	onClose func(string, time.Time, time.Time, int64),
+	profile StorageProfile,
+	preallocBytes int64,
+	ring *RingBuffer,
+	onClose func(segmentCloseInfo),
 ) (av.MuxCloser, error) {
-	f, err := os.Create(path)
+	w, err := NewAdaptiveWriter(path, profile, preallocBytes)
 	if err != nil {
-		return nil, fmt.Errorf("recorder: create segment file %q: %w", path, err)
+		return nil, err
+	}
+
+	var target io.Writer = w
+
+	if ring != nil {
+		target = &teeWriter{disk: w, ring: ring}
 	}
 
 	return &fmp4FileMuxer{
-		inner:     fmp4.NewMuxer(f),
-		path:      path,
-		startTime: startTime,
-		onClose:   onClose,
+		inner:   fmp4.NewMuxer(target),
+		writer:  w,
+		ring:    ring,
+		tee:     target,
+		path:    path,
+		start:   startTime,
+		onClose: onClose,
 	}, nil
 }
 
@@ -47,6 +75,14 @@ func (m *fmp4FileMuxer) WriteHeader(ctx context.Context, streams []av.Stream) er
 }
 
 func (m *fmp4FileMuxer) WritePacket(ctx context.Context, pkt av.Packet) error {
+	if pkt.Analytics != nil {
+		m.hasMotion = true
+
+		if len(pkt.Analytics.Objects) > 0 {
+			m.hasObjects = true
+		}
+	}
+
 	return m.inner.WritePacket(ctx, pkt)
 }
 
@@ -54,24 +90,58 @@ func (m *fmp4FileMuxer) WriteTrailer(ctx context.Context, upstreamErr error) err
 	return m.inner.WriteTrailer(ctx, upstreamErr)
 }
 
-// Close flushes any remaining fragment data and closes the underlying file.
-// It then reads the final file size and calls the onClose callback.
-// The first error encountered is returned; the callback is always invoked.
+// Close flushes remaining data, validates the segment, and calls onClose.
 func (m *fmp4FileMuxer) Close() error {
 	endTime := time.Now().UTC()
 
-	// inner.Close() calls WriteTrailer (if not yet called) then closes the file.
 	err := m.inner.Close()
 
-	var sizeBytes int64
+	sizeBytes := m.writer.BytesWritten()
 
-	if fi, statErr := os.Stat(m.path); statErr == nil {
-		sizeBytes = fi.Size()
+	// Validate segment integrity before marking complete.
+	if valErr := ValidateSegment(m.path); valErr != nil {
+		log.Warn().Err(valErr).Str("path", m.path).Msg("recorder: segment validation failed")
 	}
 
 	if m.onClose != nil {
-		m.onClose(m.path, m.startTime, endTime, sizeBytes)
+		m.onClose(segmentCloseInfo{
+			Path:       m.path,
+			Start:      m.start,
+			End:        endTime,
+			SizeBytes:  sizeBytes,
+			HasMotion:  m.hasMotion,
+			HasObjects: m.hasObjects,
+		})
 	}
 
 	return err
+}
+
+// BytesWritten returns the total bytes written to disk so far.
+func (m *fmp4FileMuxer) BytesWritten() int64 {
+	return m.writer.BytesWritten()
+}
+
+// teeWriter copies all writes to both the disk writer and the ring buffer.
+// The fMP4 muxer writes each fragment (emsg + moof + mdat) as a series of
+// Write calls. The tee captures each write and pushes it to the ring buffer.
+type teeWriter struct {
+	disk *AdaptiveWriter
+	ring *RingBuffer
+}
+
+func (t *teeWriter) Write(p []byte) (int, error) {
+	n, err := t.disk.Write(p)
+	if err != nil {
+		return n, err
+	}
+
+	// Push raw bytes as a fragment to the ring buffer.
+	// Each fMP4 flush writes moof+mdat as a logical unit.
+	t.ring.Push(Fragment{
+		Data:      append([]byte(nil), p[:n]...),
+		Timestamp: time.Now(),
+	})
+
+	return n, nil
 }

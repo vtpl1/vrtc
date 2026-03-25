@@ -12,17 +12,33 @@ import (
 // when to record it, where to store segments, and how long each segment is.
 type Schedule struct {
 	ID             string         `json:"id"`
-	ChannelID      string         `json:"channel_id"`      //nolint:tagliatelle
-	StoragePath    string         `json:"storage_path"`    //nolint:tagliatelle
-	SegmentMinutes int            `json:"segment_minutes"` //nolint:tagliatelle // 0 = no rotation
-	StartAt        time.Time      `json:"start_at"`        //nolint:tagliatelle // zero = always active
-	EndAt          time.Time      `json:"end_at"`          //nolint:tagliatelle // zero = no end
-	DaysOfWeek     []time.Weekday `json:"days_of_week"`    //nolint:tagliatelle // empty = every day
+	ChannelID      string         `json:"channelId"`
+	StoragePath    string         `json:"storagePath"`
+	SegmentMinutes int            `json:"segmentMinutes"`
+	SegmentSizeMB  int            `json:"segmentSizeMb"`
+	StartAt        time.Time      `json:"startAt"`
+	EndAt          time.Time      `json:"endAt"`
+	DaysOfWeek     []time.Weekday `json:"daysOfWeek"`
 
-	// Retention limits — at least one should be non-zero to bound storage use.
-	// Both limits are enforced independently on every recorder poll tick.
-	MaxAgeDays   int     `json:"max_age_days"`   //nolint:tagliatelle // delete segments older than N days; 0 = no limit
-	MaxStorageGB float64 `json:"max_storage_gb"` //nolint:tagliatelle // delete oldest segments when total exceeds N GB; 0 = no limit
+	// Storage I/O tuning.
+	StorageProfile string `json:"storageProfile"`
+
+	// Multi-tier retention — segments are retained for the longest applicable tier.
+	// Set all to 0 to disable time-based retention (only MaxStorageGB applies).
+	ContinuousDays int `json:"continuousDays"`
+	MotionDays     int `json:"motionDays"`
+	ObjectDays     int `json:"objectDays"`
+
+	// Storage limits.
+	MaxAgeDays   int     `json:"maxAgeDays"`
+	MaxStorageGB float64 `json:"maxStorageGb"`
+
+	// Disk-full protection.
+	MinFreeGB float64 `json:"minFreeGb"`
+	LowFreeGB float64 `json:"lowFreeGb"`
+
+	// Near-live playback RAM cache.
+	RingBufferSeconds int `json:"ringBufferSeconds"`
 }
 
 // ScheduleProvider is the single interface all schedule sources must satisfy.

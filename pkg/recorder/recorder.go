@@ -17,21 +17,25 @@ import (
 type activeRec struct {
 	sched     schedule.Schedule
 	handle    av.ConsumerHandle
+	muxer     *fmp4FileMuxer // for BytesWritten() check
 	startTime time.Time
 }
 
 // RecordingManager polls a ScheduleProvider and maintains fMP4 recording
-// segments on disk. It attaches / detaches consumers on the StreamManager
+// segments on disk. It attaches / detaches consumers on the RelayHub
 // as schedules become active or inactive and rotates segments when the
-// configured SegmentMinutes threshold is reached.
+// configured SegmentMinutes or SegmentSizeMB threshold is reached.
 type RecordingManager struct {
 	sm           av.RelayHub
 	schedules    schedule.ScheduleProvider
 	index        RecordingIndex
 	pollInterval time.Duration
 
-	mu     sync.Mutex
-	active map[string]*activeRec // key = scheduleID
+	mu          sync.Mutex
+	active      map[string]*activeRec  // key = scheduleID
+	ringBuffers map[string]*RingBuffer // key = channelID
+
+	lastRetention time.Time
 
 	stopOnce sync.Once
 	cancel   context.CancelFunc
@@ -39,11 +43,6 @@ type RecordingManager struct {
 }
 
 // New creates a RecordingManager. Call Start to begin the poll loop.
-//
-//   - sm            — live StreamManager (must already be started)
-//   - schedProvider — source of recording schedules
-//   - index         — persistent store for completed segment metadata
-//   - pollInterval  — how often to re-check schedules (e.g. 30 * time.Second)
 func New(
 	sm av.RelayHub,
 	schedProvider schedule.ScheduleProvider,
@@ -60,20 +59,19 @@ func New(
 		index:        index,
 		pollInterval: pollInterval,
 		active:       make(map[string]*activeRec),
+		ringBuffers:  make(map[string]*RingBuffer),
 		done:         make(chan struct{}),
 	}
 }
 
 // Start seals any recordings interrupted by a previous run, then launches the
-// background poll goroutine. ctx is used only to derive the internal context;
-// the returned error is always nil.
+// background poll goroutine.
 func (rm *RecordingManager) Start(ctx context.Context) error {
 	if err := rm.index.SealInterrupted(ctx); err != nil {
 		log.Error().Err(err).Msg("recorder: seal interrupted recordings")
-		// non-fatal — continue starting
 	}
 
-	ctx, cancel := context.WithCancel(ctx) //nolint:gosec // stored in rm.cancel; called by Stop
+	ctx, cancel := context.WithCancel(ctx) //nolint:gosec
 	rm.cancel = cancel
 
 	go rm.loop(ctx)
@@ -101,11 +99,84 @@ func (rm *RecordingManager) ActiveCount() int {
 	return n
 }
 
-// loop is the background goroutine.
+// RingBuffer returns the ring buffer for a channel, or nil if not enabled.
+func (rm *RecordingManager) RingBuffer(channelID string) *RingBuffer {
+	rm.mu.Lock()
+	defer rm.mu.Unlock()
+
+	return rm.ringBuffers[channelID]
+}
+
+// Metrics returns a point-in-time snapshot of the recording system's health.
+func (rm *RecordingManager) Metrics(ctx context.Context) Metrics {
+	rm.mu.Lock()
+	activeCount := len(rm.active)
+	activeChannels := make(map[string]bool, activeCount)
+
+	for _, ar := range rm.active {
+		activeChannels[ar.sched.ChannelID] = true
+	}
+
+	ringBufSizes := make(map[string]int64, len(rm.ringBuffers))
+
+	for ch, rb := range rm.ringBuffers {
+		ringBufSizes[ch] = rb.SizeBytes()
+	}
+
+	lastRet := rm.lastRetention
+	rm.mu.Unlock()
+
+	// Query index for all channels' stats.
+	allEntries, _ := rm.index.QueryByChannel(ctx, "", time.Time{}, time.Time{})
+
+	perChannel := make(map[string]ChannelStats)
+
+	var totalSize int64
+
+	for _, e := range allEntries {
+		cs := perChannel[e.ChannelID]
+		cs.Segments++
+		cs.TotalBytes += e.SizeBytes
+		totalSize += e.SizeBytes
+
+		if cs.OldestSegment.IsZero() || e.StartTime.Before(cs.OldestSegment) {
+			cs.OldestSegment = e.StartTime
+		}
+
+		if e.StartTime.After(cs.NewestSegment) {
+			cs.NewestSegment = e.StartTime
+		}
+
+		cs.Recording = activeChannels[e.ChannelID]
+		cs.RingBufBytes = ringBufSizes[e.ChannelID]
+		perChannel[e.ChannelID] = cs
+	}
+
+	var diskFree, diskTotal int64
+
+	// Use the first active schedule's storage path for disk check.
+	rm.mu.Lock()
+	for _, ar := range rm.active {
+		diskFree, diskTotal, _ = CheckDiskSpace(ar.sched.StoragePath)
+
+		break
+	}
+	rm.mu.Unlock()
+
+	return Metrics{
+		ActiveSegments: activeCount,
+		TotalSegments:  len(allEntries),
+		TotalSizeBytes: totalSize,
+		DiskFreeBytes:  diskFree,
+		DiskTotalBytes: diskTotal,
+		PerChannel:     perChannel,
+		LastRetention:  lastRet,
+	}
+}
+
 func (rm *RecordingManager) loop(ctx context.Context) {
 	defer close(rm.done)
 
-	// Run once immediately, then on each tick.
 	rm.tick(ctx)
 
 	ticker := time.NewTicker(rm.pollInterval)
@@ -123,7 +194,6 @@ func (rm *RecordingManager) loop(ctx context.Context) {
 	}
 }
 
-// tick is one poll cycle.
 func (rm *RecordingManager) tick(ctx context.Context) {
 	schedules, err := rm.schedules.ListSchedules(ctx)
 	if err != nil {
@@ -133,8 +203,6 @@ func (rm *RecordingManager) tick(ctx context.Context) {
 	}
 
 	now := time.Now().UTC()
-
-	// Build set of currently-active schedule IDs so we can detect removals.
 	activeIDs := make(map[string]struct{}, len(schedules))
 
 	for _, s := range schedules {
@@ -144,20 +212,47 @@ func (rm *RecordingManager) tick(ctx context.Context) {
 
 		activeIDs[s.ID] = struct{}{}
 
+		// Disk-full check before starting or continuing.
+		if s.MinFreeGB > 0 || s.LowFreeGB > 0 {
+			rm.checkDiskSpace(ctx, s, now)
+		}
+
 		rm.mu.Lock()
 		ar, exists := rm.active[s.ID]
 		rm.mu.Unlock()
 
 		if !exists {
+			// Check emergency disk-full: skip starting if below MinFreeGB.
+			if s.MinFreeGB > 0 {
+				avail, _, diskErr := CheckDiskSpace(s.StoragePath)
+				if diskErr == nil && avail < int64(s.MinFreeGB*1024*1024*1024) {
+					log.Warn().
+						Str("schedule", s.ID).
+						Float64("minFreeGb", s.MinFreeGB).
+						Int64("availBytes", avail).
+						Msg("recorder: disk below MinFreeGB, skipping new segment")
+
+					continue
+				}
+			}
+
 			rm.startSegment(ctx, s, now)
 
 			continue
 		}
 
-		// Rotate if a segment duration is configured and elapsed.
+		// Time-based rotation.
 		if s.SegmentMinutes > 0 {
-			elapsed := now.Sub(ar.startTime)
-			if elapsed >= time.Duration(s.SegmentMinutes)*time.Minute {
+			if now.Sub(ar.startTime) >= time.Duration(s.SegmentMinutes)*time.Minute {
+				rm.rotateSegment(ctx, ar, s, now)
+
+				continue
+			}
+		}
+
+		// Size-based rotation.
+		if s.SegmentSizeMB > 0 && ar.muxer != nil {
+			if ar.muxer.BytesWritten() >= int64(s.SegmentSizeMB)*1024*1024 {
 				rm.rotateSegment(ctx, ar, s, now)
 			}
 		}
@@ -181,17 +276,19 @@ func (rm *RecordingManager) tick(ctx context.Context) {
 		rm.closeHandle(ctx, ar)
 	}
 
-	// Enforce retention for every schedule that defines a limit.
+	// Enforce retention.
 	for _, s := range schedules {
-		if s.MaxAgeDays > 0 || s.MaxStorageGB > 0 {
+		if rm.hasRetentionPolicy(s) {
 			rm.enforceRetention(ctx, s, now)
 		}
 	}
 }
 
-// startSegment opens a new fMP4 file, attaches it to the StreamManager, and
-// registers the activeRec. Errors are logged; the schedule is retried on the
-// next tick.
+func (rm *RecordingManager) hasRetentionPolicy(s schedule.Schedule) bool {
+	return s.MaxAgeDays > 0 || s.MaxStorageGB > 0 || s.ContinuousDays > 0 ||
+		s.MotionDays > 0 || s.ObjectDays > 0 || s.MinFreeGB > 0
+}
+
 func (rm *RecordingManager) startSegment(ctx context.Context, s schedule.Schedule, now time.Time) {
 	path := SegmentPath(s.StoragePath, s.ChannelID, now)
 
@@ -203,27 +300,61 @@ func (rm *RecordingManager) startSegment(ctx context.Context, s schedule.Schedul
 
 	consumerID := fmt.Sprintf("recorder-%s-%s", s.ID, now.Format("20060102T150405Z"))
 
+	// Resolve storage profile.
+	profile := StorageProfile(s.StorageProfile)
+	if profile == "" {
+		profile = ProfileAuto
+	}
+
+	// Compute prealloc size.
+	var preallocBytes int64
+	if s.SegmentSizeMB > 0 {
+		preallocBytes = int64(s.SegmentSizeMB) * 1024 * 1024
+	} else if s.SegmentMinutes > 0 {
+		preallocBytes = int64(s.SegmentMinutes) * 60 * 1_200_000 // ~1.2 MB/s estimate
+	}
+
+	// Get or create ring buffer for this channel.
+	ring := rm.getOrCreateRingBuffer(s)
+
+	var muxerRef *fmp4FileMuxer
+
 	muxerFactory := av.MuxerFactory(func(_ context.Context, _ string) (av.MuxCloser, error) {
-		onClose := func(filePath string, start, end time.Time, sizeBytes int64) { //nolint:contextcheck
+		onClose := func(info segmentCloseInfo) { //nolint:contextcheck // onClose runs after stream ctx cancelled
 			entry := RecordingEntry{
-				ID:        consumerID,
-				ChannelID: s.ChannelID,
-				StartTime: start,
-				EndTime:   end,
-				FilePath:  filePath,
-				SizeBytes: sizeBytes,
-				Status:    StatusComplete,
+				ID:         consumerID,
+				ChannelID:  s.ChannelID,
+				StartTime:  info.Start,
+				EndTime:    info.End,
+				FilePath:   info.Path,
+				SizeBytes:  info.SizeBytes,
+				Status:     StatusComplete,
+				HasMotion:  info.HasMotion,
+				HasObjects: info.HasObjects,
 			}
 
-			// onClose is called from the muxer's Close() which runs in a
-			// detached goroutine after the stream context is cancelled, so
-			// we use a fresh background context for the index write.
+			// Validate segment — downgrade to corrupted if invalid.
+			if valErr := ValidateSegment(info.Path); valErr != nil {
+				entry.Status = StatusCorrupted
+
+				log.Warn().Err(valErr).Str("path", info.Path).Msg("recorder: segment corrupted")
+			}
+
 			if iErr := rm.index.Insert(context.Background(), entry); iErr != nil {
 				log.Error().Err(iErr).Msg("recorder: index insert complete")
 			}
 		}
 
-		return newFMP4FileMuxer(path, now, onClose)
+		mux, err := newFMP4FileMuxer(path, now, profile, preallocBytes, ring, onClose)
+		if err != nil {
+			return nil, err
+		}
+
+		if m, ok := mux.(*fmp4FileMuxer); ok {
+			muxerRef = m
+		}
+
+		return mux, nil
 	})
 
 	handle, err := rm.sm.Consume(ctx, s.ChannelID, av.ConsumeOptions{
@@ -240,8 +371,6 @@ func (rm *RecordingManager) startSegment(ctx context.Context, s schedule.Schedul
 		return
 	}
 
-	// Write a "recording" entry immediately so that a restart can detect and
-	// flag this segment as interrupted if the process exits before onClose runs.
 	startEntry := RecordingEntry{
 		ID:        consumerID,
 		ChannelID: s.ChannelID,
@@ -254,11 +383,15 @@ func (rm *RecordingManager) startSegment(ctx context.Context, s schedule.Schedul
 	}
 
 	rm.mu.Lock()
-	rm.active[s.ID] = &activeRec{sched: s, handle: handle, startTime: now}
+	rm.active[s.ID] = &activeRec{
+		sched:     s,
+		handle:    handle,
+		muxer:     muxerRef,
+		startTime: now,
+	}
 	rm.mu.Unlock()
 }
 
-// rotateSegment closes the current segment and immediately starts a new one.
 func (rm *RecordingManager) rotateSegment(
 	ctx context.Context,
 	ar *activeRec,
@@ -273,9 +406,6 @@ func (rm *RecordingManager) rotateSegment(
 	rm.startSegment(ctx, s, now)
 }
 
-// stopAll is called on shutdown: closes every active recording.
-// parentCtx is already cancelled; a fresh timeout context is derived from
-// context.WithoutCancel so that handle.Close can complete cleanly.
 func (rm *RecordingManager) stopAll(parentCtx context.Context) {
 	ctx, cancel := context.WithTimeout(context.WithoutCancel(parentCtx), 30*time.Second)
 	defer cancel()
@@ -301,8 +431,6 @@ func (rm *RecordingManager) closeHandle(ctx context.Context, ar *activeRec) {
 	}
 }
 
-// enforceRetention applies time-based and storage-based retention limits for s.
-// Entries are deleted oldest-first until both limits are satisfied.
 func (rm *RecordingManager) enforceRetention(
 	ctx context.Context,
 	s schedule.Schedule,
@@ -315,49 +443,45 @@ func (rm *RecordingManager) enforceRetention(
 		return
 	}
 
-	// entries are sorted ascending by StartTime; iterate oldest-first.
-
-	// Time-based: delete segments whose end time is older than MaxAgeDays.
-	if s.MaxAgeDays > 0 {
-		cutoff := now.AddDate(0, 0, -s.MaxAgeDays)
-
-		for _, e := range entries {
-			if e.EndTime.Before(cutoff) {
-				rm.deleteSegment(ctx, e)
-			}
-		}
-
-		// Re-query so storage calculation below sees up-to-date sizes.
-		entries, err = rm.index.QueryByChannel(ctx, s.ChannelID, time.Time{}, time.Time{})
-		if err != nil {
-			log.Error().Err(err).Str("channel", s.ChannelID).Msg("recorder: retention re-query")
-
-			return
-		}
+	// Build retention policy from schedule fields.
+	continuousDays := s.ContinuousDays
+	if continuousDays == 0 && s.MaxAgeDays > 0 {
+		continuousDays = s.MaxAgeDays // backward compat
 	}
 
-	// Storage-based: delete oldest segments until total is under the limit.
-	if s.MaxStorageGB > 0 {
-		maxBytes := int64(s.MaxStorageGB * 1024 * 1024 * 1024)
+	var diskFree int64
 
-		var total int64
+	if s.MinFreeGB > 0 {
+		diskFree, _, _ = CheckDiskSpace(s.StoragePath)
+	}
 
-		for _, e := range entries {
-			total += e.SizeBytes
-		}
+	policy := RetentionPolicy{
+		ContinuousDays: continuousDays,
+		MotionDays:     s.MotionDays,
+		ObjectDays:     s.ObjectDays,
+		MaxStorageGB:   s.MaxStorageGB,
+		MinFreeGB:      s.MinFreeGB,
+		DiskFreeBytes:  diskFree,
+	}
 
-		for _, e := range entries {
-			if total <= maxBytes {
-				break
-			}
+	toDelete := EvaluateRetention(entries, policy, now)
 
-			total -= e.SizeBytes
-			rm.deleteSegment(ctx, e)
-		}
+	// Batch limit: delete up to 10 per tick.
+	if len(toDelete) > 10 {
+		toDelete = toDelete[:10]
+	}
+
+	for _, e := range toDelete {
+		rm.deleteSegment(ctx, e)
+	}
+
+	if len(toDelete) > 0 {
+		rm.mu.Lock()
+		rm.lastRetention = now
+		rm.mu.Unlock()
 	}
 }
 
-// deleteSegment removes the segment file from disk and marks it deleted in the index.
 func (rm *RecordingManager) deleteSegment(ctx context.Context, e RecordingEntry) {
 	if err := os.Remove(e.FilePath); err != nil && !os.IsNotExist(err) {
 		log.Error().Err(err).Str("file", e.FilePath).Msg("recorder: delete segment file")
@@ -374,6 +498,45 @@ func (rm *RecordingManager) deleteSegment(ctx context.Context, e RecordingEntry)
 		Str("channel", e.ChannelID).
 		Str("file", e.FilePath).
 		Time("start", e.StartTime).
-		Int64("size_bytes", e.SizeBytes).
+		Int64("sizeBytes", e.SizeBytes).
 		Msg("recorder: segment deleted by retention policy")
+}
+
+func (rm *RecordingManager) checkDiskSpace(
+	ctx context.Context,
+	s schedule.Schedule,
+	now time.Time,
+) {
+	avail, _, err := CheckDiskSpace(s.StoragePath)
+	if err != nil {
+		return
+	}
+
+	if s.LowFreeGB > 0 && avail < int64(s.LowFreeGB*1024*1024*1024) {
+		log.Warn().
+			Str("channel", s.ChannelID).
+			Float64("lowFreeGb", s.LowFreeGB).
+			Int64("availBytes", avail).
+			Msg("recorder: disk below LowFreeGB, triggering aggressive retention")
+
+		rm.enforceRetention(ctx, s, now)
+		rm.enforceRetention(ctx, s, now) // double pass for aggressive cleanup
+	}
+}
+
+func (rm *RecordingManager) getOrCreateRingBuffer(s schedule.Schedule) *RingBuffer {
+	if s.RingBufferSeconds <= 0 {
+		return nil
+	}
+
+	rm.mu.Lock()
+	defer rm.mu.Unlock()
+
+	rb, ok := rm.ringBuffers[s.ChannelID]
+	if !ok {
+		rb = NewRingBuffer(time.Duration(s.RingBufferSeconds) * time.Second)
+		rm.ringBuffers[s.ChannelID] = rb
+	}
+
+	return rb
 }
