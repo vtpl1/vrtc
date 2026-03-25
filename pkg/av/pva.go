@@ -19,17 +19,17 @@ type ObjectInfo struct {
 // PVAData carries object-detection analytics associated with a single video frame.
 // A nil *PVAData means analytics are absent for that frame.
 type PVAData struct {
-	SiteID           int32          `bson:"siteId"           json:"siteId"`
-	ChannelID        int32          `bson:"channelId"        json:"channelId"`
-	StartTimestamp   int64          `bson:"timeStamp"        json:"timeStamp"`
-	EndTimestamp     int64          `bson:"timeStampEnd"     json:"timeStampEnd"`
-	EncodedTimestamp int64          `bson:"timeStampEncoded" json:"timeStampEncoded"`
-	FrameID          int64          `bson:"frameId"          json:"frameId"`
-	VehicleCount     int32          `bson:"vehicleCount"     json:"vehicleCount"`
-	PeopleCount      int32          `bson:"peopleCount"      json:"peopleCount"`
-	RefWidth         int32          `bson:"refWidth"         json:"refWidth"`
-	RefHeight        int32          `bson:"refHeight"        json:"refHeight"`
-	Objects          []*ObjectInfo  `bson:"objectList"       json:"objectList,omitempty"`
+	SiteID           int32         `bson:"siteId"           json:"siteId"`
+	ChannelID        int32         `bson:"channelId"        json:"channelId"`
+	StartTimestamp   int64         `bson:"timeStamp"        json:"timeStamp"`
+	EndTimestamp     int64         `bson:"timeStampEnd"     json:"timeStampEnd"`
+	EncodedTimestamp int64         `bson:"timeStampEncoded" json:"timeStampEncoded"`
+	FrameID          int64         `bson:"frameId"          json:"frameId"`
+	VehicleCount     int32         `bson:"vehicleCount"     json:"vehicleCount"`
+	PeopleCount      int32         `bson:"peopleCount"      json:"peopleCount"`
+	RefWidth         int32         `bson:"refWidth"         json:"refWidth"`
+	RefHeight        int32         `bson:"refHeight"        json:"refHeight"`
+	Objects          []*ObjectInfo `bson:"objectList"       json:"objectList,omitempty"`
 }
 
 // String returns a JSON representation of p, or "nil" when p is nil.

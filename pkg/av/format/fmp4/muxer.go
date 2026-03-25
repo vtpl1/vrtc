@@ -325,7 +325,9 @@ func makeSample(pkt av.Packet, ts *trackState) sample {
 	var extra []byte
 
 	if pkt.PVAData != nil {
-		extra, _ = json.Marshal(pkt.PVAData)
+		if b, err := json.Marshal(pkt.PVAData); err == nil {
+			extra = b
+		}
 	}
 
 	return sample{
