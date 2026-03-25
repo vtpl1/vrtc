@@ -389,7 +389,7 @@ func parseSampleTable(
 	}
 
 	// ── stsc: sample-to-chunk mapping ────────────────────────────────────────
-	chunkSamples, err := buildChunkSamplesMap(stblPayload, n, len(chunkOffsets))
+	chunkSamples, err := buildChunkSamplesMap(stblPayload, len(chunkOffsets))
 	if err != nil {
 		return nil, err
 	}
@@ -529,7 +529,7 @@ func parseChunkOffsets(stblPayload []byte) ([]int64, error) {
 
 // buildChunkSamplesMap returns a slice where [i] is the number of samples in
 // chunk i (0-based) according to the stsc (sample-to-chunk) box.
-func buildChunkSamplesMap(stblPayload []byte, totalSamples, numChunks int) ([]int, error) {
+func buildChunkSamplesMap(stblPayload []byte, numChunks int) ([]int, error) {
 	stscPayload, ok := findBox(stblPayload, "stsc")
 	if !ok {
 		return nil, fmt.Errorf("%w: missing stsc box", ErrMalformed)
@@ -570,8 +570,6 @@ func buildChunkSamplesMap(stblPayload []byte, totalSamples, numChunks int) ([]in
 			result[c-1] = e.samplesPerChunk
 		}
 	}
-
-	_ = totalSamples
 
 	return result, nil
 }

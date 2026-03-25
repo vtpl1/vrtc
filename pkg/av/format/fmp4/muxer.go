@@ -457,13 +457,11 @@ func (m *Muxer) flushFragment() error {
 		}
 	}
 
-	mdatPayloadSize := offset - moofSize - 8
-
 	emsgs, nextID := collectEmsg(active, m.emsgID)
 	m.emsgID = nextID
 
 	moof := buildMoof(active, m.seqNum, dataOffsets)
-	mdat := buildMdat(active, mdatPayloadSize)
+	mdat := buildMdat(active)
 
 	if len(emsgs) > 0 {
 		if _, err := m.w.Write(emsgs); err != nil {
@@ -1024,7 +1022,7 @@ func buildTrun(ts *trackState, dataOffset int32) []byte {
 }
 
 // buildMdat builds the mdat box containing all sample data.
-func buildMdat(active []*trackState, _ uint32) []byte {
+func buildMdat(active []*trackState) []byte {
 	var payload bytes.Buffer
 
 	for _, ts := range active {

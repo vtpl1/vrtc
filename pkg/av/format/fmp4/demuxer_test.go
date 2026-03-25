@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/binary"
+	"encoding/json"
 	"errors"
 	"io"
 	"testing"
@@ -474,4 +475,473 @@ func (c *closingReader) Close() error {
 	c.onClose()
 
 	return nil
+}
+
+// ── Analytics round-trip tests ────────────────────────────────────────────────
+
+func TestDemuxer_Analytics_RoundTrip(t *testing.T) {
+	t.Parallel()
+
+	h264 := makeH264Codec(t)
+	streams := []av.Stream{{Idx: 0, Codec: h264}}
+
+	fa := &av.FrameAnalytics{
+		SiteID: 1, ChannelID: 2, VehicleCount: 3,
+		Objects: []*av.Detection{{X: 10, Y: 20, W: 100, H: 200, ClassID: 1, Confidence: 90}},
+	}
+
+	inPkts := []av.Packet{
+		{
+			Idx: 0, KeyFrame: true, DTS: 0, Duration: 33 * time.Millisecond,
+			Data: avcc(0x65, 0x88), CodecType: av.H264, Analytics: fa,
+		},
+		{
+			Idx: 0, KeyFrame: true, DTS: 33 * time.Millisecond, Duration: 33 * time.Millisecond,
+			Data: avcc(0x65, 0x99), CodecType: av.H264,
+		},
+	}
+
+	data := muxToBytes(t, streams, inPkts)
+
+	dmx := fmp4.NewDemuxer(bytes.NewReader(data))
+
+	if _, err := dmx.GetCodecs(context.Background()); err != nil {
+		t.Fatalf("GetCodecs: %v", err)
+	}
+
+	outPkts := readAllPackets(t, dmx)
+
+	if len(outPkts) != 2 {
+		t.Fatalf("want 2 packets, got %d", len(outPkts))
+	}
+
+	// The first packet should carry the Analytics data.
+	if outPkts[0].Analytics == nil {
+		t.Fatal("pkt 0: expected Analytics, got nil")
+	}
+
+	wantJSON, _ := json.Marshal(fa)
+	gotJSON, _ := json.Marshal(outPkts[0].Analytics)
+
+	if !bytes.Equal(gotJSON, wantJSON) {
+		t.Errorf("Analytics mismatch:\n got  %s\n want %s", gotJSON, wantJSON)
+	}
+
+	// The second packet should have no analytics.
+	if outPkts[1].Analytics != nil {
+		t.Errorf("pkt 1: expected nil Analytics, got %v", outPkts[1].Analytics)
+	}
+}
+
+func TestDemuxer_Analytics_NonMatchingScheme(t *testing.T) {
+	t.Parallel()
+
+	h264 := makeH264Codec(t)
+	streams := []av.Stream{{Idx: 0, Codec: h264}}
+
+	// Build a complete fMP4 stream using FragmentWriter, then manually replace
+	// the emsg scheme URI. We mux a packet with analytics so an emsg is produced,
+	// then tamper with the scheme in the raw bytes.
+	fa := &av.FrameAnalytics{SiteID: 99, ChannelID: 42, VehicleCount: 7}
+
+	inPkts := []av.Packet{
+		{
+			Idx: 0, KeyFrame: true, DTS: 0, Duration: 33 * time.Millisecond,
+			Data: avcc(0x65, 0x88), CodecType: av.H264, Analytics: fa,
+		},
+		{
+			Idx: 0, KeyFrame: true, DTS: 33 * time.Millisecond, Duration: 33 * time.Millisecond,
+			Data: avcc(0x65, 0x99), CodecType: av.H264,
+		},
+	}
+
+	raw := muxToBytes(t, streams, inPkts)
+
+	// Replace the valid scheme URI with a different one of equal length.
+	// "urn:vtpl:analytics:1" → "urn:test:analytics:1"
+	original := []byte("urn:vtpl:analytics:1")
+	replacement := []byte("urn:test:analytics:1")
+
+	idx := bytes.Index(raw, original)
+	if idx < 0 {
+		t.Fatal("could not find emsg scheme URI in raw data")
+	}
+
+	copy(raw[idx:], replacement)
+
+	dmx := fmp4.NewDemuxer(bytes.NewReader(raw))
+
+	if _, err := dmx.GetCodecs(context.Background()); err != nil {
+		t.Fatalf("GetCodecs: %v", err)
+	}
+
+	outPkts := readAllPackets(t, dmx)
+
+	for i, pkt := range outPkts {
+		if pkt.Analytics != nil {
+			t.Errorf("pkt %d: expected nil Analytics with non-matching scheme, got %v", i, pkt.Analytics)
+		}
+	}
+}
+
+// ── Multi-fragment DTS monotonic test ─────────────────────────────────────────
+
+func TestDemuxer_MultiFragment_DTS_Monotonic(t *testing.T) {
+	t.Parallel()
+
+	const frameDur = 33 * time.Millisecond
+
+	h264 := makeH264Codec(t)
+	streams := []av.Stream{{Idx: 0, Codec: h264}}
+
+	// 3 GOPs: keyframe + 2 P-frames each = 9 packets total.
+	// The muxer flushes a fragment on each new keyframe after the first.
+	var inPkts []av.Packet
+
+	for gop := range 3 {
+		for frame := range 3 {
+			idx := gop*3 + frame
+			inPkts = append(inPkts, av.Packet{
+				Idx:       0,
+				KeyFrame:  frame == 0,
+				DTS:       time.Duration(idx) * frameDur,
+				Duration:  frameDur,
+				Data:      avcc(byte(idx + 1)),
+				CodecType: av.H264,
+			})
+		}
+	}
+
+	data := muxToBytes(t, streams, inPkts)
+
+	dmx := fmp4.NewDemuxer(bytes.NewReader(data))
+
+	if _, err := dmx.GetCodecs(context.Background()); err != nil {
+		t.Fatalf("GetCodecs: %v", err)
+	}
+
+	outPkts := readAllPackets(t, dmx)
+
+	if len(outPkts) != len(inPkts) {
+		t.Fatalf("want %d packets, got %d", len(inPkts), len(outPkts))
+	}
+
+	for i := 1; i < len(outPkts); i++ {
+		if outPkts[i].DTS < outPkts[i-1].DTS {
+			t.Errorf("DTS not monotonic at index %d: %v < %v", i, outPkts[i].DTS, outPkts[i-1].DTS)
+		}
+	}
+}
+
+// ── Duration preserved test ───────────────────────────────────────────────────
+
+func TestDemuxer_Duration_Preserved(t *testing.T) {
+	t.Parallel()
+
+	h264 := makeH264Codec(t)
+	streams := []av.Stream{{Idx: 0, Codec: h264}}
+
+	durations := []time.Duration{33 * time.Millisecond, 40 * time.Millisecond, 17 * time.Millisecond}
+
+	var dts time.Duration
+
+	inPkts := make([]av.Packet, len(durations))
+
+	for i, dur := range durations {
+		inPkts[i] = av.Packet{
+			Idx:       0,
+			KeyFrame:  i == 0 || i == 2, // keyframes at 0 and 2 to force a flush
+			DTS:       dts,
+			Duration:  dur,
+			Data:      avcc(byte(i + 1)),
+			CodecType: av.H264,
+		}
+
+		dts += dur
+	}
+
+	data := muxToBytes(t, streams, inPkts)
+
+	dmx := fmp4.NewDemuxer(bytes.NewReader(data))
+
+	if _, err := dmx.GetCodecs(context.Background()); err != nil {
+		t.Fatalf("GetCodecs: %v", err)
+	}
+
+	outPkts := readAllPackets(t, dmx)
+
+	if len(outPkts) != len(inPkts) {
+		t.Fatalf("want %d packets, got %d", len(inPkts), len(outPkts))
+	}
+
+	for i, want := range durations {
+		got := outPkts[i].Duration
+		diff := got - want
+		if diff < 0 {
+			diff = -diff
+		}
+
+		if diff > time.Millisecond {
+			t.Errorf("pkt %d: Duration want %v, got %v (diff %v)", i, want, got, diff)
+		}
+	}
+}
+
+// ── Many packets test ─────────────────────────────────────────────────────────
+
+func TestDemuxer_ManyPackets(t *testing.T) {
+	t.Parallel()
+
+	const (
+		total       = 500
+		gopSize     = 30
+		frameDur    = 33 * time.Millisecond
+	)
+
+	h264 := makeH264Codec(t)
+	streams := []av.Stream{{Idx: 0, Codec: h264}}
+
+	inPkts := make([]av.Packet, total)
+
+	for i := range total {
+		inPkts[i] = av.Packet{
+			Idx:       0,
+			KeyFrame:  i%gopSize == 0,
+			DTS:       time.Duration(i) * frameDur,
+			Duration:  frameDur,
+			Data:      avcc(byte(i%256), byte(i/256)),
+			CodecType: av.H264,
+		}
+	}
+
+	data := muxToBytes(t, streams, inPkts)
+
+	dmx := fmp4.NewDemuxer(bytes.NewReader(data))
+
+	if _, err := dmx.GetCodecs(context.Background()); err != nil {
+		t.Fatalf("GetCodecs: %v", err)
+	}
+
+	outPkts := readAllPackets(t, dmx)
+
+	if len(outPkts) != total {
+		t.Fatalf("want %d packets, got %d", total, len(outPkts))
+	}
+}
+
+// ── Large payload test ────────────────────────────────────────────────────────
+
+func TestDemuxer_LargePayload(t *testing.T) {
+	t.Parallel()
+
+	h264 := makeH264Codec(t)
+	streams := []av.Stream{{Idx: 0, Codec: h264}}
+
+	// Build a 1MB AVCC payload: 4-byte length prefix + 1MB NALU.
+	const naluSize = 1 << 20
+	nalu := make([]byte, naluSize)
+
+	for i := range nalu {
+		nalu[i] = byte(i % 251) // deterministic pattern using a prime
+	}
+
+	bigData := make([]byte, 4+naluSize)
+	binary.BigEndian.PutUint32(bigData, naluSize)
+	copy(bigData[4:], nalu)
+
+	inPkts := []av.Packet{
+		{Idx: 0, KeyFrame: true, DTS: 0, Duration: 33 * time.Millisecond, Data: bigData, CodecType: av.H264},
+		// Second keyframe forces flush of the first.
+		{Idx: 0, KeyFrame: true, DTS: 33 * time.Millisecond, Duration: 33 * time.Millisecond, Data: avcc(0x01), CodecType: av.H264},
+	}
+
+	data := muxToBytes(t, streams, inPkts)
+
+	dmx := fmp4.NewDemuxer(bytes.NewReader(data))
+
+	if _, err := dmx.GetCodecs(context.Background()); err != nil {
+		t.Fatalf("GetCodecs: %v", err)
+	}
+
+	outPkts := readAllPackets(t, dmx)
+
+	if len(outPkts) != 2 {
+		t.Fatalf("want 2 packets, got %d", len(outPkts))
+	}
+
+	if !bytes.Equal(outPkts[0].Data, bigData) {
+		t.Errorf("large payload mismatch: got len %d, want len %d", len(outPkts[0].Data), len(bigData))
+	}
+}
+
+// ── Empty mdat test ───────────────────────────────────────────────────────────
+
+func TestDemuxer_EmptyMdat(t *testing.T) {
+	t.Parallel()
+
+	h264 := makeH264Codec(t)
+	streams := []av.Stream{{Idx: 0, Codec: h264}}
+
+	// WriteHeader + WriteTrailer with no packets → init segment only.
+	data := muxToBytes(t, streams, nil)
+
+	dmx := fmp4.NewDemuxer(bytes.NewReader(data))
+
+	got, err := dmx.GetCodecs(context.Background())
+	if err != nil {
+		t.Fatalf("GetCodecs: %v", err)
+	}
+
+	if len(got) != 1 {
+		t.Fatalf("want 1 stream, got %d", len(got))
+	}
+
+	if got[0].Codec.Type() != av.H264 {
+		t.Errorf("want H264, got %v", got[0].Codec.Type())
+	}
+
+	// ReadPacket should immediately return EOF.
+	_, err = dmx.ReadPacket(context.Background())
+	if !errors.Is(err, io.EOF) {
+		t.Errorf("want io.EOF on empty mdat, got %v", err)
+	}
+}
+
+// ── Multiple GetCodecs calls test ─────────────────────────────────────────────
+
+func TestDemuxer_MultipleGetCodecs(t *testing.T) {
+	t.Parallel()
+
+	h264 := makeH264Codec(t)
+	streams := []av.Stream{{Idx: 0, Codec: h264}}
+	data := muxToBytes(t, streams, nil)
+
+	dmx := fmp4.NewDemuxer(bytes.NewReader(data))
+
+	got1, err := dmx.GetCodecs(context.Background())
+	if err != nil {
+		t.Fatalf("first GetCodecs: %v", err)
+	}
+
+	// Second call: moov was already consumed, so we expect either the same
+	// cached result or an error (no second moov). The demuxer reads until it
+	// finds a moov; with no more data it should return ErrNoMoovBox.
+	got2, err2 := dmx.GetCodecs(context.Background())
+
+	if err2 != nil {
+		// Acceptable: no second moov found.
+		if !errors.Is(err2, fmp4.ErrNoMoovBox) {
+			t.Fatalf("second GetCodecs: unexpected error %v", err2)
+		}
+
+		return
+	}
+
+	// If it succeeded, verify it returns the same streams.
+	if len(got2) != len(got1) {
+		t.Errorf("second GetCodecs returned %d streams, want %d", len(got2), len(got1))
+	}
+}
+
+// ── ReadPacket before GetCodecs test ──────────────────────────────────────────
+
+func TestDemuxer_ReadPacketBeforeGetCodecs(t *testing.T) {
+	t.Parallel()
+
+	h264 := makeH264Codec(t)
+	streams := []av.Stream{{Idx: 0, Codec: h264}}
+
+	inPkts := []av.Packet{
+		{Idx: 0, KeyFrame: true, DTS: 0, Duration: 33 * time.Millisecond, Data: avcc(0x01), CodecType: av.H264},
+		{Idx: 0, KeyFrame: true, DTS: 33 * time.Millisecond, Duration: 33 * time.Millisecond, Data: avcc(0x02), CodecType: av.H264},
+	}
+
+	data := muxToBytes(t, streams, inPkts)
+
+	dmx := fmp4.NewDemuxer(bytes.NewReader(data))
+
+	// Skip GetCodecs, call ReadPacket directly.
+	// The demuxer should encounter the moov box in ReadPacket and handle it
+	// (as a mid-stream codec change) or return an error.
+	ctx := context.Background()
+	pkt, err := dmx.ReadPacket(ctx)
+
+	if err != nil {
+		// It is acceptable to get an error if the demuxer requires GetCodecs first.
+		// Verify it is not a panic or unexpected error type.
+		t.Logf("ReadPacket before GetCodecs returned error (acceptable): %v", err)
+
+		return
+	}
+
+	// If it worked, verify we got a valid packet.
+	if pkt.CodecType != av.H264 {
+		t.Errorf("want H264 codec type, got %v", pkt.CodecType)
+	}
+}
+
+// ── Video and audio interleaved DTS order test ────────────────────────────────
+
+func TestDemuxer_VideoAndAudio_InterleavedDTS(t *testing.T) {
+	t.Parallel()
+
+	h264 := makeH264Codec(t)
+	aac := makeAACCodec(t)
+
+	streams := []av.Stream{
+		{Idx: 0, Codec: h264},
+		{Idx: 1, Codec: aac},
+	}
+
+	// Video at DTS 0, 33, 66ms and audio at DTS 10, 30, 50ms.
+	// Two keyframes to force at least one flush.
+	inPkts := []av.Packet{
+		{Idx: 0, KeyFrame: true, DTS: 0, Duration: 33 * time.Millisecond, Data: avcc(0x01), CodecType: av.H264},
+		{Idx: 1, DTS: 10 * time.Millisecond, Duration: 20 * time.Millisecond, Data: []byte{0xA1}, CodecType: av.AAC},
+		{Idx: 1, DTS: 30 * time.Millisecond, Duration: 20 * time.Millisecond, Data: []byte{0xA2}, CodecType: av.AAC},
+		{Idx: 0, KeyFrame: false, DTS: 33 * time.Millisecond, Duration: 33 * time.Millisecond, Data: avcc(0x02), CodecType: av.H264},
+		{Idx: 1, DTS: 50 * time.Millisecond, Duration: 20 * time.Millisecond, Data: []byte{0xA3}, CodecType: av.AAC},
+		{Idx: 0, KeyFrame: true, DTS: 66 * time.Millisecond, Duration: 33 * time.Millisecond, Data: avcc(0x03), CodecType: av.H264},
+	}
+
+	data := muxToBytes(t, streams, inPkts)
+
+	dmx := fmp4.NewDemuxer(bytes.NewReader(data))
+
+	got, err := dmx.GetCodecs(context.Background())
+	if err != nil {
+		t.Fatalf("GetCodecs: %v", err)
+	}
+
+	if len(got) != 2 {
+		t.Fatalf("want 2 streams, got %d", len(got))
+	}
+
+	outPkts := readAllPackets(t, dmx)
+
+	if len(outPkts) != len(inPkts) {
+		t.Fatalf("want %d packets, got %d", len(inPkts), len(outPkts))
+	}
+
+	// Verify DTS ordering: packets must come out in non-decreasing DTS order.
+	for i := 1; i < len(outPkts); i++ {
+		if outPkts[i].DTS < outPkts[i-1].DTS {
+			t.Errorf("DTS not non-decreasing at index %d: %v < %v", i, outPkts[i].DTS, outPkts[i-1].DTS)
+		}
+	}
+
+	// Verify both track indices appear in the output.
+	trackSeen := map[uint16]bool{}
+
+	for _, pkt := range outPkts {
+		trackSeen[pkt.Idx] = true
+	}
+
+	if !trackSeen[0] {
+		t.Error("no video packets (Idx=0) in output")
+	}
+
+	if !trackSeen[1] {
+		t.Error("no audio packets (Idx=1) in output")
+	}
 }

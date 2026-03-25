@@ -147,13 +147,11 @@ func (fw *FragmentWriter) Flush() []byte {
 		}
 	}
 
-	mdatPayloadSize := offset - moofSize - 8
-
 	emsgs, nextID := collectEmsg(active, fw.emsgID)
 	fw.emsgID = nextID
 
 	moof := buildMoof(active, fw.seqNum, dataOffsets)
-	mdat := buildMdat(active, mdatPayloadSize)
+	mdat := buildMdat(active)
 
 	for _, ts := range active {
 		for _, s := range ts.samples {
