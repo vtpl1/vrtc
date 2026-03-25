@@ -62,6 +62,7 @@ type sample struct {
 	data               []byte
 	extra              []byte // optional metadata payload (e.g. bounding-box JSON) from av.Packet.Extra
 	presentationTimeMS int64  // absolute presentation time in milliseconds for emsg
+	dts                int64  // decode time in timescale units; used to back-fill preceding sample duration
 }
 
 // trackState maintains per-track muxing state.
@@ -192,8 +193,17 @@ func (m *Muxer) WritePacket(_ context.Context, pkt av.Packet) error {
 		}
 	}
 
+	newDTS := dtsToTimescale(pkt.DTS, ts.timescale)
+
 	if len(ts.samples) == 0 {
-		ts.baseTime = dtsToTimescale(pkt.DTS, ts.timescale)
+		ts.baseTime = newDTS
+	} else {
+		// Back-fill the previous sample's duration from the DTS delta when the
+		// demuxer did not supply one (pkt.Duration == 0 for most video sources).
+		prev := &ts.samples[len(ts.samples)-1]
+		if prev.duration == 0 && newDTS > prev.dts {
+			prev.duration = uint32(newDTS - prev.dts)
+		}
 	}
 
 	ts.samples = append(ts.samples, makeSample(pkt, ts))
@@ -358,6 +368,7 @@ func makeSample(pkt av.Packet, ts *trackState) sample {
 		data:               data,
 		extra:              extra,
 		presentationTimeMS: (pkt.DTS + pkt.PTSOffset).Milliseconds(),
+		dts:                dtsToTimescale(pkt.DTS, ts.timescale),
 	}
 }
 
@@ -418,6 +429,18 @@ func (m *Muxer) flushFragment() error {
 	for _, ts := range m.tracks {
 		if len(ts.samples) > 0 {
 			active = append(active, ts)
+		}
+	}
+
+	// Patch the last sample's duration for each active track.
+	// The back-fill in WritePacket covers all but the final sample of each
+	// fragment (there is no subsequent packet to trigger it). Carry forward
+	// the preceding sample's duration as the best available estimate; for a
+	// constant-frame-rate stream this is exact.
+	for _, ts := range active {
+		last := &ts.samples[len(ts.samples)-1]
+		if last.duration == 0 && len(ts.samples) >= 2 {
+			last.duration = ts.samples[len(ts.samples)-2].duration
 		}
 	}
 

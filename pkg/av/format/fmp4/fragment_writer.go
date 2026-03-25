@@ -69,8 +69,15 @@ func (fw *FragmentWriter) WritePacket(pkt av.Packet) {
 		return
 	}
 
+	newDTS := dtsToTimescale(pkt.DTS, ts.timescale)
+
 	if len(ts.samples) == 0 {
-		ts.baseTime = dtsToTimescale(pkt.DTS, ts.timescale)
+		ts.baseTime = newDTS
+	} else {
+		prev := &ts.samples[len(ts.samples)-1]
+		if prev.duration == 0 && newDTS > prev.dts {
+			prev.duration = uint32(newDTS - prev.dts)
+		}
 	}
 
 	ts.samples = append(ts.samples, makeSample(pkt, ts))
@@ -117,6 +124,14 @@ func (fw *FragmentWriter) Flush() []byte {
 
 	if len(active) == 0 {
 		return nil
+	}
+
+	// Patch the last sample duration for each track (carry forward preceding).
+	for _, ts := range active {
+		last := &ts.samples[len(ts.samples)-1]
+		if last.duration == 0 && len(ts.samples) >= 2 {
+			last.duration = ts.samples[len(ts.samples)-2].duration
+		}
 	}
 
 	fw.seqNum++
