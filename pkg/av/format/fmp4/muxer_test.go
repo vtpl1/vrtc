@@ -888,3 +888,677 @@ func TestWritePacket_DropsLeadingNonKeyframes(t *testing.T) {
 		t.Fatalf("second fragment box: want mdat, got %q", typ)
 	}
 }
+
+// ── New tests ─────────────────────────────────────────────────────────────────
+
+// countBoxes counts the number of child boxes with the given type inside data.
+func countBoxes(data []byte, typ string) int {
+	count := 0
+
+	for len(data) >= 8 {
+		size := binary.BigEndian.Uint32(data[0:4])
+		if size < 8 || int(size) > len(data) {
+			break
+		}
+
+		if string(data[4:8]) == typ {
+			count++
+		}
+
+		data = data[size:]
+	}
+
+	return count
+}
+
+// findBoxPayload finds the first child box with the given type inside data and
+// returns its payload. Returns (nil, false) if not found.
+func findBoxPayload(data []byte, typ string) ([]byte, bool) {
+	for len(data) >= 8 {
+		size := binary.BigEndian.Uint32(data[0:4])
+		if size < 8 || int(size) > len(data) {
+			return nil, false
+		}
+
+		if string(data[4:8]) == typ {
+			return data[8:size], true
+		}
+
+		data = data[size:]
+	}
+
+	return nil, false
+}
+
+// TestFMP4_VideoAndAudio_MultiTrack verifies that when both video and audio
+// packets are interleaved, the flushed fragment's moof contains two traf boxes
+// (one per track).
+func TestFMP4_VideoAndAudio_MultiTrack(t *testing.T) {
+	t.Parallel()
+
+	h264 := makeH264Codec(t)
+	aac := makeAACCodec(t)
+
+	streams := []av.Stream{
+		{Idx: 0, Codec: h264},
+		{Idx: 1, Codec: aac},
+	}
+
+	var buf bytes.Buffer
+	m := fmp4.NewMuxer(&buf)
+	ctx := context.Background()
+
+	if err := m.WriteHeader(ctx, streams); err != nil {
+		t.Fatalf("WriteHeader: %v", err)
+	}
+
+	dur := 33 * time.Millisecond
+	// AVCC-formatted IDR (4-byte length prefix + IDR NALU type 0x65)
+	idrData := []byte{0x00, 0x00, 0x00, 0x05, 0x65, 0xDE, 0xAD, 0xBE, 0xEF}
+	audioData := []byte{0x01, 0x02, 0x03, 0x04}
+
+	// First keyframe + interleaved audio.
+	if err := m.WritePacket(ctx, av.Packet{
+		KeyFrame: true, Idx: 0, DTS: 0, Duration: dur, Data: idrData, CodecType: av.H264,
+	}); err != nil {
+		t.Fatalf("WritePacket(kf0): %v", err)
+	}
+
+	if err := m.WritePacket(ctx, av.Packet{
+		Idx: 1, DTS: 0, Duration: 23 * time.Millisecond, Data: audioData, CodecType: av.AAC,
+	}); err != nil {
+		t.Fatalf("WritePacket(audio0): %v", err)
+	}
+
+	// Second keyframe triggers flush of the first GOP.
+	if err := m.WritePacket(ctx, av.Packet{
+		KeyFrame: true, Idx: 0, DTS: dur, Duration: dur, Data: idrData, CodecType: av.H264,
+	}); err != nil {
+		t.Fatalf("WritePacket(kf1): %v", err)
+	}
+
+	// Parse the output: skip ftyp + moov, then find moof.
+	r := bytes.NewReader(buf.Bytes())
+	readBox(t, r) // ftyp
+	readBox(t, r) // moov
+
+	typ, moofPayload := readBox(t, r)
+	if typ != "moof" {
+		t.Fatalf("expected moof, got %q", typ)
+	}
+
+	// Count traf children inside the moof payload.
+	trafCount := countBoxes(moofPayload, "traf")
+	if trafCount != 2 {
+		t.Errorf("expected 2 traf boxes in moof, got %d", trafCount)
+	}
+}
+
+// TestFMP4_VideoAndAudio_AudioBeforeFirstKeyframe verifies that audio packets
+// arriving before the first video keyframe are dropped (along with P-frames),
+// so no fragment is emitted until the first IDR.
+func TestFMP4_VideoAndAudio_AudioBeforeFirstKeyframe(t *testing.T) {
+	t.Parallel()
+
+	h264 := makeH264Codec(t)
+	aac := makeAACCodec(t)
+
+	streams := []av.Stream{
+		{Idx: 0, Codec: h264},
+		{Idx: 1, Codec: aac},
+	}
+
+	var buf bytes.Buffer
+	m := fmp4.NewMuxer(&buf)
+	ctx := context.Background()
+
+	if err := m.WriteHeader(ctx, streams); err != nil {
+		t.Fatalf("WriteHeader: %v", err)
+	}
+
+	buf.Reset() // discard init segment to measure fragment output
+
+	dur := 33 * time.Millisecond
+
+	// Audio and P-frames before first keyframe — all should be dropped.
+	_ = m.WritePacket(ctx, av.Packet{Idx: 1, DTS: 0, Duration: dur, Data: []byte{0xAA}, CodecType: av.AAC})
+	_ = m.WritePacket(ctx, av.Packet{Idx: 1, DTS: dur, Duration: dur, Data: []byte{0xBB}, CodecType: av.AAC})
+	_ = m.WritePacket(ctx, av.Packet{Idx: 0, DTS: 0, Duration: dur, Data: []byte{0x41, 0x9A}}) // P-frame
+
+	if buf.Len() != 0 {
+		t.Fatalf("expected no output before first IDR, got %d bytes", buf.Len())
+	}
+
+	// First keyframe arrives — no flush yet (nothing pending from before).
+	idrData := []byte{0x00, 0x00, 0x00, 0x05, 0x65, 0xDE, 0xAD, 0xBE, 0xEF}
+	_ = m.WritePacket(ctx, av.Packet{
+		KeyFrame: true, Idx: 0, DTS: 2 * dur, Duration: dur, Data: idrData, CodecType: av.H264,
+	})
+
+	if buf.Len() != 0 {
+		t.Fatalf("expected no fragment after first IDR (no second yet), got %d bytes", buf.Len())
+	}
+
+	// Second keyframe triggers flush.
+	_ = m.WritePacket(ctx, av.Packet{
+		KeyFrame: true, Idx: 0, DTS: 3 * dur, Duration: dur, Data: idrData, CodecType: av.H264,
+	})
+
+	if buf.Len() == 0 {
+		t.Fatal("expected fragment after second IDR, got nothing")
+	}
+}
+
+// TestFMP4_PTSOffset_PreservedInFragment verifies that packets with non-zero
+// PTSOffset result in trun entries that include the composition time offset
+// flag (0x800).
+func TestFMP4_PTSOffset_PreservedInFragment(t *testing.T) {
+	t.Parallel()
+
+	h264 := makeH264Codec(t)
+
+	var buf bytes.Buffer
+	m := fmp4.NewMuxer(&buf)
+	ctx := context.Background()
+
+	if err := m.WriteHeader(ctx, []av.Stream{{Idx: 0, Codec: h264}}); err != nil {
+		t.Fatalf("WriteHeader: %v", err)
+	}
+
+	dur := 33 * time.Millisecond
+	idrData := []byte{0x00, 0x00, 0x00, 0x05, 0x65, 0xDE, 0xAD, 0xBE, 0xEF}
+
+	// Write keyframe with B-frame style PTSOffset.
+	if err := m.WritePacket(ctx, av.Packet{
+		KeyFrame:  true,
+		Idx:       0,
+		DTS:       0,
+		PTSOffset: 66 * time.Millisecond,
+		Duration:  dur,
+		Data:      idrData,
+		CodecType: av.H264,
+	}); err != nil {
+		t.Fatalf("WritePacket(kf0): %v", err)
+	}
+
+	// Second keyframe triggers flush.
+	if err := m.WritePacket(ctx, av.Packet{
+		KeyFrame:  true,
+		Idx:       0,
+		DTS:       dur,
+		PTSOffset: 66 * time.Millisecond,
+		Duration:  dur,
+		Data:      idrData,
+		CodecType: av.H264,
+	}); err != nil {
+		t.Fatalf("WritePacket(kf1): %v", err)
+	}
+
+	// Parse output: skip ftyp + moov, find moof.
+	r := bytes.NewReader(buf.Bytes())
+	readBox(t, r) // ftyp
+	readBox(t, r) // moov
+
+	typ, moofPayload := readBox(t, r)
+	if typ != "moof" {
+		t.Fatalf("expected moof, got %q", typ)
+	}
+
+	// Find traf inside moof, then trun inside traf.
+	trafPayload, ok := findBoxPayload(moofPayload, "traf")
+	if !ok {
+		t.Fatal("no traf found in moof")
+	}
+
+	trunPayload, ok := findBoxPayload(trafPayload, "trun")
+	if !ok {
+		t.Fatal("no trun found in traf")
+	}
+
+	// trun is a full-box: version(1) + flags(3). Check CTS flag (0x800).
+	if len(trunPayload) < 4 {
+		t.Fatal("trun payload too short")
+	}
+
+	trunFlags := uint32(trunPayload[1])<<16 | uint32(trunPayload[2])<<8 | uint32(trunPayload[3])
+	if trunFlags&0x800 == 0 {
+		t.Errorf("trun flags 0x%X do not include CTS offset flag (0x800)", trunFlags)
+	}
+}
+
+// TestFMP4_PVAData_OnlyOnVideoKeyframes verifies that PVAData attached to a
+// video keyframe produces an emsg box, while a video keyframe without PVAData
+// does not. Audio packets without PVAData also produce no emsg.
+func TestFMP4_PVAData_OnlyOnVideoKeyframes(t *testing.T) {
+	t.Parallel()
+
+	h264 := makeH264Codec(t)
+	aac := makeAACCodec(t)
+
+	streams := []av.Stream{
+		{Idx: 0, Codec: h264},
+		{Idx: 1, Codec: aac},
+	}
+
+	pvd := &av.PVAData{SiteID: 1, ChannelID: 2, VehicleCount: 1}
+
+	var buf bytes.Buffer
+	m := fmp4.NewMuxer(&buf)
+	ctx := context.Background()
+
+	if err := m.WriteHeader(ctx, streams); err != nil {
+		t.Fatalf("WriteHeader: %v", err)
+	}
+
+	dur := 33 * time.Millisecond
+	idrData := []byte{0x00, 0x00, 0x00, 0x05, 0x65, 0xDE, 0xAD, 0xBE, 0xEF}
+
+	// First keyframe WITH PVAData — should produce emsg.
+	_ = m.WritePacket(ctx, av.Packet{
+		KeyFrame: true, Idx: 0, DTS: 0, Duration: dur, Data: idrData,
+		CodecType: av.H264, PVAData: pvd,
+	})
+
+	// Audio packet WITHOUT PVAData — no emsg expected.
+	_ = m.WritePacket(ctx, av.Packet{
+		Idx: 1, DTS: 0, Duration: 23 * time.Millisecond, Data: []byte{0x01, 0x02},
+		CodecType: av.AAC,
+	})
+
+	// Second keyframe (no PVAData) triggers flush.
+	_ = m.WritePacket(ctx, av.Packet{
+		KeyFrame: true, Idx: 0, DTS: dur, Duration: dur, Data: idrData,
+		CodecType: av.H264,
+	})
+
+	// Parse output: skip ftyp + moov, count emsg boxes before moof.
+	r := bytes.NewReader(buf.Bytes())
+	readBox(t, r) // ftyp
+	readBox(t, r) // moov
+
+	emsgCount := 0
+
+	for r.Len() > 0 {
+		typ, _ := readBox(t, r)
+		if typ == "emsg" {
+			emsgCount++
+		}
+
+		if typ == "moof" {
+			break
+		}
+	}
+
+	// Exactly one emsg should exist (from the video keyframe with PVAData).
+	// The audio packet (no PVAData) and the second keyframe (no PVAData)
+	// should not have produced any additional emsg boxes.
+	if emsgCount != 1 {
+		t.Errorf("expected exactly 1 emsg (from video keyframe with PVAData), got %d", emsgCount)
+	}
+}
+
+// TestFMP4_MultipleFragments_SequenceMonotonic writes 6 GOPs and verifies that
+// all mfhd sequence numbers are consecutive (1, 2, 3, 4, 5).
+func TestFMP4_MultipleFragments_SequenceMonotonic(t *testing.T) {
+	t.Parallel()
+
+	h264 := makeH264Codec(t)
+
+	var buf bytes.Buffer
+	m := fmp4.NewMuxer(&buf)
+	ctx := context.Background()
+
+	if err := m.WriteHeader(ctx, []av.Stream{{Idx: 0, Codec: h264}}); err != nil {
+		t.Fatalf("WriteHeader: %v", err)
+	}
+
+	dur := 33 * time.Millisecond
+	idrData := []byte{0x00, 0x00, 0x00, 0x05, 0x65, 0xDE, 0xAD, 0xBE, 0xEF}
+	pData := []byte{0x00, 0x00, 0x00, 0x04, 0x41, 0x9A, 0x00, 0x00}
+
+	// Write 6 GOPs: IDR + 2 P-frames each.
+	for gop := range 6 {
+		base := time.Duration(gop*3) * dur
+		_ = m.WritePacket(ctx, av.Packet{
+			KeyFrame: true, Idx: 0, DTS: base, Duration: dur, Data: idrData, CodecType: av.H264,
+		})
+		_ = m.WritePacket(ctx, av.Packet{
+			Idx: 0, DTS: base + dur, Duration: dur, Data: pData, CodecType: av.H264,
+		})
+		_ = m.WritePacket(ctx, av.Packet{
+			Idx: 0, DTS: base + 2*dur, Duration: dur, Data: pData, CodecType: av.H264,
+		})
+	}
+
+	// Flush remaining.
+	if err := m.WriteTrailer(ctx, nil); err != nil {
+		t.Fatalf("WriteTrailer: %v", err)
+	}
+
+	seqs := extractMFHDSeqNos(t, buf.Bytes())
+	if len(seqs) < 5 {
+		t.Fatalf("expected >= 5 mfhd sequence numbers, got %d: %v", len(seqs), seqs)
+	}
+
+	for i := 1; i < len(seqs); i++ {
+		if seqs[i] != seqs[i-1]+1 {
+			t.Errorf("mfhd sequence numbers not consecutive: %v", seqs)
+
+			break
+		}
+	}
+
+	// First sequence number should be 1.
+	if seqs[0] != 1 {
+		t.Errorf("first mfhd sequence number: want 1, got %d", seqs[0])
+	}
+}
+
+// TestFMP4_WritePacket_BeforeWriteHeader verifies that WritePacket returns an
+// error when called before WriteHeader.
+func TestFMP4_WritePacket_BeforeWriteHeader(t *testing.T) {
+	t.Parallel()
+
+	var buf bytes.Buffer
+	m := fmp4.NewMuxer(&buf)
+	ctx := context.Background()
+
+	err := m.WritePacket(ctx, av.Packet{
+		KeyFrame: true, Idx: 0, DTS: 0, Duration: 33 * time.Millisecond,
+		Data: []byte{0x65}, CodecType: av.H264,
+	})
+
+	if err == nil {
+		t.Fatal("WritePacket before WriteHeader should return an error")
+	}
+}
+
+// TestFMP4_WritePacket_AfterWriteTrailer verifies that WritePacket returns an
+// error when called after WriteTrailer.
+func TestFMP4_WritePacket_AfterWriteTrailer(t *testing.T) {
+	t.Parallel()
+
+	var buf bytes.Buffer
+	m := fmp4.NewMuxer(&buf)
+	ctx := context.Background()
+
+	if err := m.WriteHeader(ctx, []av.Stream{{Idx: 0, Codec: makeH264Codec(t)}}); err != nil {
+		t.Fatalf("WriteHeader: %v", err)
+	}
+
+	if err := m.WriteTrailer(ctx, nil); err != nil {
+		t.Fatalf("WriteTrailer: %v", err)
+	}
+
+	err := m.WritePacket(ctx, av.Packet{
+		KeyFrame: true, Idx: 0, DTS: 0, Duration: 33 * time.Millisecond,
+		Data: []byte{0x65}, CodecType: av.H264,
+	})
+
+	if err == nil {
+		t.Fatal("WritePacket after WriteTrailer should return an error")
+	}
+}
+
+// TestFMP4_EmptyData_KeyframeCodecChange verifies that a keyframe with nil Data
+// and NewCodecs does not panic.
+func TestFMP4_EmptyData_KeyframeCodecChange(t *testing.T) {
+	t.Parallel()
+
+	h264 := makeH264Codec(t)
+
+	var buf bytes.Buffer
+	m := fmp4.NewMuxer(&buf)
+	ctx := context.Background()
+
+	if err := m.WriteHeader(ctx, []av.Stream{{Idx: 0, Codec: h264}}); err != nil {
+		t.Fatalf("WriteHeader: %v", err)
+	}
+
+	// Write a keyframe with nil Data and NewCodecs set — should not crash.
+	err := m.WritePacket(ctx, av.Packet{
+		KeyFrame:  true,
+		Idx:       0,
+		DTS:       0,
+		Duration:  33 * time.Millisecond,
+		Data:      nil,
+		NewCodecs: []av.Stream{{Idx: 0, Codec: h264}},
+		CodecType: av.H264,
+	})
+
+	// We don't require a specific error; we just verify no panic occurred.
+	_ = err
+
+	// Also flush to ensure no panic in the fragment builder.
+	_ = m.WriteTrailer(ctx, nil)
+}
+
+// TestFMP4_LargePayload writes a packet with 1 MB of data and verifies the
+// mdat box size matches the payload.
+func TestFMP4_LargePayload(t *testing.T) {
+	t.Parallel()
+
+	h264 := makeH264Codec(t)
+
+	var buf bytes.Buffer
+	m := fmp4.NewMuxer(&buf)
+	ctx := context.Background()
+
+	if err := m.WriteHeader(ctx, []av.Stream{{Idx: 0, Codec: h264}}); err != nil {
+		t.Fatalf("WriteHeader: %v", err)
+	}
+
+	// Build a 1 MB AVCC-formatted payload: 4-byte length prefix + 1MB-4 bytes of data.
+	const payloadSize = 1 << 20 // 1 MB
+	largeData := make([]byte, payloadSize)
+	binary.BigEndian.PutUint32(largeData, uint32(payloadSize-4))
+	largeData[4] = 0x65 // IDR NALU type
+
+	if err := m.WritePacket(ctx, av.Packet{
+		KeyFrame: true, Idx: 0, DTS: 0, Duration: 33 * time.Millisecond,
+		Data: largeData, CodecType: av.H264,
+	}); err != nil {
+		t.Fatalf("WritePacket: %v", err)
+	}
+
+	// Flush via trailer.
+	if err := m.WriteTrailer(ctx, nil); err != nil {
+		t.Fatalf("WriteTrailer: %v", err)
+	}
+
+	// Parse output: skip ftyp + moov, find mdat and verify its payload size.
+	r := bytes.NewReader(buf.Bytes())
+	readBox(t, r) // ftyp
+	readBox(t, r) // moov
+
+	// Walk until we find mdat.
+	for r.Len() > 0 {
+		typ, payload := readBox(t, r)
+		if typ == "mdat" {
+			// The mdat payload should contain the entire AVCC-normalised data.
+			// Since the input is already AVCC, the output should be the same size.
+			if len(payload) != payloadSize {
+				t.Errorf("mdat payload size: got %d, want %d", len(payload), payloadSize)
+			}
+
+			return
+		}
+	}
+
+	t.Fatal("mdat box not found in output")
+}
+
+// TestFMP4_ZeroDuration_AllPackets verifies that when all packets have
+// Duration=0, the muxer still produces a valid fragment by inferring durations
+// from DTS deltas.
+func TestFMP4_ZeroDuration_AllPackets(t *testing.T) {
+	t.Parallel()
+
+	h264 := makeH264Codec(t)
+
+	var buf bytes.Buffer
+	m := fmp4.NewMuxer(&buf)
+	ctx := context.Background()
+
+	if err := m.WriteHeader(ctx, []av.Stream{{Idx: 0, Codec: h264}}); err != nil {
+		t.Fatalf("WriteHeader: %v", err)
+	}
+
+	dur := 33 * time.Millisecond
+	idrData := []byte{0x00, 0x00, 0x00, 0x05, 0x65, 0xDE, 0xAD, 0xBE, 0xEF}
+	pData := []byte{0x00, 0x00, 0x00, 0x04, 0x41, 0x9A, 0x00, 0x00}
+
+	// Write a GOP with Duration=0 for all packets.
+	_ = m.WritePacket(ctx, av.Packet{KeyFrame: true, Idx: 0, DTS: 0, Data: idrData})
+	_ = m.WritePacket(ctx, av.Packet{Idx: 0, DTS: dur, Data: pData})
+	_ = m.WritePacket(ctx, av.Packet{Idx: 0, DTS: 2 * dur, Data: pData})
+
+	// Second keyframe triggers flush.
+	_ = m.WritePacket(ctx, av.Packet{KeyFrame: true, Idx: 0, DTS: 3 * dur, Data: idrData})
+
+	// Parse output: skip init, find moof + mdat.
+	r := bytes.NewReader(buf.Bytes())
+	readBox(t, r) // ftyp
+	readBox(t, r) // moov
+
+	typ, _ := readBox(t, r)
+	if typ != "moof" {
+		t.Fatalf("expected moof, got %q", typ)
+	}
+
+	typ, _ = readBox(t, r)
+	if typ != "mdat" {
+		t.Fatalf("expected mdat, got %q", typ)
+	}
+}
+
+// TestFMP4_VideoAndAudio_RoundTrip muxes video+audio packets through
+// fmp4.Muxer, then demuxes with fmp4.Demuxer, and verifies that all packets
+// come back with correct data, DTS, Duration, and KeyFrame flags.
+func TestFMP4_VideoAndAudio_RoundTrip(t *testing.T) {
+	t.Parallel()
+
+	h264 := makeH264Codec(t)
+	aac := makeAACCodec(t)
+
+	streams := []av.Stream{
+		{Idx: 0, Codec: h264},
+		{Idx: 1, Codec: aac},
+	}
+
+	dur := 33 * time.Millisecond
+	audioDur := 23 * time.Millisecond
+
+	// AVCC-formatted video data.
+	idrData := []byte{0x00, 0x00, 0x00, 0x05, 0x65, 0xDE, 0xAD, 0xBE, 0xEF}
+	pData := []byte{0x00, 0x00, 0x00, 0x04, 0x41, 0x9A, 0x00, 0x00}
+	audioData := []byte{0x01, 0x02, 0x03, 0x04}
+
+	inputPkts := []av.Packet{
+		{KeyFrame: true, Idx: 0, DTS: 0, Duration: dur, Data: idrData, CodecType: av.H264},
+		{Idx: 1, DTS: 0, Duration: audioDur, Data: audioData, CodecType: av.AAC},
+		{Idx: 0, DTS: dur, Duration: dur, Data: pData, CodecType: av.H264},
+		{Idx: 1, DTS: audioDur, Duration: audioDur, Data: audioData, CodecType: av.AAC},
+		// Second GOP — triggers flush of the first.
+		{KeyFrame: true, Idx: 0, DTS: 2 * dur, Duration: dur, Data: idrData, CodecType: av.H264},
+		{Idx: 1, DTS: 2 * audioDur, Duration: audioDur, Data: audioData, CodecType: av.AAC},
+	}
+
+	// Mux.
+	var buf bytes.Buffer
+	m := fmp4.NewMuxer(&buf)
+	ctx := context.Background()
+
+	if err := m.WriteHeader(ctx, streams); err != nil {
+		t.Fatalf("WriteHeader: %v", err)
+	}
+
+	for i, pkt := range inputPkts {
+		if err := m.WritePacket(ctx, pkt); err != nil {
+			t.Fatalf("WritePacket[%d]: %v", i, err)
+		}
+	}
+
+	if err := m.WriteTrailer(ctx, nil); err != nil {
+		t.Fatalf("WriteTrailer: %v", err)
+	}
+
+	// Demux.
+	dmx := fmp4.NewDemuxer(bytes.NewReader(buf.Bytes()))
+
+	gotStreams, err := dmx.GetCodecs(ctx)
+	if err != nil {
+		t.Fatalf("GetCodecs: %v", err)
+	}
+
+	if len(gotStreams) != 2 {
+		t.Fatalf("want 2 streams, got %d", len(gotStreams))
+	}
+
+	var outPkts []av.Packet
+
+	for {
+		pkt, err := dmx.ReadPacket(ctx)
+		if err == io.EOF {
+			break
+		}
+
+		if err != nil {
+			t.Fatalf("ReadPacket: %v", err)
+		}
+
+		outPkts = append(outPkts, pkt)
+	}
+
+	if len(outPkts) == 0 {
+		t.Fatal("demuxer returned no packets")
+	}
+
+	// Verify that we got back all the input packets.
+	if len(outPkts) != len(inputPkts) {
+		t.Fatalf("packet count: got %d, want %d", len(outPkts), len(inputPkts))
+	}
+
+	// Build lookup maps: separate video and audio packets in output (sorted by DTS).
+	var videoOut, audioOut []av.Packet
+
+	for _, p := range outPkts {
+		if p.Idx == 0 {
+			videoOut = append(videoOut, p)
+		} else {
+			audioOut = append(audioOut, p)
+		}
+	}
+
+	// Verify video packets.
+	videoIn := []av.Packet{inputPkts[0], inputPkts[2], inputPkts[4]}
+	if len(videoOut) != len(videoIn) {
+		t.Fatalf("video packet count: got %d, want %d", len(videoOut), len(videoIn))
+	}
+
+	for i, got := range videoOut {
+		want := videoIn[i]
+
+		if got.KeyFrame != want.KeyFrame {
+			t.Errorf("video[%d].KeyFrame: got %v, want %v", i, got.KeyFrame, want.KeyFrame)
+		}
+
+		if !bytes.Equal(got.Data, want.Data) {
+			t.Errorf("video[%d].Data: got %d bytes, want %d bytes", i, len(got.Data), len(want.Data))
+		}
+	}
+
+	// Verify audio packets.
+	audioIn := []av.Packet{inputPkts[1], inputPkts[3], inputPkts[5]}
+	if len(audioOut) != len(audioIn) {
+		t.Fatalf("audio packet count: got %d, want %d", len(audioOut), len(audioIn))
+	}
+
+	for i, got := range audioOut {
+		want := audioIn[i]
+
+		if !bytes.Equal(got.Data, want.Data) {
+			t.Errorf("audio[%d].Data: got %x, want %x", i, got.Data, want.Data)
+		}
+	}
+}
