@@ -26,11 +26,13 @@ func NewFileIndex(path string) RecordingIndex {
 	return &fileIndex{path: path}
 }
 
-// statusPriority maps a status string to a numeric priority so that a
-// "complete" or "interrupted" entry always wins over a "recording" entry
-// when two entries share the same segment ID.
+// statusPriority maps a status string to a numeric priority so that terminal
+// statuses always win over transient ones when two entries share the same ID.
+// deleted > complete > interrupted > recording (unknown = 0).
 func statusPriority(status string) int {
 	switch status {
+	case StatusDeleted:
+		return 3
 	case StatusComplete:
 		return 2
 	case StatusInterrupted:
@@ -123,8 +125,8 @@ func (idx *fileIndex) QueryByChannel(
 			continue
 		}
 
-		// Exclude still-ongoing segments — they have no usable end time.
-		if e.Status == StatusRecording {
+		// Exclude still-ongoing and deleted segments.
+		if e.Status == StatusRecording || e.Status == StatusDeleted {
 			continue
 		}
 
@@ -144,6 +146,34 @@ func (idx *fileIndex) QueryByChannel(
 	})
 
 	return results, nil
+}
+
+// Delete appends a StatusDeleted entry for id so that the segment is excluded
+// from all future queries. The segment file must already have been removed by
+// the caller.
+func (idx *fileIndex) Delete(_ context.Context, id string) error {
+	e := RecordingEntry{ID: id, Status: StatusDeleted}
+
+	line, err := json.Marshal(e)
+	if err != nil {
+		return fmt.Errorf("recorder index: marshal delete entry: %w", err)
+	}
+
+	idx.mu.Lock()
+	defer idx.mu.Unlock()
+
+	f, err := os.OpenFile(idx.path, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o640)
+	if err != nil {
+		return fmt.Errorf("recorder index: open %q: %w", idx.path, err)
+	}
+
+	defer f.Close()
+
+	if _, err = fmt.Fprintf(f, "%s\n", line); err != nil {
+		return fmt.Errorf("recorder index: write delete entry: %w", err)
+	}
+
+	return nil
 }
 
 func (idx *fileIndex) Close() error { return nil }

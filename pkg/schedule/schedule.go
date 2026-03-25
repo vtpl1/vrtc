@@ -18,6 +18,11 @@ type Schedule struct {
 	StartAt        time.Time      `json:"start_at"`        //nolint:tagliatelle // zero = always active
 	EndAt          time.Time      `json:"end_at"`          //nolint:tagliatelle // zero = no end
 	DaysOfWeek     []time.Weekday `json:"days_of_week"`    //nolint:tagliatelle // empty = every day
+
+	// Retention limits — at least one should be non-zero to bound storage use.
+	// Both limits are enforced independently on every recorder poll tick.
+	MaxAgeDays   int     `json:"max_age_days"`   //nolint:tagliatelle // delete segments older than N days; 0 = no limit
+	MaxStorageGB float64 `json:"max_storage_gb"` //nolint:tagliatelle // delete oldest segments when total exceeds N GB; 0 = no limit
 }
 
 // ScheduleProvider is the single interface all schedule sources must satisfy.

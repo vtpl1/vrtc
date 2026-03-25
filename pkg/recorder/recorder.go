@@ -180,6 +180,13 @@ func (rm *RecordingManager) tick(ctx context.Context) {
 	for _, ar := range stale {
 		rm.closeHandle(ctx, ar)
 	}
+
+	// Enforce retention for every schedule that defines a limit.
+	for _, s := range schedules {
+		if s.MaxAgeDays > 0 || s.MaxStorageGB > 0 {
+			rm.enforceRetention(ctx, s, now)
+		}
+	}
 }
 
 // startSegment opens a new fMP4 file, attaches it to the StreamManager, and
@@ -292,4 +299,81 @@ func (rm *RecordingManager) closeHandle(ctx context.Context, ar *activeRec) {
 	if err := ar.handle.Close(ctx); err != nil {
 		log.Error().Err(err).Str("schedule", ar.sched.ID).Msg("recorder: close handle")
 	}
+}
+
+// enforceRetention applies time-based and storage-based retention limits for s.
+// Entries are deleted oldest-first until both limits are satisfied.
+func (rm *RecordingManager) enforceRetention(
+	ctx context.Context,
+	s schedule.Schedule,
+	now time.Time,
+) {
+	entries, err := rm.index.QueryByChannel(ctx, s.ChannelID, time.Time{}, time.Time{})
+	if err != nil {
+		log.Error().Err(err).Str("channel", s.ChannelID).Msg("recorder: retention query")
+
+		return
+	}
+
+	// entries are sorted ascending by StartTime; iterate oldest-first.
+
+	// Time-based: delete segments whose end time is older than MaxAgeDays.
+	if s.MaxAgeDays > 0 {
+		cutoff := now.AddDate(0, 0, -s.MaxAgeDays)
+
+		for _, e := range entries {
+			if e.EndTime.Before(cutoff) {
+				rm.deleteSegment(ctx, e)
+			}
+		}
+
+		// Re-query so storage calculation below sees up-to-date sizes.
+		entries, err = rm.index.QueryByChannel(ctx, s.ChannelID, time.Time{}, time.Time{})
+		if err != nil {
+			log.Error().Err(err).Str("channel", s.ChannelID).Msg("recorder: retention re-query")
+
+			return
+		}
+	}
+
+	// Storage-based: delete oldest segments until total is under the limit.
+	if s.MaxStorageGB > 0 {
+		maxBytes := int64(s.MaxStorageGB * 1024 * 1024 * 1024)
+
+		var total int64
+
+		for _, e := range entries {
+			total += e.SizeBytes
+		}
+
+		for _, e := range entries {
+			if total <= maxBytes {
+				break
+			}
+
+			total -= e.SizeBytes
+			rm.deleteSegment(ctx, e)
+		}
+	}
+}
+
+// deleteSegment removes the segment file from disk and marks it deleted in the index.
+func (rm *RecordingManager) deleteSegment(ctx context.Context, e RecordingEntry) {
+	if err := os.Remove(e.FilePath); err != nil && !os.IsNotExist(err) {
+		log.Error().Err(err).Str("file", e.FilePath).Msg("recorder: delete segment file")
+
+		return
+	}
+
+	if err := rm.index.Delete(ctx, e.ID); err != nil {
+		log.Error().Err(err).Str("id", e.ID).Msg("recorder: mark segment deleted")
+	}
+
+	log.Info().
+		Str("id", e.ID).
+		Str("channel", e.ChannelID).
+		Str("file", e.FilePath).
+		Time("start", e.StartTime).
+		Int64("size_bytes", e.SizeBytes).
+		Msg("recorder: segment deleted by retention policy")
 }

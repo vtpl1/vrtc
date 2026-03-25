@@ -18,6 +18,10 @@ const (
 	// StatusInterrupted is written by SealInterrupted for segments that were
 	// still in StatusRecording when the process restarted.
 	StatusInterrupted = "interrupted"
+
+	// StatusDeleted is written by the retention enforcer after the segment file
+	// has been removed from disk. Deleted entries are excluded from all queries.
+	StatusDeleted = "deleted"
 )
 
 // RecordingEntry describes one recording segment stored on disk.
@@ -46,6 +50,10 @@ type RecordingIndex interface {
 		channelID string,
 		from, to time.Time,
 	) ([]RecordingEntry, error)
+
+	// Delete marks a segment as deleted in the index. The caller is responsible
+	// for removing the file from disk before calling Delete.
+	Delete(ctx context.Context, id string) error
 
 	// SealInterrupted finds every entry whose last-known status is
 	// StatusRecording and appends a StatusInterrupted entry for it. Call once

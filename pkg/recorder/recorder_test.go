@@ -116,6 +116,8 @@ func (idx *fakeIndex) QueryByChannel(_ context.Context, _ string, _, _ time.Time
 	return nil, nil
 }
 
+func (idx *fakeIndex) Delete(_ context.Context, _ string) error { return nil }
+
 func (idx *fakeIndex) SealInterrupted(_ context.Context) error { return nil }
 
 func (idx *fakeIndex) Close() error { return nil }

@@ -38,6 +38,8 @@ func (f *fakeIndex) QueryByChannel(_ context.Context, channelID string, from, to
 	return out, nil
 }
 
+func (f *fakeIndex) Delete(_ context.Context, _ string) error { return nil }
+
 func (f *fakeIndex) SealInterrupted(_ context.Context) error { return nil }
 
 func (f *fakeIndex) Close() error { return nil }
