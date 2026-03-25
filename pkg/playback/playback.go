@@ -5,6 +5,7 @@ package playback
 import (
 	"context"
 	"errors"
+	"io"
 	"os"
 	"time"
 
@@ -35,13 +36,11 @@ func New(index recorder.RecordingIndex) *Router {
 	return &Router{index: index}
 }
 
-// RecordedDemuxerFactory returns a DemuxerFactory that opens the first fMP4
-// segment matching req. The producerID argument passed by the StreamManager is
-// ignored; ChannelID from the request is used instead.
-//
-// The returned factory calls index.QueryByChannel, picks the first entry, and
-// returns an fmp4.Demuxer reading from the segment file. The file is closed
-// when the demuxer is closed.
+// RecordedDemuxerFactory returns a DemuxerFactory that opens all fMP4 segments
+// matching req and plays them back sequentially. DTS is adjusted across segment
+// boundaries so it remains monotonically increasing. The first file is opened
+// eagerly so callers get an immediate error if it is missing; subsequent files
+// are opened lazily as each segment finishes.
 func (r *Router) RecordedDemuxerFactory(req Request) av.DemuxerFactory {
 	return func(ctx context.Context, _ string) (av.DemuxCloser, error) {
 		entries, err := r.index.QueryByChannel(ctx, req.ChannelID, req.From, req.To)
@@ -53,16 +52,88 @@ func (r *Router) RecordedDemuxerFactory(req Request) av.DemuxerFactory {
 			return nil, ErrNoRecordingsFound
 		}
 
+		// Open the first file eagerly so the caller gets an immediate error if it
+		// is missing or unreadable, rather than discovering this later inside the
+		// producer's read loop.
 		f, err := os.Open(entries[0].FilePath)
 		if err != nil {
 			return nil, err
 		}
 
-		return &fileDemuxer{
-			Demuxer: fmp4.NewDemuxer(f),
-			f:       f,
+		return &chainingDemuxer{
+			entries: entries,
+			cur:     &fileDemuxer{Demuxer: fmp4.NewDemuxer(f), f: f},
 		}, nil
 	}
+}
+
+// chainingDemuxer plays a sequence of fMP4 files one after another.
+// DTS values are adjusted at each segment boundary so they are monotonically
+// increasing across the whole playback session.
+type chainingDemuxer struct {
+	entries []recorder.RecordingEntry
+	idx     int           // index of the entry currently open in cur
+	cur     *fileDemuxer  // currently open file demuxer
+	dtsOff  time.Duration // cumulative DTS offset applied to packets from cur
+	lastEnd time.Duration // DTS + Duration of the last packet emitted (after offset)
+}
+
+// GetCodecs reads the init segment of the first file and returns its streams.
+func (c *chainingDemuxer) GetCodecs(ctx context.Context) ([]av.Stream, error) {
+	return c.cur.GetCodecs(ctx)
+}
+
+// ReadPacket returns the next packet across all chained segments.
+// When one file reaches io.EOF the next file is opened transparently and DTS
+// is offset so it continues from where the previous file ended.
+func (c *chainingDemuxer) ReadPacket(ctx context.Context) (av.Packet, error) {
+	for {
+		pkt, err := c.cur.ReadPacket(ctx)
+		if err == nil {
+			pkt.DTS += c.dtsOff
+			if end := pkt.DTS + pkt.Duration; end > c.lastEnd {
+				c.lastEnd = end
+			}
+
+			return pkt, nil
+		}
+
+		if !errors.Is(err, io.EOF) {
+			return av.Packet{}, err
+		}
+
+		// Current segment exhausted — advance to the next one.
+		_ = c.cur.Close()
+		c.cur = nil
+		c.idx++
+
+		if c.idx >= len(c.entries) {
+			return av.Packet{}, io.EOF
+		}
+
+		f, ferr := os.Open(c.entries[c.idx].FilePath)
+		if ferr != nil {
+			return av.Packet{}, ferr
+		}
+
+		c.cur = &fileDemuxer{Demuxer: fmp4.NewDemuxer(f), f: f}
+
+		if _, ferr = c.cur.GetCodecs(ctx); ferr != nil {
+			return av.Packet{}, ferr
+		}
+
+		// Offset new file's timestamps so playback continues seamlessly.
+		c.dtsOff = c.lastEnd
+	}
+}
+
+// Close closes the currently open file demuxer.
+func (c *chainingDemuxer) Close() error {
+	if c.cur != nil {
+		return c.cur.Close()
+	}
+
+	return nil
 }
 
 // fileDemuxer wraps an fmp4.Demuxer together with its backing *os.File so
