@@ -12,6 +12,10 @@ import (
 	"github.com/vtpl1/vrtc/pkg/av"
 )
 
+// consumerSeq is a process-wide monotonic counter used to generate unique
+// consumer IDs when the caller does not supply one.
+var consumerSeq atomic.Uint64
+
 type StreamManager struct {
 	demuxerFactory av.DemuxerFactory
 	demuxerRemover av.DemuxerRemover
@@ -69,6 +73,10 @@ func (m *StreamManager) Consume(
 	producerID string,
 	opts av.ConsumeOptions,
 ) (av.ConsumerHandle, error) {
+	if opts.ConsumerID == "" {
+		opts.ConsumerID = fmt.Sprintf("consumer-%d", consumerSeq.Add(1))
+	}
+
 	if m.alreadyClosing.Load() {
 		return nil, ErrStreamManagerClosing
 	}

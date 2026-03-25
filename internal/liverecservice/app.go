@@ -268,7 +268,6 @@ func liveHTTPHandler(
 	})
 
 	handle, err := sm.Consume(ctx, channelID, av.ConsumeOptions{
-		ConsumerID:   fmt.Sprintf("http-live-%d", time.Now().UnixNano()),
 		MuxerFactory: muxerFactory,
 	})
 	if err != nil {
@@ -324,7 +323,6 @@ func recordedHTTPHandler(
 	})
 
 	handle, err := playSM.Consume(ctx, channelID, av.ConsumeOptions{
-		ConsumerID:   fmt.Sprintf("http-rec-%d", time.Now().UnixNano()),
 		MuxerFactory: muxerFactory,
 	})
 	if err != nil {
