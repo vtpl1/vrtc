@@ -1,4 +1,4 @@
-package streammanager3
+package relayhub
 
 import (
 	"context"
@@ -11,7 +11,7 @@ import (
 	"github.com/vtpl1/vrtc/pkg/av"
 )
 
-type Producer struct {
+type Relay struct {
 	id             string
 	demuxerFactory av.DemuxerFactory
 	demuxerRemover av.DemuxerRemover
@@ -39,13 +39,13 @@ type Producer struct {
 	startedAt      time.Time    // set once in Start; zero until Start is called
 }
 
-func NewProducer(
-	producerID string,
+func NewRelay(
+	sourceID string,
 	demuxerFactory av.DemuxerFactory,
 	demuxerRemover av.DemuxerRemover,
-) *Producer {
-	m := &Producer{
-		id:               producerID,
+) *Relay {
+	m := &Relay{
+		id:               sourceID,
 		demuxerFactory:   demuxerFactory,
 		demuxerRemover:   demuxerRemover,
 		headersAvailable: make(chan struct{}),
@@ -55,13 +55,13 @@ func NewProducer(
 	return m
 }
 
-func (m *Producer) Start(ctx context.Context) error {
+func (m *Relay) Start(ctx context.Context) error {
 	if !m.started.CompareAndSwap(false, true) {
-		return ErrProducerAlreadyStarted
+		return ErrRelayAlreadyStarted
 	}
 
 	if m.alreadyClosing.Load() {
-		return ErrProducerClosing
+		return ErrRelayClosing
 	}
 
 	sctx, cancel := context.WithCancel(ctx)
@@ -79,7 +79,7 @@ func (m *Producer) Start(ctx context.Context) error {
 
 		demuxer, err := m.demuxerFactory(sctx, m.id)
 		if err != nil || demuxer == nil {
-			m.setLastCodecError(errors.Join(ErrProducerDemuxFactory, err))
+			m.setLastCodecError(errors.Join(ErrRelayDemuxFactory, err))
 
 			return
 		}
@@ -178,7 +178,7 @@ func (m *Producer) Start(ctx context.Context) error {
 	return nil
 }
 
-func (m *Producer) Close() error {
+func (m *Relay) Close() error {
 	if !m.alreadyClosing.CompareAndSwap(false, true) {
 		return nil
 	}
@@ -196,7 +196,7 @@ func (m *Producer) Close() error {
 	return nil
 }
 
-func (m *Producer) GetCodecs(ctx context.Context) ([]av.Stream, error) {
+func (m *Relay) GetCodecs(ctx context.Context) ([]av.Stream, error) {
 	select {
 	case <-ctx.Done():
 		return nil, ctx.Err()
@@ -209,11 +209,11 @@ func (m *Producer) GetCodecs(ctx context.Context) ([]av.Stream, error) {
 	}
 }
 
-func (m *Producer) ReadPacket(ctx context.Context) (av.Packet, error) {
+func (m *Relay) ReadPacket(ctx context.Context) (av.Packet, error) {
 	return m.demuxer.ReadPacket(ctx)
 }
 
-func (m *Producer) ConsumerCount() int {
+func (m *Relay) ConsumerCount() int {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
 
@@ -221,7 +221,7 @@ func (m *Producer) ConsumerCount() int {
 }
 
 // Stats returns a point-in-time snapshot of the producer's metrics.
-func (m *Producer) Stats() av.ProducerStats {
+func (m *Relay) Stats() av.RelayStats {
 	m.mu.RLock()
 	consumerCount := len(m.consumers)
 	lastErr := m.headersErr
@@ -239,7 +239,7 @@ func (m *Producer) Stats() av.ProducerStats {
 		lastPacketAt = time.Unix(0, ns)
 	}
 
-	return av.ProducerStats{
+	return av.RelayStats{
 		ID:             m.id,
 		ConsumerCount:  consumerCount,
 		PacketsRead:    m.packetsRead.Load(),
@@ -252,7 +252,7 @@ func (m *Producer) Stats() av.ProducerStats {
 	}
 }
 
-func (m *Producer) readWriteLoop(ctx context.Context) {
+func (m *Relay) readWriteLoop(ctx context.Context) {
 	fpsLimitTicker := time.NewTicker(time.Second / time.Duration(maxFps))
 	defer fpsLimitTicker.Stop()
 
@@ -329,7 +329,7 @@ func (m *Producer) readWriteLoop(ctx context.Context) {
 	}
 }
 
-func (m *Producer) setLastCodecError(err error) {
+func (m *Relay) setLastCodecError(err error) {
 	if err == nil {
 		return
 	}
@@ -346,14 +346,14 @@ func (m *Producer) setLastCodecError(err error) {
 	}
 }
 
-func (m *Producer) LastError() error {
+func (m *Relay) LastError() error {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
 
 	return m.headersErr
 }
 
-func (m *Producer) AddConsumer(
+func (m *Relay) AddConsumer(
 	ctx context.Context,
 	consumerID string,
 	muxerFactory av.MuxerFactory,
@@ -361,11 +361,11 @@ func (m *Producer) AddConsumer(
 	errChan chan<- error,
 ) error {
 	if m.alreadyClosing.Load() {
-		return ErrProducerClosing
+		return ErrRelayClosing
 	}
 
 	if !m.started.Load() {
-		return ErrProducerNotStartedYet
+		return ErrRelayNotStartedYet
 	}
 
 	if err := m.LastError(); err != nil {
@@ -408,13 +408,13 @@ func (m *Producer) AddConsumer(
 		delete(m.consumers, consumerID)
 		m.mu.Unlock()
 
-		return ErrProducerClosing
+		return ErrRelayClosing
 	}
 
 	return c.WriteHeader(ctx, streams)
 }
 
-func (m *Producer) RemoveConsumer(_ context.Context, consumerID string) error {
+func (m *Relay) RemoveConsumer(_ context.Context, consumerID string) error {
 	m.mu.Lock()
 
 	consumer, exists := m.consumers[consumerID]
@@ -430,7 +430,7 @@ func (m *Producer) RemoveConsumer(_ context.Context, consumerID string) error {
 	return nil
 }
 
-func (m *Producer) Pause(ctx context.Context) error {
+func (m *Relay) Pause(ctx context.Context) error {
 	m.mu.RLock()
 	dmx := m.demuxer
 	m.mu.RUnlock()
@@ -442,7 +442,7 @@ func (m *Producer) Pause(ctx context.Context) error {
 	return nil
 }
 
-func (m *Producer) Resume(ctx context.Context) error {
+func (m *Relay) Resume(ctx context.Context) error {
 	m.mu.RLock()
 	dmx := m.demuxer
 	m.mu.RUnlock()

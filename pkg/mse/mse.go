@@ -7,7 +7,7 @@
 //  2. Server sends:  {"type":"mse","value":"video/mp4; codecs=\"hvc1.1.6.L153.B0,flac\""} (text)
 //  3. Server sends:  fMP4 init segment (binary)
 //  4. Server sends:  fMP4 media fragments (binary) as they are produced
-//  5. If a packet carries Metadata, the metadata object is JSON-marshalled and
+//  5. If a packet carries Analytics, the analytics object is JSON-marshalled and
 //     sent as an additional text frame.
 package mse
 
@@ -202,7 +202,7 @@ func (m *MSEWriter) WriteHeader(ctx context.Context, streams []av.Stream) error 
 }
 
 // WritePacket buffers a sample; flushes and broadcasts a binary fMP4 fragment on
-// each video keyframe (or immediately for audio-only streams). If pkt.PVAData is
+// each video keyframe (or immediately for audio-only streams). If pkt.Analytics is
 // non-nil it is marshalled to JSON and broadcast as a text message.
 //
 // Ordering: when pkt is a keyframe it triggers a flush of the previous GOP.
@@ -225,8 +225,8 @@ func (m *MSEWriter) WritePacket(ctx context.Context, pkt av.Packet) error {
 		}
 	}
 
-	if pkt.PVAData != nil {
-		if meta, jerr := json.Marshal(pkt.PVAData); jerr == nil {
+	if pkt.Analytics != nil {
+		if meta, jerr := json.Marshal(pkt.Analytics); jerr == nil {
 			if err := m.broadcast(outFrame{websocket.MessageText, meta}); err != nil {
 				return err
 			}

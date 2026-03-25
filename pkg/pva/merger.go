@@ -6,8 +6,8 @@ import (
 	"github.com/vtpl1/vrtc/pkg/av"
 )
 
-// MetadataMerger is a decorator around av.DemuxCloser that attaches *PVAData
-// to each av.Packet via av.Packet.PVAData. The demuxer and muxer layers are
+// MetadataMerger is a decorator around av.DemuxCloser that attaches *FrameAnalytics
+// to each av.Packet via av.Packet.Analytics. The demuxer and muxer layers are
 // completely unaware of analytics; the merger is the single injection point.
 //
 // Usage:
@@ -31,16 +31,16 @@ func (m *MetadataMerger) GetCodecs(ctx context.Context) ([]av.Stream, error) {
 	return m.inner.GetCodecs(ctx)
 }
 
-// ReadPacket reads from the inner demuxer and injects *PVAData into
-// pkt.PVAData when the source has analytics for the packet's FrameID.
+// ReadPacket reads from the inner demuxer and injects *FrameAnalytics into
+// pkt.Analytics when the source has analytics for the packet's FrameID.
 func (m *MetadataMerger) ReadPacket(ctx context.Context) (av.Packet, error) {
 	pkt, err := m.inner.ReadPacket(ctx)
 	if err != nil {
 		return pkt, err
 	}
 
-	if pvd := m.source.Fetch(pkt.FrameID, pkt.WallClockTime); pvd != nil {
-		pkt.PVAData = pvd
+	if fa := m.source.Fetch(pkt.FrameID, pkt.WallClockTime); fa != nil {
+		pkt.Analytics = fa
 	}
 
 	return pkt, nil

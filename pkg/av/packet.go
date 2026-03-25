@@ -38,9 +38,9 @@ type Packet struct {
 	//                        (KeyFrame==true, NewCodecs!=nil, no media data).
 	Data []byte
 
-	// PVAData carries per-frame object-detection analytics (vehicle count,
-	// people count, bounding boxes, etc.). nil when analytics are absent.
-	PVAData *PVAData
+	// Analytics carries per-frame analytics results (object detection, face
+	// recognition, license plate recognition, etc.). nil when absent.
+	Analytics *FrameAnalytics
 
 	// ── Codec change ──────────────────────────────────────────────────────
 	// NewCodecs is non-nil on the keyframe packet that immediately follows a
@@ -134,7 +134,7 @@ func (m *Packet) GoString() string {
 			"  Duration:        %s,\n"+
 			"  WallClockTime:   %s,\n"+
 			"  DataLen:         %d,\n"+
-			"  PVAData:         %s,\n"+
+			"  Analytics:       %s,\n"+
 			"}",
 		m.FrameID,
 		m.KeyFrame,
@@ -147,7 +147,7 @@ func (m *Packet) GoString() string {
 		m.Duration,
 		wallStr,
 		len(m.Data),
-		m.PVAData.String(),
+		m.Analytics.String(),
 	)
 }
 

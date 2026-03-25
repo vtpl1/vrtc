@@ -15,7 +15,7 @@ import (
 	"github.com/vtpl1/vrtc/internal/httprouter"
 	"github.com/vtpl1/vrtc/pkg/av"
 	"github.com/vtpl1/vrtc/pkg/av/format/fmp4"
-	"github.com/vtpl1/vrtc/pkg/av/streammanager3"
+	"github.com/vtpl1/vrtc/pkg/av/relayhub"
 	"github.com/vtpl1/vrtc/pkg/channel"
 	"github.com/vtpl1/vrtc/pkg/lifecycle"
 	"github.com/vtpl1/vrtc/pkg/playback"
@@ -70,10 +70,10 @@ func Run(appName string, cfg Config) error {
 	defer recIndex.Close()
 
 	demuxerFactory := av.DemuxerFactory(
-		func(ctx context.Context, producerID string) (av.DemuxCloser, error) {
-			ch, err := chanProvider.GetChannel(ctx, producerID)
+		func(ctx context.Context, sourceID string) (av.DemuxCloser, error) {
+			ch, err := chanProvider.GetChannel(ctx, sourceID)
 			if err != nil {
-				return nil, fmt.Errorf("liverecservice: channel %q: %w", producerID, err)
+				return nil, fmt.Errorf("liverecservice: channel %q: %w", sourceID, err)
 			}
 
 			d, err := avgrabber.NewDemuxer(avgrabber.Config{
@@ -90,7 +90,7 @@ func Run(appName string, cfg Config) error {
 		},
 	)
 
-	sm := streammanager3.New(demuxerFactory, nil)
+	sm := relayhub.New(demuxerFactory, nil)
 	if err := sm.Start(ctx); err != nil {
 		return fmt.Errorf("liverecservice: stream manager start: %w", err)
 	}
@@ -139,14 +139,14 @@ func Run(appName string, cfg Config) error {
 		recordedHTTPHandler(req.Context(), w, req, req.PathValue("channelID"), pbRouter)
 	})
 
-	// GET /ws/live?producerID=…&consumerID=… — MSE over WebSocket (live)
+	// GET /ws/live?sourceID=…&consumerID=… — MSE over WebSocket (live)
 	mux.HandleFunc("GET /ws/live", func(w http.ResponseWriter, req *http.Request) {
 		defer ct.trackWSLive()()
 
 		httprouter.WSHandler(req.Context(), w, req, sm)
 	})
 
-	// GET /ws/recorded?producerID=…&consumerID=…&from=RFC3339&to=RFC3339
+	// GET /ws/recorded?sourceID=…&consumerID=…&from=RFC3339&to=RFC3339
 	mux.HandleFunc("GET /ws/recorded", func(w http.ResponseWriter, req *http.Request) {
 		defer ct.trackWSRecorded()()
 
@@ -163,7 +163,7 @@ func Run(appName string, cfg Config) error {
 		w.Header().Set("Content-Type", "application/json")
 		w.Header().Set("Cache-Control", "no-cache")
 
-		if err := json.NewEncoder(w).Encode(sm.GetProducersStats(req.Context())); err != nil {
+		if err := json.NewEncoder(w).Encode(sm.GetRelayStats(req.Context())); err != nil {
 			log.Error().Err(err).Msg("stats/producers: encode response")
 		}
 	})
@@ -287,7 +287,7 @@ func liveHTTPHandler(
 	ctx context.Context,
 	w http.ResponseWriter,
 	channelID string,
-	sm av.StreamManager,
+	sm av.RelayHub,
 ) {
 	w.Header().Set("Content-Type", "video/mp4")
 	w.Header().Set("Cache-Control", "no-cache")
@@ -329,7 +329,7 @@ func recordedHTTPHandler(
 	pbReq := playback.Request{ChannelID: channelID, From: from, To: to}
 	factory := pb.RecordedDemuxerFactory(pbReq)
 
-	playSM := streammanager3.New(factory, nil)
+	playSM := relayhub.New(factory, nil)
 	if err := playSM.Start(ctx); err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 
@@ -376,7 +376,7 @@ func wsRecordedHandler(
 	req *http.Request,
 	pb *playback.Router,
 ) {
-	channelID := req.URL.Query().Get("producerID")
+	channelID := req.URL.Query().Get("sourceID")
 
 	from, to, err := parseTimeRange(req)
 	if err != nil {
@@ -388,7 +388,7 @@ func wsRecordedHandler(
 	pbReq := playback.Request{ChannelID: channelID, From: from, To: to}
 	factory := pb.RecordedDemuxerFactory(pbReq)
 
-	playSM := streammanager3.New(factory, nil)
+	playSM := relayhub.New(factory, nil)
 	if err := playSM.Start(ctx); err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 

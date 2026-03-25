@@ -44,6 +44,9 @@ Services load `.env` via `godotenv`, then read their config via `pkg/configpath`
 
 The central data model: encoded frames flow as `av.Packet` in-memory.
 
+- **`av.Packet.Data`** for H.264/H.265 video is **AVCC format** (4-byte BE length prefix per NALU, ISO 14496-15). All demuxers produce AVCC; all muxers consume AVCC.
+- **`av.Packet.Analytics`** carries optional `*av.FrameAnalytics` (object detections, aggregate counts). Serialised as JSON in fMP4 emsg boxes (`urn:vtpl:analytics:1`).
+
 **Codec types** (`pkg/av/codec/`): H.264, H.265, AAC, OPUS, MJPEG, PCM — each with a dedicated parser for bitstream manipulation (SPS/PPS/VPS extraction, NALU handling).
 
 **Format containers** (`pkg/av/format/`):
@@ -54,9 +57,35 @@ The central data model: encoded frames flow as `av.Packet` in-memory.
 | `mp4` | `Demuxer` | `Muxer` | Standard MP4 |
 | `llhls` | — | `Muxer` | Low-Latency HLS |
 
+### RelayHub (`pkg/av/relayhub/`)
+
+The `RelayHub` coordinates relays (demuxers) and consumers (muxers). One relay per source (camera/RTSP URL) fans out packets to N consumers (HLS, MSE, recorder). Relays are created on-demand and reclaimed when idle.
+
+### Terminology
+
+These terms have distinct meanings — do not use them interchangeably:
+
+| Term | Layer | Meaning |
+|------|-------|---------|
+| **Channel** | Config/metadata | A camera or stream source definition (ID, URL, credentials) |
+| **Relay** | Runtime | The demuxer wrapper in RelayHub that reads packets and fans out to consumers |
+| **Consumer** | Runtime | A downstream muxer sink attached to a relay (HLS, MSE, recorder) |
+| **Stream** | Codec-level | A single audio/video track (index + codec config via `av.Stream`) |
+| **sourceID** | Identifier | The key that identifies a relay's demuxer source (e.g. RTSP URL, camera ID) |
+
+### Analytics Types (`pkg/av/pva.go`)
+
+| Type | Purpose |
+|------|---------|
+| `av.FrameAnalytics` | Per-frame analytics: detections, counts, frame correlation timestamps |
+| `av.Detection` | Single detected object: bounding box, class, confidence, track ID |
+
+BSON tags use `snake_case` (MongoDB); JSON tags use `camelCase` (API/emsg wire format).
+
 ## Linting Rules
 
 `.golangci.yml` enables ~30 linters. Key constraints:
 - Max line length: **180 characters**
 - Max cyclomatic complexity: **30** (codec/bitstream parsers are exempt from some checks)
 - All-caps constants are kept verbatim for C header compatibility
+- JSON tags must be **camelCase** (enforced by `tagliatelle`)

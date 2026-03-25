@@ -153,15 +153,15 @@ func (d *Demuxer) ReadPacket(ctx context.Context) (av.Packet, error) {
 				d.pendingCodecChange = nil
 			}
 
-			// Attach PVAData from any emsg boxes that preceded this fragment.
+			// Attach analytics from any emsg boxes that preceded this fragment.
 			if len(d.pendingEmsg) > 0 {
 				for i := range pkts {
 					ptMS := (pkts[i].DTS + pkts[i].PTSOffset).Milliseconds()
 					for _, e := range d.pendingEmsg {
 						if e.presentTimeMS == ptMS && e.schemeIDURI == emsgSchemeIDURI {
-							var pvd av.PVAData
+							var pvd av.FrameAnalytics
 							if json.Unmarshal(e.payload, &pvd) == nil {
-								pkts[i].PVAData = &pvd
+								pkts[i].Analytics = &pvd
 							}
 
 							break
@@ -204,7 +204,7 @@ func (d *Demuxer) Close() error {
 // ── emsg parsing ─────────────────────────────────────────────────────────────
 
 // emsgSchemeIDURI is the scheme identifier written by buildEmsg in muxer.go.
-const emsgSchemeIDURI = "urn:vtpl:bboxes:1"
+const emsgSchemeIDURI = "urn:vtpl:analytics:1"
 
 // parseEmsg parses an emsg (Event Message) version-1 full-box payload (the bytes
 // after the 8-byte box header). Returns (entry, true) on success; (zero, false)

@@ -7,8 +7,8 @@ import (
 	"github.com/vtpl1/vrtc/pkg/lifecycle"
 )
 
-// ProducerStats is a point-in-time snapshot of a single producer's metrics.
-type ProducerStats struct {
+// RelayStats is a point-in-time snapshot of a single relay's metrics.
+type RelayStats struct {
 	ID             string    `json:"id"`
 	ConsumerCount  int       `json:"consumerCount"`
 	PacketsRead    uint64    `json:"packetsRead"`
@@ -20,7 +20,7 @@ type ProducerStats struct {
 	LastError      string    `json:"lastError,omitempty"`
 }
 
-// ConsumeOptions configures a consumer attachment to a producer.
+// ConsumeOptions configures a consumer attachment to a relay.
 type ConsumeOptions struct {
 	ConsumerID   string
 	MuxerFactory MuxerFactory
@@ -30,26 +30,26 @@ type ConsumeOptions struct {
 
 // ConsumerHandle represents an attached consumer.
 //
-// Close detaches the consumer from its producer and closes the underlying
+// Close detaches the consumer from its relay and closes the underlying
 // muxer. Close is safe to call multiple times.
 type ConsumerHandle interface {
 	ID() string
 	Close(ctx context.Context) error
 }
 
-// StreamManager coordinates a set of producers (demuxers) and consumers (muxers).
-// A single StreamManager may host multiple producers; each producer can serve
+// RelayHub coordinates a set of relays (demuxers) and consumers (muxers).
+// A single RelayHub may host multiple relays; each relay can serve
 // multiple consumers simultaneously.
 //
 // # Lifecycle
 //
-// A StreamManager must be started before consumers can be attached:
+// A RelayHub must be started before consumers can be attached:
 //
-//	sm := streammanager3.New(demuxerFactory, demuxerRemover)
-//	if err := sm.Start(ctx); err != nil { /* handle */ }
-//	defer sm.Stop()
+//	hub := relayhub.New(demuxerFactory, demuxerRemover)
+//	if err := hub.Start(ctx); err != nil { /* handle */ }
+//	defer hub.Stop()
 //
-//	handle, err := sm.Consume(ctx, "camera-1", av.ConsumeOptions{
+//	handle, err := hub.Consume(ctx, "camera-1", av.ConsumeOptions{
 //		ConsumerID:   "recorder-a",
 //		MuxerFactory: muxFactory,
 //		MuxerRemover: muxRemover,
@@ -58,17 +58,17 @@ type ConsumerHandle interface {
 //	if err != nil { /* handle */ }
 //	defer handle.Close(ctx)
 //
-// # Producer management
+// # Relay management
 //
-// Producers are created on-demand: the first Consume call for a given
-// producerID opens a demuxer via the DemuxerFactory supplied to the
-// implementation constructor. A producer remains alive as long as at least
-// one consumer is attached; idle producers (zero consumers) are reclaimed
+// Relays are created on-demand: the first Consume call for a given
+// sourceID opens a demuxer via the DemuxerFactory supplied to the
+// implementation constructor. A relay remains alive as long as at least
+// one consumer is attached; idle relays (zero consumers) are reclaimed
 // automatically by a background ticker (within ~1 s).
 //
 // # Delivery policy
 //
-// The delivery mode depends on the active consumer count per producer:
+// The delivery mode depends on the active consumer count per relay:
 //   - 1 consumer  → blocking write: back-pressure propagates to ReadPacket;
 //     no packets are dropped as long as the consumer keeps up.
 //   - 2+ consumers → leaky write: a slow consumer drops frames rather than
@@ -77,67 +77,66 @@ type ConsumerHandle interface {
 // # Concurrency
 //
 // All methods are safe to call concurrently from multiple goroutines.
-type StreamManager interface {
-	// GetProducersStats returns a point-in-time snapshot of all active producers.
-	GetProducersStats(ctx context.Context) []ProducerStats
+type RelayHub interface {
+	// GetRelayStats returns a point-in-time snapshot of all active relays.
+	GetRelayStats(ctx context.Context) []RelayStats
 
-	// GetActiveProducersCount returns the number of producers currently managed
-	// by this StreamManager. A producer is considered active from the moment its
+	// GetActiveRelayCount returns the number of relays currently managed
+	// by this RelayHub. A relay is considered active from the moment its
 	// first consumer is registered until all its consumers have been removed and
 	// the background cleanup ticker has reclaimed it (within ~1 s).
-	GetActiveProducersCount(ctx context.Context) int
+	GetActiveRelayCount(ctx context.Context) int
 
-	// Consume attaches a new consumer to the named producer and returns a handle
-	// that can later detach it. If no producer with producerID exists, one is
+	// Consume attaches a new consumer to the named relay and returns a handle
+	// that can later detach it. If no relay with sourceID exists, one is
 	// created automatically using the DemuxerFactory supplied to the constructor.
 	//
-	// Consume blocks until the producer's initial codec headers are available
+	// Consume blocks until the relay's initial codec headers are available
 	// (i.e. GetCodecs has returned), then delivers a WriteHeader to the muxer.
-	// It retries transparently if the producer is still starting or is
+	// It retries transparently if the relay is still starting or is
 	// transiently closing.
 	//
 	// Errors:
-	//   - ErrStreamManagerNotStartedYet  if Start has not been called.
-	//   - ErrStreamManagerClosing        if Stop or SignalStop has been called.
-	//   - ErrConsumerAlreadyExists       if opts.ConsumerID is already registered
-	//     on producerID.
-	//   - ErrProducerLastError (wrapped) if the producer's demuxer previously
-	//     failed.
-	//   - ctx.Err()                      if the context is cancelled while waiting.
+	//   - ErrRelayHubNotStartedYet  if Start has not been called.
+	//   - ErrRelayHubClosing        if Stop or SignalStop has been called.
+	//   - ErrConsumerAlreadyExists  if opts.ConsumerID is already registered
+	//     on sourceID.
+	//   - ErrRelayLastError (wrapped) if the relay's demuxer previously failed.
+	//   - ctx.Err()                 if the context is cancelled while waiting.
 	//
 	// opts.ErrChan, if non-nil, receives asynchronous write errors from the
 	// consumer's muxer (e.g. ErrMuxerWritePacket). The channel should be buffered
 	// to avoid blocking the consumer's write loop.
-	Consume(ctx context.Context, producerID string, opts ConsumeOptions) (ConsumerHandle, error)
+	Consume(ctx context.Context, sourceID string, opts ConsumeOptions) (ConsumerHandle, error)
 
-	// PauseProducer requests the named producer's demuxer to suspend packet
+	// PauseRelay requests the named relay's demuxer to suspend packet
 	// delivery. The request is forwarded only if the underlying DemuxCloser
-	// implements av.Pauser; otherwise PauseProducer is a no-op.
+	// implements av.Pauser; otherwise PauseRelay is a no-op.
 	//
 	// Errors:
-	//   - ErrProducerNotFound      if no producer with producerID exists.
-	//   - ErrProducerClosing       if the producer is shutting down.
-	//   - ErrProducerNotStartedYet if the producer goroutine has not yet begun.
-	PauseProducer(ctx context.Context, producerID string) error
+	//   - ErrRelayNotFound      if no relay with sourceID exists.
+	//   - ErrRelayClosing       if the relay is shutting down.
+	//   - ErrRelayNotStartedYet if the relay goroutine has not yet begun.
+	PauseRelay(ctx context.Context, sourceID string) error
 
-	// ResumeProducer requests the named producer's demuxer to resume packet
-	// delivery after a previous PauseProducer call. Like PauseProducer, it is
+	// ResumeRelay requests the named relay's demuxer to resume packet
+	// delivery after a previous PauseRelay call. Like PauseRelay, it is
 	// a no-op when the demuxer does not implement av.Pauser.
 	//
 	// Errors:
-	//   - ErrProducerNotFound      if no producer with producerID exists.
-	//   - ErrProducerClosing       if the producer is shutting down.
-	//   - ErrProducerNotStartedYet if the producer goroutine has not yet begun.
-	ResumeProducer(ctx context.Context, producerID string) error
+	//   - ErrRelayNotFound      if no relay with sourceID exists.
+	//   - ErrRelayClosing       if the relay is shutting down.
+	//   - ErrRelayNotStartedYet if the relay goroutine has not yet begun.
+	ResumeRelay(ctx context.Context, sourceID string) error
 
 	// StartStopper embeds the full Start / Stop lifecycle.
 	//
-	// Start launches the background goroutine that manages producer creation,
+	// Start launches the background goroutine that manages relay creation,
 	// idle cleanup, and context propagation. It must be called exactly once
-	// before Consume; subsequent calls return ErrStreamManagerAlreadyStarted.
+	// before Consume; subsequent calls return ErrRelayHubAlreadyStarted.
 	//
 	// Stop signals shutdown (cancels the internal context) and blocks until all
-	// producers and their consumers have exited cleanly. Calling Stop multiple
+	// relays and their consumers have exited cleanly. Calling Stop multiple
 	// times is safe; all calls after the first return nil immediately.
 	lifecycle.StartStopper
 }

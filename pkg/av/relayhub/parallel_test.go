@@ -1,4 +1,4 @@
-package streammanager3_test
+package relayhub_test
 
 import (
 	"context"
@@ -10,7 +10,7 @@ import (
 	"time"
 
 	"github.com/vtpl1/vrtc/pkg/av"
-	"github.com/vtpl1/vrtc/pkg/av/streammanager3"
+	"github.com/vtpl1/vrtc/pkg/av/relayhub"
 )
 
 // errWritePacketFailed is the sentinel returned by failingMuxer.
@@ -203,10 +203,10 @@ func makeMuxerFactory() (av.MuxerFactory, *sync.Map) {
 
 // startedSM creates and starts a StreamManager backed by mockDemuxer.
 // t.Cleanup calls Stop() so no explicit teardown is needed in each test.
-func startedSM(t *testing.T, ctx context.Context) *streammanager3.StreamManager {
+func startedSM(t *testing.T, ctx context.Context) *relayhub.RelayHub {
 	t.Helper()
 
-	sm := streammanager3.New(makeDemuxerFactory(testStreams()), nil)
+	sm := relayhub.New(makeDemuxerFactory(testStreams()), nil)
 	if err := sm.Start(ctx); err != nil {
 		t.Fatal(err)
 	}
@@ -216,7 +216,7 @@ func startedSM(t *testing.T, ctx context.Context) *streammanager3.StreamManager 
 	return sm
 }
 
-// removeConsumer closes h. ErrProducerNotFound is already swallowed by
+// removeConsumer closes h. ErrRelayNotFound is already swallowed by
 // ConsumerHandle.Close, so no special-casing is needed here.
 func removeConsumer(t *testing.T, h av.ConsumerHandle, ctx context.Context) {
 	t.Helper()
@@ -231,21 +231,21 @@ func removeConsumer(t *testing.T, h av.ConsumerHandle, ctx context.Context) {
 // =============================================================================
 
 // TestDoubleStartReturnsError verifies that a second call to Start returns
-// ErrStreamManagerAlreadyStarted rather than silently leaking a goroutine.
+// ErrRelayHubAlreadyStarted rather than silently leaking a goroutine.
 func TestDoubleStartReturnsError(t *testing.T) {
 	t.Parallel()
 
 	ctx := t.Context()
 
-	sm := streammanager3.New(makeDemuxerFactory(testStreams()), nil)
+	sm := relayhub.New(makeDemuxerFactory(testStreams()), nil)
 	if err := sm.Start(ctx); err != nil {
 		t.Fatalf("first Start: %v", err)
 	}
 
 	defer func() { _ = sm.Stop() }()
 
-	if err := sm.Start(ctx); !errors.Is(err, streammanager3.ErrStreamManagerAlreadyStarted) {
-		t.Errorf("second Start returned %v, want ErrStreamManagerAlreadyStarted", err)
+	if err := sm.Start(ctx); !errors.Is(err, relayhub.ErrRelayHubAlreadyStarted) {
+		t.Errorf("second Start returned %v, want ErrRelayHubAlreadyStarted", err)
 	}
 }
 
@@ -257,7 +257,7 @@ func TestMultipleStopCalls(t *testing.T) {
 
 	ctx := context.Background()
 
-	sm := streammanager3.New(makeDemuxerFactory(testStreams()), nil)
+	sm := relayhub.New(makeDemuxerFactory(testStreams()), nil)
 	if err := sm.Start(ctx); err != nil {
 		t.Fatal(err)
 	}
@@ -269,14 +269,14 @@ func TestMultipleStopCalls(t *testing.T) {
 	}
 }
 
-// TestConsumeAfterStop verifies that Consume returns ErrStreamManagerClosing
+// TestConsumeAfterStop verifies that Consume returns ErrRelayHubClosing
 // once Stop has been called, regardless of whether the producer previously existed.
 func TestConsumeAfterStop(t *testing.T) {
 	t.Parallel()
 
 	ctx := context.Background()
 
-	sm := streammanager3.New(makeDemuxerFactory(testStreams()), nil)
+	sm := relayhub.New(makeDemuxerFactory(testStreams()), nil)
 	if err := sm.Start(ctx); err != nil {
 		t.Fatal(err)
 	}
@@ -291,8 +291,8 @@ func TestConsumeAfterStop(t *testing.T) {
 		ConsumerID:   "consumer-1",
 		MuxerFactory: factory,
 	})
-	if !errors.Is(err, streammanager3.ErrStreamManagerClosing) {
-		t.Errorf("Consume after Stop returned %v, want ErrStreamManagerClosing", err)
+	if !errors.Is(err, relayhub.ErrRelayHubClosing) {
+		t.Errorf("Consume after Stop returned %v, want ErrRelayHubClosing", err)
 	}
 }
 
@@ -316,7 +316,7 @@ func TestConsumerAlreadyExists(t *testing.T) {
 	}
 
 	_, err := sm.Consume(ctx, "producer-1", av.ConsumeOptions{ConsumerID: "consumer-1", MuxerFactory: factory})
-	if !errors.Is(err, streammanager3.ErrConsumerAlreadyExists) {
+	if !errors.Is(err, relayhub.ErrConsumerAlreadyExists) {
 		t.Errorf("duplicate Consume: got %v, want ErrConsumerAlreadyExists", err)
 	}
 }
@@ -370,7 +370,7 @@ func TestConsumerHandleCloseAutoStopsProducer(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	if n := sm.GetActiveProducersCount(ctx); n != 1 {
+	if n := sm.GetActiveRelayCount(ctx); n != 1 {
 		t.Fatalf("expected 1 active producer after add, got %d", n)
 	}
 
@@ -391,7 +391,7 @@ func TestConsumerHandleCloseAutoStopsProducer(t *testing.T) {
 	//   2. StreamManager's ticker sees ConsumerCount() == 0 and removes the producer.
 	deadline := time.Now().Add(3 * time.Second)
 	for time.Now().Before(deadline) {
-		if sm.GetActiveProducersCount(ctx) == 0 {
+		if sm.GetActiveRelayCount(ctx) == 0 {
 			return
 		}
 
@@ -399,7 +399,7 @@ func TestConsumerHandleCloseAutoStopsProducer(t *testing.T) {
 	}
 
 	t.Errorf("producer still active 3 s after all consumers left (count=%d)",
-		sm.GetActiveProducersCount(ctx))
+		sm.GetActiveRelayCount(ctx))
 }
 
 // =============================================================================
@@ -420,7 +420,7 @@ func TestDemuxerFactoryErrorPropagatesToCaller(t *testing.T) {
 		return nil, errDemuxFail
 	}
 
-	sm := streammanager3.New(failFactory, nil)
+	sm := relayhub.New(failFactory, nil)
 	if err := sm.Start(ctx); err != nil {
 		t.Fatal(err)
 	}
@@ -740,7 +740,7 @@ func TestBaselineConsumerUnaffectedByJoinsAndLeaves(t *testing.T) {
 	t.Parallel()
 
 	const (
-		producerID  = "producer-1"
+		sourceID    = "producer-1"
 		baselineID  = "baseline"
 		numWorkers  = 20
 		stormDur    = 1 * time.Second
@@ -754,7 +754,7 @@ func TestBaselineConsumerUnaffectedByJoinsAndLeaves(t *testing.T) {
 	factory, registry := makeMuxerFactory()
 	sm := startedSM(t, ctx)
 
-	if _, err := sm.Consume(ctx, producerID, av.ConsumeOptions{ConsumerID: baselineID, MuxerFactory: factory}); err != nil {
+	if _, err := sm.Consume(ctx, sourceID, av.ConsumeOptions{ConsumerID: baselineID, MuxerFactory: factory}); err != nil {
 		t.Fatal(err)
 	}
 
@@ -793,7 +793,7 @@ func TestBaselineConsumerUnaffectedByJoinsAndLeaves(t *testing.T) {
 			for iter := 0; stormCtx.Err() == nil; iter++ {
 				id := fmt.Sprintf("storm-%d-%d", w, iter)
 
-				handle, err := sm.Consume(ctx, producerID, av.ConsumeOptions{ConsumerID: id, MuxerFactory: factory})
+				handle, err := sm.Consume(ctx, sourceID, av.ConsumeOptions{ConsumerID: id, MuxerFactory: factory})
 				if err != nil {
 					return
 				}
@@ -848,7 +848,7 @@ func TestBaselineConsumerUnaffectedByJoinsAndLeaves(t *testing.T) {
 // =============================================================================
 
 // TestPauseResumeNonExistentProducer verifies that PauseProducer and
-// ResumeProducer return ErrProducerNotFound when no producer with that ID exists.
+// ResumeProducer return ErrRelayNotFound when no producer with that ID exists.
 func TestPauseResumeNonExistentProducer(t *testing.T) {
 	t.Parallel()
 
@@ -857,24 +857,24 @@ func TestPauseResumeNonExistentProducer(t *testing.T) {
 
 	sm := startedSM(t, ctx)
 
-	if err := sm.PauseProducer(
+	if err := sm.PauseRelay(
 		ctx,
 		"no-such-producer",
 	); !errors.Is(
 		err,
-		streammanager3.ErrProducerNotFound,
+		relayhub.ErrRelayNotFound,
 	) {
-		t.Errorf("PauseProducer: got %v, want ErrProducerNotFound", err)
+		t.Errorf("PauseProducer: got %v, want ErrRelayNotFound", err)
 	}
 
-	if err := sm.ResumeProducer(
+	if err := sm.ResumeRelay(
 		ctx,
 		"no-such-producer",
 	); !errors.Is(
 		err,
-		streammanager3.ErrProducerNotFound,
+		relayhub.ErrRelayNotFound,
 	) {
-		t.Errorf("ResumeProducer: got %v, want ErrProducerNotFound", err)
+		t.Errorf("ResumeProducer: got %v, want ErrRelayNotFound", err)
 	}
 }
 
@@ -892,7 +892,7 @@ func TestPauseResumeDuringConsumerChurn(t *testing.T) {
 
 	pausableFactory, latestDemuxer := makePausableDemuxerFactory(testStreams())
 
-	sm := streammanager3.New(pausableFactory, nil)
+	sm := relayhub.New(pausableFactory, nil)
 	if err := sm.Start(ctx); err != nil {
 		t.Fatal(err)
 	}
@@ -938,11 +938,11 @@ func TestPauseResumeDuringConsumerChurn(t *testing.T) {
 				continue
 			}
 
-			_ = sm.PauseProducer(ctx, "producer-1")
+			_ = sm.PauseRelay(ctx, "producer-1")
 
 			time.Sleep(2 * time.Millisecond)
 
-			_ = sm.ResumeProducer(ctx, "producer-1")
+			_ = sm.ResumeRelay(ctx, "producer-1")
 
 			time.Sleep(2 * time.Millisecond)
 		}
@@ -1004,18 +1004,18 @@ func (m *codecChangingMuxer) WriteCodecChange(_ context.Context, _ []av.Stream) 
 // =============================================================================
 
 // TestConsumeBeforeStart verifies that Consume returns
-// ErrStreamManagerNotStartedYet when Start has not yet been called.
+// ErrRelayHubNotStartedYet when Start has not yet been called.
 func TestConsumeBeforeStart(t *testing.T) {
 	t.Parallel()
 
 	ctx := t.Context()
 
-	sm := streammanager3.New(makeDemuxerFactory(testStreams()), nil)
+	sm := relayhub.New(makeDemuxerFactory(testStreams()), nil)
 	factory, _ := makeMuxerFactory()
 
 	_, err := sm.Consume(ctx, "producer-1", av.ConsumeOptions{ConsumerID: "consumer-1", MuxerFactory: factory})
-	if !errors.Is(err, streammanager3.ErrStreamManagerNotStartedYet) {
-		t.Errorf("Consume before Start: got %v, want ErrStreamManagerNotStartedYet", err)
+	if !errors.Is(err, relayhub.ErrRelayHubNotStartedYet) {
+		t.Errorf("Consume before Start: got %v, want ErrRelayHubNotStartedYet", err)
 	}
 }
 
@@ -1026,7 +1026,7 @@ func TestSignalStopIdempotency(t *testing.T) {
 
 	ctx := t.Context()
 
-	sm := streammanager3.New(makeDemuxerFactory(testStreams()), nil)
+	sm := relayhub.New(makeDemuxerFactory(testStreams()), nil)
 	if err := sm.Start(ctx); err != nil {
 		t.Fatal(err)
 	}
@@ -1045,7 +1045,7 @@ func TestSignalStopIdempotency(t *testing.T) {
 }
 
 // TestStopCleansUpAllProducers verifies that after Stop() returns,
-// GetActiveProducersCount is zero regardless of how many producers were active.
+// GetActiveProducersCount is zero regardless of how many relays were active.
 func TestStopCleansUpAllProducers(t *testing.T) {
 	t.Parallel()
 
@@ -1068,7 +1068,7 @@ func TestStopCleansUpAllProducers(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	if n := sm.GetActiveProducersCount(ctx); n != 0 {
+	if n := sm.GetActiveRelayCount(ctx); n != 0 {
 		t.Errorf("GetActiveProducersCount after Stop: got %d, want 0", n)
 	}
 }
@@ -1154,15 +1154,15 @@ func TestDemuxerRemoverCalledOnShutdown(t *testing.T) {
 	var mu sync.Mutex
 
 	removedIDs := map[string]bool{}
-	demuxerRemover := func(_ context.Context, producerID string) error {
+	demuxerRemover := func(_ context.Context, sourceID string) error {
 		mu.Lock()
-		removedIDs[producerID] = true
+		removedIDs[sourceID] = true
 		mu.Unlock()
 
 		return nil
 	}
 
-	sm := streammanager3.New(makeDemuxerFactory(testStreams()), demuxerRemover)
+	sm := relayhub.New(makeDemuxerFactory(testStreams()), demuxerRemover)
 	if err := sm.Start(ctx); err != nil {
 		t.Fatal(err)
 	}
@@ -1269,7 +1269,7 @@ func TestCodecChangeForwardedToCodecChanger(t *testing.T) {
 		}, nil
 	}
 
-	sm := streammanager3.New(demuxFactory, nil)
+	sm := relayhub.New(demuxFactory, nil)
 	if err := sm.Start(ctx); err != nil {
 		t.Fatal(err)
 	}
@@ -1302,7 +1302,7 @@ func TestCodecChangeForwardedToCodecChanger(t *testing.T) {
 // =============================================================================
 
 // TestMillionConsumerOperations exercises 1 000 000 total add+remove consumer
-// cycles spread across 100 producers with 1 000 concurrent worker goroutines
+// cycles spread across 100 relays with 1 000 concurrent worker goroutines
 // (10 per producer). Each worker uses unique consumer IDs so there are no
 // duplicate-ID collisions. Run with -race to validate synchronisation at scale.
 func TestMillionConsumerOperations(t *testing.T) {
@@ -1383,7 +1383,7 @@ func TestConcurrentStopDuringHighLoad(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
 	defer cancel()
 
-	sm := streammanager3.New(makeDemuxerFactory(testStreams()), nil)
+	sm := relayhub.New(makeDemuxerFactory(testStreams()), nil)
 	if err := sm.Start(ctx); err != nil {
 		t.Fatal(err)
 	}
@@ -1476,8 +1476,8 @@ func TestRapidConsumeClose(t *testing.T) {
 }
 
 // TestHighConcurrencyManyProducers stresses the StreamManager's producer-map
-// locking with 500 producers each served by 20 concurrent consumers. After all
-// consumers are removed, it verifies that all producers are auto-cleaned within
+// locking with 500 relays each served by 20 concurrent consumers. After all
+// consumers are removed, it verifies that all relays are auto-cleaned within
 // the ticker period.
 func TestHighConcurrencyManyProducers(t *testing.T) {
 	t.Parallel()
@@ -1527,18 +1527,18 @@ func TestHighConcurrencyManyProducers(t *testing.T) {
 		t.Error(err)
 	}
 
-	// All consumers removed → producers should auto-clean within 2 ticker periods.
+	// All consumers removed → relays should auto-clean within 2 ticker periods.
 	deadline := time.Now().Add(4 * time.Second)
 	for time.Now().Before(deadline) {
-		if sm.GetActiveProducersCount(ctx) == 0 {
+		if sm.GetActiveRelayCount(ctx) == 0 {
 			return
 		}
 
 		time.Sleep(100 * time.Millisecond)
 	}
 
-	t.Errorf("producers still active 4 s after all consumers left: count=%d",
-		sm.GetActiveProducersCount(ctx))
+	t.Errorf("relays still active 4 s after all consumers left: count=%d",
+		sm.GetActiveRelayCount(ctx))
 }
 
 // TestConcurrentWaitStop launches 100 goroutines that all call WaitStop
@@ -1549,7 +1549,7 @@ func TestConcurrentWaitStop(t *testing.T) {
 
 	ctx := context.Background()
 
-	sm := streammanager3.New(makeDemuxerFactory(testStreams()), nil)
+	sm := relayhub.New(makeDemuxerFactory(testStreams()), nil)
 	if err := sm.Start(ctx); err != nil {
 		t.Fatal(err)
 	}
@@ -1578,7 +1578,7 @@ func TestStopIdempotentUnderConcurrency(t *testing.T) {
 
 	ctx := context.Background()
 
-	sm := streammanager3.New(makeDemuxerFactory(testStreams()), nil)
+	sm := relayhub.New(makeDemuxerFactory(testStreams()), nil)
 	if err := sm.Start(ctx); err != nil {
 		t.Fatal(err)
 	}
@@ -1632,7 +1632,7 @@ func TestHighLoadWithCodecChanges(t *testing.T) {
 		}, nil
 	}
 
-	sm := streammanager3.New(demuxFactory, nil)
+	sm := relayhub.New(demuxFactory, nil)
 	if err := sm.Start(ctx); err != nil {
 		t.Fatal(err)
 	}

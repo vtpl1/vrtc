@@ -653,28 +653,28 @@ func findMFHD(t *testing.T, data []byte, seqs *[]uint32) {
 	}
 }
 
-// TestEmsg_BoundingBoxes verifies that a packet carrying PVAData results in an
+// TestEmsg_Analytics verifies that a packet carrying Analytics results in an
 // emsg box appearing before the moof box in the flushed fragment, and that the
-// emsg payload is the JSON-marshalled PVAData.
-func TestEmsg_BoundingBoxes(t *testing.T) {
+// emsg payload is the JSON-marshalled FrameAnalytics.
+func TestEmsg_Analytics(t *testing.T) {
 	t.Parallel()
 
 	h264 := makeH264Codec(t)
 	streams := []av.Stream{{Idx: 0, Codec: h264}}
 
-	pvd := &av.PVAData{
+	fa := &av.FrameAnalytics{
 		SiteID:       1,
 		ChannelID:    2,
 		VehicleCount: 3,
 		PeopleCount:  5,
-		Objects: []*av.ObjectInfo{
-			{X: 10, Y: 20, W: 100, H: 200, T: 1, C: 90, I: 42, E: true},
+		Objects: []*av.Detection{
+			{X: 10, Y: 20, W: 100, H: 200, ClassID: 1, Confidence: 90, TrackID: 42, IsEvent: true},
 		},
 	}
 
-	bboxJSON, err := json.Marshal(pvd)
+	analyticsJSON, err := json.Marshal(fa)
 	if err != nil {
-		t.Fatalf("json.Marshal PVAData: %v", err)
+		t.Fatalf("json.Marshal FrameAnalytics: %v", err)
 	}
 
 	fw, _, err := fmp4.NewFragmentWriter(streams)
@@ -683,12 +683,12 @@ func TestEmsg_BoundingBoxes(t *testing.T) {
 	}
 
 	fw.WritePacket(av.Packet{
-		Idx:      0,
-		KeyFrame: true,
-		DTS:      33 * time.Millisecond,
-		Duration: 33 * time.Millisecond,
-		Data:     []byte{0x65, 0x88},
-		PVAData:  pvd,
+		Idx:       0,
+		KeyFrame:  true,
+		DTS:       33 * time.Millisecond,
+		Duration:  33 * time.Millisecond,
+		Data:      []byte{0x65, 0x88},
+		Analytics: fa,
 	})
 
 	fragment := fw.Flush()
@@ -737,8 +737,8 @@ func TestEmsg_BoundingBoxes(t *testing.T) {
 	}
 
 	got := payload[pos:]
-	if !bytes.Equal(got, bboxJSON) {
-		t.Errorf("emsg data mismatch:\n got  %s\n want %s", got, bboxJSON)
+	if !bytes.Equal(got, analyticsJSON) {
+		t.Errorf("emsg data mismatch:\n got  %s\n want %s", got, analyticsJSON)
 	}
 
 	// Next box must be moof.
@@ -1126,10 +1126,10 @@ func TestFMP4_PTSOffset_PreservedInFragment(t *testing.T) {
 	}
 }
 
-// TestFMP4_PVAData_OnlyOnVideoKeyframes verifies that PVAData attached to a
-// video keyframe produces an emsg box, while a video keyframe without PVAData
-// does not. Audio packets without PVAData also produce no emsg.
-func TestFMP4_PVAData_OnlyOnVideoKeyframes(t *testing.T) {
+// TestFMP4_Analytics_OnlyOnVideoKeyframes verifies that Analytics attached to a
+// video keyframe produces an emsg box, while a video keyframe without Analytics
+// does not. Audio packets without Analytics also produce no emsg.
+func TestFMP4_Analytics_OnlyOnVideoKeyframes(t *testing.T) {
 	t.Parallel()
 
 	h264 := makeH264Codec(t)
@@ -1140,7 +1140,7 @@ func TestFMP4_PVAData_OnlyOnVideoKeyframes(t *testing.T) {
 		{Idx: 1, Codec: aac},
 	}
 
-	pvd := &av.PVAData{SiteID: 1, ChannelID: 2, VehicleCount: 1}
+	fa := &av.FrameAnalytics{SiteID: 1, ChannelID: 2, VehicleCount: 1}
 
 	var buf bytes.Buffer
 	m := fmp4.NewMuxer(&buf)
@@ -1153,19 +1153,19 @@ func TestFMP4_PVAData_OnlyOnVideoKeyframes(t *testing.T) {
 	dur := 33 * time.Millisecond
 	idrData := []byte{0x00, 0x00, 0x00, 0x05, 0x65, 0xDE, 0xAD, 0xBE, 0xEF}
 
-	// First keyframe WITH PVAData — should produce emsg.
+	// First keyframe WITH Analytics — should produce emsg.
 	_ = m.WritePacket(ctx, av.Packet{
 		KeyFrame: true, Idx: 0, DTS: 0, Duration: dur, Data: idrData,
-		CodecType: av.H264, PVAData: pvd,
+		CodecType: av.H264, Analytics: fa,
 	})
 
-	// Audio packet WITHOUT PVAData — no emsg expected.
+	// Audio packet WITHOUT Analytics — no emsg expected.
 	_ = m.WritePacket(ctx, av.Packet{
 		Idx: 1, DTS: 0, Duration: 23 * time.Millisecond, Data: []byte{0x01, 0x02},
 		CodecType: av.AAC,
 	})
 
-	// Second keyframe (no PVAData) triggers flush.
+	// Second keyframe (no Analytics) triggers flush.
 	_ = m.WritePacket(ctx, av.Packet{
 		KeyFrame: true, Idx: 0, DTS: dur, Duration: dur, Data: idrData,
 		CodecType: av.H264,
@@ -1189,11 +1189,11 @@ func TestFMP4_PVAData_OnlyOnVideoKeyframes(t *testing.T) {
 		}
 	}
 
-	// Exactly one emsg should exist (from the video keyframe with PVAData).
-	// The audio packet (no PVAData) and the second keyframe (no PVAData)
+	// Exactly one emsg should exist (from the video keyframe with Analytics).
+	// The audio packet (no Analytics) and the second keyframe (no Analytics)
 	// should not have produced any additional emsg boxes.
 	if emsgCount != 1 {
-		t.Errorf("expected exactly 1 emsg (from video keyframe with PVAData), got %d", emsgCount)
+		t.Errorf("expected exactly 1 emsg (from video keyframe with Analytics), got %d", emsgCount)
 	}
 }
 

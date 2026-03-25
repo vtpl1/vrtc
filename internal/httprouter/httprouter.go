@@ -23,7 +23,7 @@ type Command struct {
 	Value string `json:"value,omitempty"`
 }
 
-func NewRouter(ctx context.Context, streamManager av.StreamManager) *chi.Mux {
+func NewRouter(ctx context.Context, streamManager av.RelayHub) *chi.Mux {
 	r := chi.NewRouter()
 	// Middleware stack
 	r.Use(middleware.RequestID)
@@ -67,7 +67,7 @@ func WSHandler(
 	ctx context.Context,
 	w http.ResponseWriter,
 	r *http.Request,
-	streamManager av.StreamManager,
+	streamManager av.RelayHub,
 ) {
 	wsConn, err := websocket.Accept(w, r, &websocket.AcceptOptions{
 		OriginPatterns:  []string{"*"}, // Allow all origins
@@ -87,10 +87,10 @@ func WSHandler(
 		}
 	}()
 
-	producerID := r.URL.Query().Get("producerID")
+	sourceID := r.URL.Query().Get("sourceID")
 	consumerID := r.URL.Query().Get("consumerID")
 	log.Info().
-		Str("producerID", producerID).
+		Str("sourceID", sourceID).
 		Str("consumerID", consumerID).
 		Msg("ws handler received")
 
@@ -156,7 +156,7 @@ func WSHandler(
 						ms = localMs
 						msMu.Unlock()
 
-						handle, err := streamManager.Consume(ctx, producerID, av.ConsumeOptions{
+						handle, err := streamManager.Consume(ctx, sourceID, av.ConsumeOptions{
 							ConsumerID: consumerID,
 							MuxerFactory: func(_ context.Context, _ string) (av.MuxCloser, error) {
 								return localMs, nil
@@ -186,13 +186,13 @@ func WSHandler(
 					switch cmd.Value {
 					case "": // initial subscription — no action needed
 					case "pause":
-						if err := streamManager.PauseProducer(ctx, producerID); err != nil {
+						if err := streamManager.PauseRelay(ctx, sourceID); err != nil {
 							errReadChan <- err
 
 							return
 						}
 					case "resume":
-						if err := streamManager.ResumeProducer(ctx, producerID); err != nil {
+						if err := streamManager.ResumeRelay(ctx, sourceID); err != nil {
 							errReadChan <- err
 
 							return

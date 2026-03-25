@@ -60,7 +60,7 @@ type sample struct {
 	flags              uint32
 	ptsOffset          int32 // composition-time offset in timescale units (B-frame support)
 	data               []byte
-	extra              []byte // optional metadata payload (e.g. bounding-box JSON) from av.Packet.PVAData
+	extra              []byte // optional analytics payload (JSON) from av.Packet.Analytics
 	presentationTimeMS int64  // absolute presentation time in milliseconds for emsg
 	dts                int64  // decode time in timescale units; used to back-fill preceding sample duration
 }
@@ -354,8 +354,8 @@ func makeSample(pkt av.Packet, ts *trackState) sample {
 
 	var extra []byte
 
-	if pkt.PVAData != nil {
-		if b, err := json.Marshal(pkt.PVAData); err == nil {
+	if pkt.Analytics != nil {
+		if b, err := json.Marshal(pkt.Analytics); err == nil {
 			extra = b
 		}
 	}
@@ -1045,7 +1045,7 @@ func buildMdat(active []*trackState, _ uint32) []byte {
 // that MSE delivers the DataCue event synchronously with the video frame.
 func buildEmsg(presentationTimeMS int64, id uint32, data []byte) []byte {
 	const (
-		schemeIDURI = "urn:vtpl:bboxes:1"
+		schemeIDURI = "urn:vtpl:analytics:1"
 		value       = ""
 		timescale   = uint32(1000) // millisecond resolution
 		eventDurInf = uint32(0xFFFFFFFF)

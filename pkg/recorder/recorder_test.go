@@ -42,35 +42,35 @@ type fakeStreamManager struct {
 	consumed []consumeCall
 	// onConsume, if non-nil, returns the handle and error for each Consume call.
 	// If nil, a no-op handle is returned.
-	onConsume func(producerID string, opts av.ConsumeOptions) (av.ConsumerHandle, error)
+	onConsume func(sourceID string, opts av.ConsumeOptions) (av.ConsumerHandle, error)
 }
 
 type consumeCall struct {
-	producerID string
-	opts       av.ConsumeOptions
+	sourceID string
+	opts     av.ConsumeOptions
 }
 
-func (sm *fakeStreamManager) Consume(_ context.Context, producerID string, opts av.ConsumeOptions) (av.ConsumerHandle, error) {
+func (sm *fakeStreamManager) Consume(_ context.Context, sourceID string, opts av.ConsumeOptions) (av.ConsumerHandle, error) {
 	sm.mu.Lock()
-	sm.consumed = append(sm.consumed, consumeCall{producerID, opts})
+	sm.consumed = append(sm.consumed, consumeCall{sourceID, opts})
 	sm.mu.Unlock()
 
 	if sm.onConsume != nil {
-		return sm.onConsume(producerID, opts)
+		return sm.onConsume(sourceID, opts)
 	}
 
 	h := &fakeHandle{id: opts.ConsumerID}
 	return h, nil
 }
 
-func (sm *fakeStreamManager) GetActiveProducersCount(_ context.Context) int    { return 0 }
-func (sm *fakeStreamManager) PauseProducer(_ context.Context, _ string) error  { return nil }
-func (sm *fakeStreamManager) ResumeProducer(_ context.Context, _ string) error { return nil }
-func (sm *fakeStreamManager) Start(_ context.Context) error                    { return nil }
-func (sm *fakeStreamManager) Stop() error                                      { return nil }
-func (sm *fakeStreamManager) SignalStop() bool                                 { return true }
-func (sm *fakeStreamManager) WaitStop() error                                  { return nil }
-func (sm *fakeStreamManager) GetProducersStats(_ context.Context) []av.ProducerStats {
+func (sm *fakeStreamManager) GetActiveRelayCount(_ context.Context) int     { return 0 }
+func (sm *fakeStreamManager) PauseRelay(_ context.Context, _ string) error  { return nil }
+func (sm *fakeStreamManager) ResumeRelay(_ context.Context, _ string) error { return nil }
+func (sm *fakeStreamManager) Start(_ context.Context) error                 { return nil }
+func (sm *fakeStreamManager) Stop() error                                   { return nil }
+func (sm *fakeStreamManager) SignalStop() bool                              { return true }
+func (sm *fakeStreamManager) WaitStop() error                               { return nil }
+func (sm *fakeStreamManager) GetRelayStats(_ context.Context) []av.RelayStats {
 	return nil
 }
 
@@ -191,7 +191,7 @@ func TestStopSegment_HandleClosedOnStop(t *testing.T) {
 	var mu sync.Mutex
 
 	sm := &fakeStreamManager{}
-	sm.onConsume = func(producerID string, opts av.ConsumeOptions) (av.ConsumerHandle, error) {
+	sm.onConsume = func(sourceID string, opts av.ConsumeOptions) (av.ConsumerHandle, error) {
 		// Simulate WriteHeader so the muxer factory is exercised; we don't
 		// need a real file here — the factory is called with consumerID.
 		h := &fakeHandle{

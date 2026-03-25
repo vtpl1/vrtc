@@ -12,7 +12,7 @@ import (
 var ErrChannelNotFound = errors.New("channel: not found")
 
 // Channel describes one camera or stream source.
-// ID is the producerID used throughout the stream manager; it must be unique.
+// ID is the sourceID used throughout the stream manager; it must be unique.
 type Channel struct {
 	ID        string            `json:"id"`
 	Name      string            `json:"name"`

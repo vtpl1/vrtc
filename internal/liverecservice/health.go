@@ -91,7 +91,7 @@ type healthSnapshot struct {
 
 func collectHealth(
 	ctx context.Context,
-	sm av.StreamManager,
+	sm av.RelayHub,
 	rm *recorder.RecordingManager,
 	ct *connTracker,
 	startTime time.Time,
@@ -115,7 +115,7 @@ func collectHealth(
 			GCRuns:    ms.NumGC,
 		},
 		Streams: healthStreams{
-			ActiveProducers: sm.GetActiveProducersCount(ctx),
+			ActiveProducers: sm.GetActiveRelayCount(ctx),
 		},
 		Recorder: healthRecorder{
 			ActiveSegments: rm.ActiveCount(),
@@ -135,7 +135,7 @@ func collectHealth(
 func healthHandler(
 	ctx context.Context,
 	w http.ResponseWriter,
-	sm av.StreamManager,
+	sm av.RelayHub,
 	rm *recorder.RecordingManager,
 	ct *connTracker,
 	startTime time.Time,
@@ -153,7 +153,7 @@ func healthHandler(
 // startHealthLogger logs a health snapshot at the given interval until ctx is cancelled.
 func startHealthLogger(
 	ctx context.Context,
-	sm av.StreamManager,
+	sm av.RelayHub,
 	rm *recorder.RecordingManager,
 	ct *connTracker,
 	startTime time.Time,

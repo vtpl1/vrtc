@@ -44,9 +44,9 @@ type Packet struct {
     //                        (KeyFrame==true, NewCodecs!=nil, no media data).
     Data []byte
 
-    // PVAData carries per-frame object-detection analytics (vehicle count,
-    // people count, bounding boxes, etc.). nil when analytics are absent.
-    PVAData *PVAData
+    // Analytics carries per-frame analytics results (object detection, face
+    // recognition, license plate recognition, etc.). nil when absent.
+    Analytics *FrameAnalytics
 
     // ── Codec change ──────────────────────────────────────────────────────
     // NewCodecs is non-nil on the keyframe packet that immediately follows a
@@ -155,12 +155,12 @@ Muxer expectations:
 | MPEG-TS / HLS | Convert AVCC → Annex-B at write boundary |
 | RTP packetizer | Extract raw NALUs from AVCC length-prefix framing |
 
-### 3.11 PVAData
+### 3.11 Analytics
 
-Per-frame object-detection analytics (`*av.PVAData`): vehicle count, people
-count, bounding boxes, reference dimensions. `nil` when analytics are absent.
-The fmp4 muxer serialises non-nil PVAData into emsg boxes; the fmp4 demuxer
-deserialises them back.
+Per-frame analytics results (`*av.FrameAnalytics`): object detections with
+bounding boxes, aggregate counts, reference dimensions. `nil` when absent.
+The fmp4 muxer serialises non-nil Analytics into emsg boxes (scheme
+`urn:vtpl:analytics:1`); the fmp4 demuxer deserialises them back.
 
 ### 3.12 NewCodecs
 
@@ -179,7 +179,7 @@ codec-change notification; no media data should be decoded from it.
 - `IsParamSetNALU bool` — removed. Codec parameter sets are communicated
   exclusively through `NewCodecs` on the keyframe that follows.
 - `StreamMeta` — removed. Was never populated by any demuxer.
-- `Metadata any` — replaced by the strongly-typed `PVAData *PVAData`.
+- `Metadata any` — replaced by the strongly-typed `Analytics *FrameAnalytics`.
 
 ---
 

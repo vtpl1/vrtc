@@ -14,7 +14,7 @@ import (
 	"github.com/vtpl1/vrtc/internal/httprouter"
 	"github.com/vtpl1/vrtc/pkg/av"
 	"github.com/vtpl1/vrtc/pkg/av/format/llhls"
-	"github.com/vtpl1/vrtc/pkg/av/streammanager3"
+	"github.com/vtpl1/vrtc/pkg/av/relayhub"
 	"github.com/vtpl1/vrtc/pkg/lifecycle"
 	"github.com/vtpl1/vrtc/pkg/pva"
 )
@@ -150,7 +150,7 @@ func Run(appName, appMode string, cfg Config) error {
 
 	errChan := make(chan error)
 
-	producerID := cfg.Edge.StreamAddr
+	sourceID := cfg.Edge.StreamAddr
 
 	// ── LL-HLS muxer registry ─────────────────────────────────────────────────
 
@@ -228,7 +228,7 @@ func Run(appName, appMode string, cfg Config) error {
 
 	// ── stream manager ────────────────────────────────────────────────────────
 
-	sm := streammanager3.New(demuxerFactory, demuxerRemover)
+	sm := relayhub.New(demuxerFactory, demuxerRemover)
 
 	if err := sm.Start(ctx); err != nil {
 		return fmt.Errorf("stream manager start: %w", err)
@@ -313,7 +313,7 @@ func Run(appName, appMode string, cfg Config) error {
 
 		errCh := make(chan error, 1)
 
-		handle, err := sm.Consume(r.Context(), producerID, av.ConsumeOptions{
+		handle, err := sm.Consume(r.Context(), sourceID, av.ConsumeOptions{
 			ConsumerID:   consumerID,
 			MuxerFactory: muxerFactory,
 			MuxerRemover: muxerRemover,
@@ -331,7 +331,7 @@ func Run(appName, appMode string, cfg Config) error {
 		e.handle = handle
 		consumersMu.Unlock()
 
-		log.Info().Str("consumer", consumerID).Str("dir", producerID).Msg("consumer added")
+		log.Info().Str("consumer", consumerID).Str("dir", sourceID).Msg("consumer added")
 
 		return e, nil
 	}
@@ -422,7 +422,7 @@ func Run(appName, appMode string, cfg Config) error {
 		Str("appName", appName).
 		Str("appMode", appMode).
 		Str("addr", addr).
-		Str("rtsp_url", producerID).
+		Str("rtsp_url", sourceID).
 		Msg("edge node starting")
 
 	srv := &http.Server{

@@ -25,7 +25,7 @@ type activeRec struct {
 // as schedules become active or inactive and rotates segments when the
 // configured SegmentMinutes threshold is reached.
 type RecordingManager struct {
-	sm           av.StreamManager
+	sm           av.RelayHub
 	schedules    schedule.ScheduleProvider
 	index        RecordingIndex
 	pollInterval time.Duration
@@ -45,7 +45,7 @@ type RecordingManager struct {
 //   - index         — persistent store for completed segment metadata
 //   - pollInterval  — how often to re-check schedules (e.g. 30 * time.Second)
 func New(
-	sm av.StreamManager,
+	sm av.RelayHub,
 	schedProvider schedule.ScheduleProvider,
 	index RecordingIndex,
 	pollInterval time.Duration,

@@ -13,7 +13,7 @@ import (
 	"github.com/soheilhy/cmux"
 	"github.com/vtpl1/vrtc/internal/httprouter"
 	"github.com/vtpl1/vrtc/pkg/av"
-	"github.com/vtpl1/vrtc/pkg/av/streammanager3"
+	"github.com/vtpl1/vrtc/pkg/av/relayhub"
 	"github.com/vtpl1/vrtc/pkg/lifecycle"
 )
 
@@ -45,14 +45,14 @@ func Run(appName, appMode string, cfg Config) error {
 
 	// Stub demuxer factory — replaced when gRPC source layer is rewritten.
 	demuxerFactory := av.DemuxerFactory(
-		func(_ context.Context, producerID string) (av.DemuxCloser, error) {
-			return nil, fmt.Errorf("%w: producerID=%s", errNotImplemented, producerID)
+		func(_ context.Context, sourceID string) (av.DemuxCloser, error) {
+			return nil, fmt.Errorf("%w: sourceID=%s", errNotImplemented, sourceID)
 		},
 	)
 
 	demuxerRemover := av.DemuxerRemover(func(_ context.Context, _ string) error { return nil })
 
-	sm := streammanager3.New(demuxerFactory, demuxerRemover)
+	sm := relayhub.New(demuxerFactory, demuxerRemover)
 
 	if err := sm.Start(ctx); err != nil {
 		log.Error().Err(err).Msg("stream manager start error")

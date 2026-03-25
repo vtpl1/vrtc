@@ -1,4 +1,4 @@
-package streammanager3
+package relayhub
 
 import (
 	"context"

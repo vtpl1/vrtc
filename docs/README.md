@@ -15,4 +15,4 @@ spec first, then implement.
 
 - `av.Packet.Data` for H.264/H.265 video is **AVCC format** — 4-byte BE length prefix per NALU (ISO 14496-15).
 - `av.Packet.Duration` is never `0` from a well-behaved demuxer.
-- `av.Packet.PVAData` carries optional `*av.PVAData` for object-detection analytics; `nil` when absent.
+- `av.Packet.Analytics` carries optional `*av.FrameAnalytics` for per-frame analytics (detections, counts); `nil` when absent.
