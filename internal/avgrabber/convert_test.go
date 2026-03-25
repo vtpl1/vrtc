@@ -145,9 +145,9 @@ func TestIsParamSetNALU_H264(t *testing.T) {
 	t.Parallel()
 
 	tests := []struct {
-		name  string
-		nalu  byte
-		want  bool
+		name string
+		nalu byte
+		want bool
 	}{
 		{"SPS", 0x67, true},          // type 7
 		{"PPS", 0x68, true},          // type 8
@@ -177,9 +177,9 @@ func TestIsParamSetNALU_H265(t *testing.T) {
 		nalu byte
 		want bool
 	}{
-		{"VPS", 0x40, true},        // (32 << 1) = 0x40
-		{"SPS", 0x42, true},        // (33 << 1) = 0x42
-		{"PPS", 0x44, true},        // (34 << 1) = 0x44
+		{"VPS", 0x40, true},         // (32 << 1) = 0x40
+		{"SPS", 0x42, true},         // (33 << 1) = 0x42
+		{"PPS", 0x44, true},         // (34 << 1) = 0x44
 		{"IDR_W_RADL", 0x26, false}, // (19 << 1) = 0x26
 		{"TRAIL_R", 0x02, false},    // (1 << 1)  = 0x02
 	}

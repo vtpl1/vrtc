@@ -693,9 +693,9 @@ func TestDemuxer_ManyPackets(t *testing.T) {
 	t.Parallel()
 
 	const (
-		total       = 500
-		gopSize     = 30
-		frameDur    = 33 * time.Millisecond
+		total    = 500
+		gopSize  = 30
+		frameDur = 33 * time.Millisecond
 	)
 
 	h264 := makeH264Codec(t)
@@ -865,7 +865,6 @@ func TestDemuxer_ReadPacketBeforeGetCodecs(t *testing.T) {
 	// (as a mid-stream codec change) or return an error.
 	ctx := context.Background()
 	pkt, err := dmx.ReadPacket(ctx)
-
 	if err != nil {
 		// It is acceptable to get an error if the demuxer requires GetCodecs first.
 		// Verify it is not a panic or unexpected error type.
