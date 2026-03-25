@@ -131,26 +131,6 @@ func (m *StreamManager) Consume(
 	}
 }
 
-// AddConsumer is kept as a compatibility shim for direct callers of the
-// concrete streammanager3 type. Prefer Consume.
-func (m *StreamManager) AddConsumer(
-	ctx context.Context,
-	producerID string,
-	consumerID string,
-	muxerFactory av.MuxerFactory,
-	muxerRemover av.MuxerRemover,
-	errChan chan<- error,
-) error {
-	_, err := m.Consume(ctx, producerID, av.ConsumeOptions{
-		ConsumerID:   consumerID,
-		MuxerFactory: muxerFactory,
-		MuxerRemover: muxerRemover,
-		ErrChan:      errChan,
-	})
-
-	return err
-}
-
 func (m *StreamManager) removeConsumer(
 	ctx context.Context,
 	producerID string,
@@ -165,16 +145,6 @@ func (m *StreamManager) removeConsumer(
 	}
 
 	return p.RemoveConsumer(ctx, consumerID)
-}
-
-// RemoveConsumer is kept as a compatibility shim for direct callers of the
-// concrete streammanager3 type. Prefer ConsumerHandle.Close.
-func (m *StreamManager) RemoveConsumer(
-	ctx context.Context,
-	producerID string,
-	consumerID string,
-) error {
-	return m.removeConsumer(ctx, producerID, consumerID)
 }
 
 func (m *StreamManager) GetActiveProducersCount(_ context.Context) int {

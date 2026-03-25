@@ -216,20 +216,13 @@ func startedSM(t *testing.T, ctx context.Context) *streammanager3.StreamManager 
 	return sm
 }
 
-// removeConsumer calls RemoveConsumer and tolerates ErrProducerNotFound,
-// which can occur legitimately if the producer was already auto-cleaned-up
-// by the StreamManager's idle ticker.
-func removeConsumer(
-	t *testing.T,
-	sm *streammanager3.StreamManager,
-	ctx context.Context,
-	producerID, consumerID string,
-) {
+// removeConsumer closes h. ErrProducerNotFound is already swallowed by
+// ConsumerHandle.Close, so no special-casing is needed here.
+func removeConsumer(t *testing.T, h av.ConsumerHandle, ctx context.Context) {
 	t.Helper()
 
-	if err := sm.RemoveConsumer(ctx, producerID, consumerID); err != nil &&
-		!errors.Is(err, streammanager3.ErrProducerNotFound) {
-		t.Errorf("RemoveConsumer(%s, %s): %v", producerID, consumerID, err)
+	if err := h.Close(ctx); err != nil {
+		t.Errorf("Close: %v", err)
 	}
 }
 
@@ -318,29 +311,41 @@ func TestConsumerAlreadyExists(t *testing.T) {
 	sm := startedSM(t, ctx)
 	factory, _ := makeMuxerFactory()
 
-	if err := sm.AddConsumer(ctx, "producer-1", "consumer-1", factory, nil, nil); err != nil {
+	if _, err := sm.Consume(ctx, "producer-1", av.ConsumeOptions{ConsumerID: "consumer-1", MuxerFactory: factory}); err != nil {
 		t.Fatal(err)
 	}
 
-	err := sm.AddConsumer(ctx, "producer-1", "consumer-1", factory, nil, nil)
+	_, err := sm.Consume(ctx, "producer-1", av.ConsumeOptions{ConsumerID: "consumer-1", MuxerFactory: factory})
 	if !errors.Is(err, streammanager3.ErrConsumerAlreadyExists) {
-		t.Errorf("duplicate AddConsumer: got %v, want ErrConsumerAlreadyExists", err)
+		t.Errorf("duplicate Consume: got %v, want ErrConsumerAlreadyExists", err)
 	}
 }
 
-// TestRemoveNonExistentConsumer verifies that RemoveConsumer with an unknown
-// producerID returns ErrProducerNotFound rather than panicking or returning nil.
-func TestRemoveNonExistentConsumer(t *testing.T) {
+// TestCloseHandleIdempotent verifies that calling Close on a ConsumerHandle
+// more than once is safe and always returns nil.
+func TestCloseHandleIdempotent(t *testing.T) {
 	t.Parallel()
 
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 
 	sm := startedSM(t, ctx)
+	factory, _ := makeMuxerFactory()
 
-	err := sm.RemoveConsumer(ctx, "ghost-producer", "ghost-consumer")
-	if !errors.Is(err, streammanager3.ErrProducerNotFound) {
-		t.Errorf("RemoveConsumer unknown producer: got %v, want ErrProducerNotFound", err)
+	handle, err := sm.Consume(ctx, "producer-1", av.ConsumeOptions{
+		ConsumerID:   "consumer-1",
+		MuxerFactory: factory,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if err := handle.Close(ctx); err != nil {
+		t.Errorf("first Close: got %v, want nil", err)
+	}
+
+	if err := handle.Close(ctx); err != nil {
+		t.Errorf("second Close: got %v, want nil", err)
 	}
 }
 
@@ -402,7 +407,7 @@ func TestConsumerHandleCloseAutoStopsProducer(t *testing.T) {
 // =============================================================================
 
 // TestDemuxerFactoryErrorPropagatesToCaller verifies that when the demuxer
-// factory returns an error the AddConsumer call eventually surfaces that error
+// factory returns an error the Consume call eventually surfaces that error
 // to the caller (via the producer's LastError).
 func TestDemuxerFactoryErrorPropagatesToCaller(t *testing.T) {
 	t.Parallel()
@@ -424,9 +429,9 @@ func TestDemuxerFactoryErrorPropagatesToCaller(t *testing.T) {
 
 	factory, _ := makeMuxerFactory()
 
-	err := sm.AddConsumer(ctx, "producer-1", "consumer-1", factory, nil, nil)
+	_, err := sm.Consume(ctx, "producer-1", av.ConsumeOptions{ConsumerID: "consumer-1", MuxerFactory: factory})
 	if err == nil {
-		t.Fatal("expected an error from AddConsumer when demuxer factory fails, got nil")
+		t.Fatal("expected an error from Consume when demuxer factory fails, got nil")
 	}
 
 	if !errors.Is(err, errDemuxFail) {
@@ -435,7 +440,7 @@ func TestDemuxerFactoryErrorPropagatesToCaller(t *testing.T) {
 }
 
 // TestMuxerErrorPropagatedToErrChan creates a muxer that fails after 5 packets
-// and verifies that the error is delivered to the errChan provided to AddConsumer.
+// and verifies that the error is delivered to the errChan provided to Consume.
 func TestMuxerErrorPropagatedToErrChan(t *testing.T) {
 	t.Parallel()
 
@@ -450,14 +455,11 @@ func TestMuxerErrorPropagatedToErrChan(t *testing.T) {
 	}
 
 	errChan := make(chan error, 1)
-	if err := sm.AddConsumer(
-		ctx,
-		"producer-1",
-		"failing-consumer",
-		muxFactory,
-		nil,
-		errChan,
-	); err != nil {
+	if _, err := sm.Consume(ctx, "producer-1", av.ConsumeOptions{
+		ConsumerID:   "failing-consumer",
+		MuxerFactory: muxFactory,
+		ErrChan:      errChan,
+	}); err != nil {
 		t.Fatal(err)
 	}
 
@@ -476,8 +478,8 @@ func TestMuxerErrorPropagatedToErrChan(t *testing.T) {
 // =============================================================================
 
 // TestContextCancellationDuringJoins cancels the context while 50 goroutines
-// are mid-AddConsumer. Verifies that all goroutines exit cleanly with no
-// deadlocks or panics regardless of which stage of AddConsumer they are in.
+// are mid-Consume. Verifies that all goroutines exit cleanly with no
+// deadlocks or panics regardless of which stage of Consume they are in.
 func TestContextCancellationDuringJoins(t *testing.T) {
 	t.Parallel()
 
@@ -495,11 +497,11 @@ func TestContextCancellationDuringJoins(t *testing.T) {
 		go func(i int) {
 			defer wg.Done()
 
-			_ = sm.AddConsumer(ctx, "producer-1", fmt.Sprintf("consumer-%d", i), factory, nil, nil)
+			_, _ = sm.Consume(ctx, "producer-1", av.ConsumeOptions{ConsumerID: fmt.Sprintf("consumer-%d", i), MuxerFactory: factory})
 		}(i)
 	}
 
-	// Cancel while goroutines are in various stages of AddConsumer.
+	// Cancel while goroutines are in various stages of Consume.
 	time.Sleep(5 * time.Millisecond)
 	cancel()
 	wg.Wait()
@@ -531,14 +533,16 @@ func TestMassiveParallelConsumers(t *testing.T) {
 			defer wg.Done()
 
 			id := fmt.Sprintf("consumer-%d", i)
-			if err := sm.AddConsumer(ctx, "producer-1", id, factory, nil, nil); err != nil {
+
+			handle, err := sm.Consume(ctx, "producer-1", av.ConsumeOptions{ConsumerID: id, MuxerFactory: factory})
+			if err != nil {
 				errs <- fmt.Errorf("add %s: %w", id, err)
 
 				return
 			}
 
 			time.Sleep(time.Duration(i%50+1) * time.Millisecond)
-			removeConsumer(t, sm, ctx, "producer-1", id)
+			removeConsumer(t, handle, ctx)
 		}(i)
 	}
 
@@ -552,7 +556,7 @@ func TestMassiveParallelConsumers(t *testing.T) {
 
 // TestConsumerChurn runs 20 workers that continuously add and remove their own
 // consumer from a shared producer for 2 seconds. Stress-tests the consumer-map
-// locking, the ticker cleanup path, and the AddConsumer retry loop under
+// locking, the ticker cleanup path, and the Consume retry loop under
 // sustained join/leave pressure.
 func TestConsumerChurn(t *testing.T) {
 	t.Parallel()
@@ -575,7 +579,9 @@ func TestConsumerChurn(t *testing.T) {
 			holdFor := time.Duration(w%10+1) * time.Millisecond
 			for iter := 0; ctx.Err() == nil; iter++ {
 				id := fmt.Sprintf("worker-%d-iter-%d", w, iter)
-				if err := sm.AddConsumer(ctx, "producer-1", id, factory, nil, nil); err != nil {
+
+				handle, err := sm.Consume(ctx, "producer-1", av.ConsumeOptions{ConsumerID: id, MuxerFactory: factory})
+				if err != nil {
 					return
 				}
 
@@ -583,13 +589,13 @@ func TestConsumerChurn(t *testing.T) {
 				select {
 				case <-ctx.Done():
 					timer.Stop()
-					removeConsumer(t, sm, ctx, "producer-1", id)
+					removeConsumer(t, handle, ctx)
 
 					return
 				case <-timer.C:
 				}
 
-				removeConsumer(t, sm, ctx, "producer-1", id)
+				removeConsumer(t, handle, ctx)
 			}
 		}(w)
 	}
@@ -627,16 +633,17 @@ func TestMultipleProducersParallel(t *testing.T) {
 				defer wg.Done()
 
 				pid := fmt.Sprintf("producer-%d", p)
-
 				cid := fmt.Sprintf("consumer-%d-%d", p, c)
-				if err := sm.AddConsumer(ctx, pid, cid, factory, nil, nil); err != nil {
+
+				handle, err := sm.Consume(ctx, pid, av.ConsumeOptions{ConsumerID: cid, MuxerFactory: factory})
+				if err != nil {
 					errs <- fmt.Errorf("add %s/%s: %w", pid, cid, err)
 
 					return
 				}
 
 				time.Sleep(time.Duration((p+c)%20+1) * time.Millisecond)
-				removeConsumer(t, sm, ctx, pid, cid)
+				removeConsumer(t, handle, ctx)
 			}(p, c)
 		}
 	}
@@ -671,7 +678,7 @@ func TestConsumerJoinsDuringPacketFlood(t *testing.T) {
 	factory, registry := makeMuxerFactory()
 	sm := startedSM(t, ctx)
 
-	if err := sm.AddConsumer(ctx, "producer-1", "first", factory, nil, nil); err != nil {
+	if _, err := sm.Consume(ctx, "producer-1", av.ConsumeOptions{ConsumerID: "first", MuxerFactory: factory}); err != nil {
 		t.Fatal(err)
 	}
 
@@ -688,12 +695,14 @@ func TestConsumerJoinsDuringPacketFlood(t *testing.T) {
 			defer wg.Done()
 
 			id := fmt.Sprintf("late-%d", i)
-			if err := sm.AddConsumer(ctx, "producer-1", id, factory, nil, nil); err != nil {
+
+			handle, err := sm.Consume(ctx, "producer-1", av.ConsumeOptions{ConsumerID: id, MuxerFactory: factory})
+			if err != nil {
 				return
 			}
 
 			time.Sleep(50 * time.Millisecond)
-			removeConsumer(t, sm, ctx, "producer-1", id)
+			removeConsumer(t, handle, ctx)
 		}(i)
 	}
 
@@ -745,7 +754,7 @@ func TestBaselineConsumerUnaffectedByJoinsAndLeaves(t *testing.T) {
 	factory, registry := makeMuxerFactory()
 	sm := startedSM(t, ctx)
 
-	if err := sm.AddConsumer(ctx, producerID, baselineID, factory, nil, nil); err != nil {
+	if _, err := sm.Consume(ctx, producerID, av.ConsumeOptions{ConsumerID: baselineID, MuxerFactory: factory}); err != nil {
 		t.Fatal(err)
 	}
 
@@ -783,7 +792,9 @@ func TestBaselineConsumerUnaffectedByJoinsAndLeaves(t *testing.T) {
 			holdFor := time.Duration(w%5+1) * time.Millisecond
 			for iter := 0; stormCtx.Err() == nil; iter++ {
 				id := fmt.Sprintf("storm-%d-%d", w, iter)
-				if err := sm.AddConsumer(ctx, producerID, id, factory, nil, nil); err != nil {
+
+				handle, err := sm.Consume(ctx, producerID, av.ConsumeOptions{ConsumerID: id, MuxerFactory: factory})
+				if err != nil {
 					return
 				}
 
@@ -791,13 +802,13 @@ func TestBaselineConsumerUnaffectedByJoinsAndLeaves(t *testing.T) {
 				select {
 				case <-stormCtx.Done():
 					timer.Stop()
-					removeConsumer(t, sm, ctx, producerID, id)
+					removeConsumer(t, handle, ctx)
 
 					return
 				case <-timer.C:
 				}
 
-				removeConsumer(t, sm, ctx, producerID, id)
+				removeConsumer(t, handle, ctx)
 			}
 		}(w)
 	}
@@ -891,7 +902,7 @@ func TestPauseResumeDuringConsumerChurn(t *testing.T) {
 	factory, _ := makeMuxerFactory()
 
 	// Seed the producer so it exists before the churn begins.
-	if err := sm.AddConsumer(ctx, "producer-1", "seed", factory, nil, nil); err != nil {
+	if _, err := sm.Consume(ctx, "producer-1", av.ConsumeOptions{ConsumerID: "seed", MuxerFactory: factory}); err != nil {
 		t.Fatal(err)
 	}
 
@@ -905,12 +916,14 @@ func TestPauseResumeDuringConsumerChurn(t *testing.T) {
 
 			for iter := 0; ctx.Err() == nil; iter++ {
 				id := fmt.Sprintf("churn-%d-%d", w, iter)
-				if err := sm.AddConsumer(ctx, "producer-1", id, factory, nil, nil); err != nil {
+
+				handle, err := sm.Consume(ctx, "producer-1", av.ConsumeOptions{ConsumerID: id, MuxerFactory: factory})
+				if err != nil {
 					return
 				}
 
 				time.Sleep(time.Duration(w%5+1) * time.Millisecond)
-				removeConsumer(t, sm, ctx, "producer-1", id)
+				removeConsumer(t, handle, ctx)
 			}
 		}(w)
 	}
@@ -990,9 +1003,9 @@ func (m *codecChangingMuxer) WriteCodecChange(_ context.Context, _ []av.Stream) 
 // Tests — Lifecycle preconditions
 // =============================================================================
 
-// TestAddConsumerBeforeStart verifies that AddConsumer returns
+// TestConsumeBeforeStart verifies that Consume returns
 // ErrStreamManagerNotStartedYet when Start has not yet been called.
-func TestAddConsumerBeforeStart(t *testing.T) {
+func TestConsumeBeforeStart(t *testing.T) {
 	t.Parallel()
 
 	ctx := t.Context()
@@ -1000,9 +1013,9 @@ func TestAddConsumerBeforeStart(t *testing.T) {
 	sm := streammanager3.New(makeDemuxerFactory(testStreams()), nil)
 	factory, _ := makeMuxerFactory()
 
-	err := sm.AddConsumer(ctx, "producer-1", "consumer-1", factory, nil, nil)
+	_, err := sm.Consume(ctx, "producer-1", av.ConsumeOptions{ConsumerID: "consumer-1", MuxerFactory: factory})
 	if !errors.Is(err, streammanager3.ErrStreamManagerNotStartedYet) {
-		t.Errorf("AddConsumer before Start: got %v, want ErrStreamManagerNotStartedYet", err)
+		t.Errorf("Consume before Start: got %v, want ErrStreamManagerNotStartedYet", err)
 	}
 }
 
@@ -1046,7 +1059,7 @@ func TestStopCleansUpAllProducers(t *testing.T) {
 		pid := fmt.Sprintf("producer-%d", i)
 		cid := fmt.Sprintf("consumer-%d", i)
 
-		if err := sm.AddConsumer(ctx, pid, cid, factory, nil, nil); err != nil {
+		if _, err := sm.Consume(ctx, pid, av.ConsumeOptions{ConsumerID: cid, MuxerFactory: factory}); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -1066,7 +1079,7 @@ func TestStopCleansUpAllProducers(t *testing.T) {
 
 // TestMuxerFactoryErrorPropagatedToErrChan verifies that when the MuxerFactory
 // itself returns an error (not WritePacket), the error is delivered
-// asynchronously to errChan and AddConsumer still returns nil.
+// asynchronously to errChan and Consume still returns nil.
 func TestMuxerFactoryErrorPropagatedToErrChan(t *testing.T) {
 	t.Parallel()
 
@@ -1081,8 +1094,12 @@ func TestMuxerFactoryErrorPropagatedToErrChan(t *testing.T) {
 	}
 
 	errChan := make(chan error, 1)
-	if err := sm.AddConsumer(ctx, "producer-1", "consumer-1", badFactory, nil, errChan); err != nil {
-		t.Fatalf("AddConsumer: unexpected synchronous error: %v", err)
+	if _, err := sm.Consume(ctx, "producer-1", av.ConsumeOptions{
+		ConsumerID:   "consumer-1",
+		MuxerFactory: badFactory,
+		ErrChan:      errChan,
+	}); err != nil {
+		t.Fatalf("Consume: unexpected synchronous error: %v", err)
 	}
 
 	select {
@@ -1095,23 +1112,30 @@ func TestMuxerFactoryErrorPropagatedToErrChan(t *testing.T) {
 	}
 }
 
-// TestRemoveConsumerUnknownConsumerID verifies that removing a consumerID that
-// does not exist on a valid producer is a no-op and returns nil (not an error).
-func TestRemoveConsumerUnknownConsumerID(t *testing.T) {
+// TestCloseHandleAfterProducerGone verifies that closing a handle after the
+// producer has already been reclaimed by the idle ticker returns nil.
+func TestCloseHandleAfterProducerGone(t *testing.T) {
 	t.Parallel()
 
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 
 	sm := startedSM(t, ctx)
 	factory, _ := makeMuxerFactory()
 
-	if err := sm.AddConsumer(ctx, "producer-1", "consumer-1", factory, nil, nil); err != nil {
+	handle, err := sm.Consume(ctx, "producer-1", av.ConsumeOptions{ConsumerID: "consumer-1", MuxerFactory: factory})
+	if err != nil {
 		t.Fatal(err)
 	}
 
-	if err := sm.RemoveConsumer(ctx, "producer-1", "nonexistent-consumer"); err != nil {
-		t.Errorf("RemoveConsumer unknown consumerID: got %v, want nil", err)
+	// Close the handle; the producer will be reclaimed by the idle ticker.
+	if err := handle.Close(ctx); err != nil {
+		t.Fatalf("first Close: %v", err)
+	}
+
+	// Closing again after the producer is gone must still return nil.
+	if err := handle.Close(ctx); err != nil {
+		t.Errorf("second Close (producer gone): got %v, want nil", err)
 	}
 }
 
@@ -1146,7 +1170,7 @@ func TestDemuxerRemoverCalledOnShutdown(t *testing.T) {
 	factory, _ := makeMuxerFactory()
 
 	for _, pid := range []string{"producer-1", "producer-2"} {
-		if err := sm.AddConsumer(ctx, pid, pid+"-c", factory, nil, nil); err != nil {
+		if _, err := sm.Consume(ctx, pid, av.ConsumeOptions{ConsumerID: pid + "-c", MuxerFactory: factory}); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -1168,7 +1192,7 @@ func TestDemuxerRemoverCalledOnShutdown(t *testing.T) {
 }
 
 // TestMuxerRemoverCalledOnConsumerClose verifies that the MuxerRemover callback
-// is invoked after an explicit RemoveConsumer call.
+// is invoked after an explicit handle.Close() call.
 func TestMuxerRemoverCalledOnConsumerClose(t *testing.T) {
 	t.Parallel()
 
@@ -1188,7 +1212,12 @@ func TestMuxerRemoverCalledOnConsumerClose(t *testing.T) {
 	factory, registry := makeMuxerFactory()
 	sm := startedSM(t, ctx)
 
-	if err := sm.AddConsumer(ctx, "producer-1", "consumer-1", factory, muxRemover, nil); err != nil {
+	handle, err := sm.Consume(ctx, "producer-1", av.ConsumeOptions{
+		ConsumerID:   "consumer-1",
+		MuxerFactory: factory,
+		MuxerRemover: muxRemover,
+	})
+	if err != nil {
 		t.Fatal(err)
 	}
 
@@ -1203,7 +1232,7 @@ func TestMuxerRemoverCalledOnConsumerClose(t *testing.T) {
 		time.Sleep(5 * time.Millisecond)
 	}
 
-	if err := sm.RemoveConsumer(ctx, "producer-1", "consumer-1"); err != nil {
+	if err := handle.Close(ctx); err != nil {
 		t.Fatal(err)
 	}
 
@@ -1213,7 +1242,7 @@ func TestMuxerRemoverCalledOnConsumerClose(t *testing.T) {
 			t.Errorf("MuxerRemover called with %q, want %q", id, "consumer-1")
 		}
 	case <-time.After(2 * time.Second):
-		t.Error("MuxerRemover was not called within 2 s after RemoveConsumer")
+		t.Error("MuxerRemover was not called within 2 s after handle.Close")
 	}
 }
 
@@ -1252,7 +1281,7 @@ func TestCodecChangeForwardedToCodecChanger(t *testing.T) {
 		return mux, nil
 	}
 
-	if err := sm.AddConsumer(ctx, "producer-1", "consumer-1", muxFactory, nil, nil); err != nil {
+	if _, err := sm.Consume(ctx, "producer-1", av.ConsumeOptions{ConsumerID: "consumer-1", MuxerFactory: muxFactory}); err != nil {
 		t.Fatal(err)
 	}
 
@@ -1311,7 +1340,8 @@ func TestMillionConsumerOperations(t *testing.T) {
 
 				cid := fmt.Sprintf("w%d-op%d", w, i)
 
-				if err := sm.AddConsumer(ctx, pid, cid, factory, nil, nil); err != nil {
+				handle, err := sm.Consume(ctx, pid, av.ConsumeOptions{ConsumerID: cid, MuxerFactory: factory})
+				if err != nil {
 					if errors.Is(err, context.DeadlineExceeded) ||
 						errors.Is(err, context.Canceled) {
 						return
@@ -1321,7 +1351,7 @@ func TestMillionConsumerOperations(t *testing.T) {
 				}
 
 				success.Add(1)
-				removeConsumer(t, sm, ctx, pid, cid)
+				removeConsumer(t, handle, ctx)
 			}
 		}(w)
 	}
@@ -1340,7 +1370,7 @@ func TestMillionConsumerOperations(t *testing.T) {
 }
 
 // TestConcurrentStopDuringHighLoad calls Stop() while 200 goroutines are
-// hammering AddConsumer across 20 producers. Verifies clean shutdown with no
+// hammering Consume across 20 producers. Verifies clean shutdown with no
 // deadlocks, panics, or stuck goroutines under full load.
 func TestConcurrentStopDuringHighLoad(t *testing.T) {
 	t.Parallel()
@@ -1373,11 +1403,12 @@ func TestConcurrentStopDuringHighLoad(t *testing.T) {
 			for i := 0; ctx.Err() == nil; i++ {
 				cid := fmt.Sprintf("w%d-op%d", w, i)
 
-				if err := sm.AddConsumer(ctx, pid, cid, factory, nil, nil); err != nil {
+				handle, err := sm.Consume(ctx, pid, av.ConsumeOptions{ConsumerID: cid, MuxerFactory: factory})
+				if err != nil {
 					return
 				}
 
-				removeConsumer(t, sm, ctx, pid, cid)
+				removeConsumer(t, handle, ctx)
 			}
 		}(w)
 	}
@@ -1389,20 +1420,20 @@ func TestConcurrentStopDuringHighLoad(t *testing.T) {
 		t.Errorf("Stop() returned %v", err)
 	}
 
-	cancel() // unblock any goroutines still waiting inside AddConsumer
+	cancel() // unblock any goroutines still waiting inside Consume
 	wg.Wait()
 }
 
-// TestCloseBeforeStartRace exercises the specific window where RemoveConsumer
-// races against an in-flight AddConsumer before the producer goroutine has
-// dispatched Consumer.Start(). This directly validates the alreadyClosing guard
-// added to Consumer.Start after the CAS. Run with -race.
-func TestCloseBeforeStartRace(t *testing.T) {
+// TestRapidConsumeClose exercises the consumer lifecycle under high concurrency:
+// 100 goroutines each perform 100 rapid Consume+Close cycles on a shared producer.
+// This validates that the alreadyClosing guard in Consumer.Start holds under
+// sustained concurrent load. Run with -race.
+func TestRapidConsumeClose(t *testing.T) {
 	t.Parallel()
 
 	const (
 		numWorkers = 100
-		iterations = 100 // 100 × 100 = 10 000 concurrent add/remove pairs
+		iterations = 100 // 100 × 100 = 10 000 consume+close cycles
 	)
 
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
@@ -1412,7 +1443,7 @@ func TestCloseBeforeStartRace(t *testing.T) {
 	factory, _ := makeMuxerFactory()
 
 	// Seed the producer so it is running before the race begins.
-	if err := sm.AddConsumer(ctx, "producer-1", "seed", factory, nil, nil); err != nil {
+	if _, err := sm.Consume(ctx, "producer-1", av.ConsumeOptions{ConsumerID: "seed", MuxerFactory: factory}); err != nil {
 		t.Fatal(err)
 	}
 
@@ -1431,22 +1462,12 @@ func TestCloseBeforeStartRace(t *testing.T) {
 
 				cid := fmt.Sprintf("w%d-i%d", w, i)
 
-				// AddConsumer and RemoveConsumer run concurrently so that Close
-				// may arrive before the producer goroutine dispatches Start.
-				var pair sync.WaitGroup
-				pair.Add(2)
+				handle, err := sm.Consume(ctx, "producer-1", av.ConsumeOptions{ConsumerID: cid, MuxerFactory: factory})
+				if err != nil {
+					continue
+				}
 
-				go func() {
-					defer pair.Done()
-					_ = sm.AddConsumer(ctx, "producer-1", cid, factory, nil, nil)
-				}()
-
-				go func() {
-					defer pair.Done()
-					removeConsumer(t, sm, ctx, "producer-1", cid)
-				}()
-
-				pair.Wait()
+				_ = handle.Close(ctx)
 			}
 		}(w)
 	}
@@ -1486,14 +1507,15 @@ func TestHighConcurrencyManyProducers(t *testing.T) {
 				pid := fmt.Sprintf("producer-%d", p)
 				cid := fmt.Sprintf("consumer-%d-%d", p, c)
 
-				if err := sm.AddConsumer(ctx, pid, cid, factory, nil, nil); err != nil {
+				handle, err := sm.Consume(ctx, pid, av.ConsumeOptions{ConsumerID: cid, MuxerFactory: factory})
+				if err != nil {
 					errs <- fmt.Errorf("add %s/%s: %w", pid, cid, err)
 
 					return
 				}
 
 				time.Sleep(time.Duration((p+c)%10+1) * time.Millisecond)
-				removeConsumer(t, sm, ctx, pid, cid)
+				removeConsumer(t, handle, ctx)
 			}(p, c)
 		}
 	}
@@ -1633,7 +1655,7 @@ func TestHighLoadWithCodecChanges(t *testing.T) {
 				return mux, nil
 			}
 
-			if err := sm.AddConsumer(ctx, "producer-1", fmt.Sprintf("c%d", i), muxFactory, nil, nil); err != nil {
+			if _, err := sm.Consume(ctx, "producer-1", av.ConsumeOptions{ConsumerID: fmt.Sprintf("c%d", i), MuxerFactory: muxFactory}); err != nil {
 				return
 			}
 
@@ -1688,14 +1710,11 @@ func TestConsumerErrChanHighLoad(t *testing.T) {
 				return fm, nil
 			}
 
-			_ = sm.AddConsumer(
-				ctx,
-				"producer-1",
-				fmt.Sprintf("failing-%d", i),
-				muxFactory,
-				nil,
-				errChan,
-			)
+			_, _ = sm.Consume(ctx, "producer-1", av.ConsumeOptions{
+				ConsumerID:   fmt.Sprintf("failing-%d", i),
+				MuxerFactory: muxFactory,
+				ErrChan:      errChan,
+			})
 		}(i)
 	}
 
