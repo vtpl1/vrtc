@@ -41,10 +41,6 @@ update:
 	go get -u ./...
 	go mod tidy
 
-gen:
-	buf format -w
-	buf generate
-
 build:
 # 	mkdir -p $(OUTPUT_DIR)
 	$(foreach app, $(APPS), $(foreach platform, $(PLATFORMS), $(call build_platform, $(platform), $(app))))

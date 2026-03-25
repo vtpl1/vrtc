@@ -28,26 +28,23 @@ type Packet struct {
 	WallClockTime time.Time     // wall-clock capture/arrival time; zero means not set
 
 	// ── Payload ───────────────────────────────────────────────────────────
-	// Data is raw NALU bytes with no prefix of any kind:
-	//   H.264/H.265 video — single NALU, no \x00\x00\x00\x01 start code and
-	//                        no 4-byte AVCC length prefix; NALU header at Data[0].
-	//   Audio             — raw encoded samples, no container framing.
+	// Data carries the compressed media payload:
+	//   H.264/H.265 video — AVCC format: one or more NALUs, each prefixed with
+	//                        a 4-byte big-endian length (ISO 14496-15). This is
+	//                        the native format for MP4/fMP4 containers.
+	//   Audio             — raw encoded samples, no container framing
+	//                        (ADTS stripped for AAC).
 	//   Empty (nil/len=0) — valid only for a pure codec-change notification
 	//                        (KeyFrame==true, NewCodecs!=nil, no media data).
-	// See docs/av-packet-spec.md §3.10.
 	Data []byte
 
 	// PVAData carries per-frame object-detection analytics (vehicle count,
 	// people count, bounding boxes, etc.). nil when analytics are absent.
 	PVAData *PVAData
 
-	// StreamMeta carries live-stream source metadata reported by the device.
-	// Zero-valued when the packet was decoded from a recording.
-	StreamMeta StreamMeta
-
 	// ── Codec change ──────────────────────────────────────────────────────
-	// NewCodecs is non-nil on the I_FRAME packet that immediately follows a
-	// CONNECT_HEADER sequence. Contains only the streams whose codec changed.
+	// NewCodecs is non-nil on the keyframe packet that immediately follows a
+	// parameter-set change. Contains only the streams whose codec changed.
 	// Receivers must update per-stream codec state when this is non-nil.
 	NewCodecs []Stream
 }
@@ -138,7 +135,6 @@ func (m *Packet) GoString() string {
 			"  WallClockTime:   %s,\n"+
 			"  DataLen:         %d,\n"+
 			"  PVAData:         %s,\n"+
-			"  StreamMeta:      %+v,\n"+
 			"}",
 		m.FrameID,
 		m.KeyFrame,
@@ -152,7 +148,6 @@ func (m *Packet) GoString() string {
 		wallStr,
 		len(m.Data),
 		m.PVAData.String(),
-		m.StreamMeta,
 	)
 }
 

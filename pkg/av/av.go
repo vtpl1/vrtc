@@ -96,14 +96,6 @@ func (s CodecType) IsVideo() bool {
 	return s&codecTypeAudioBit == 0
 }
 
-// StreamMeta carries live-stream source metadata reported by the originating device.
-// All fields are zero when the packet was decoded from a stored file.
-type StreamMeta struct {
-	Bitrate         int32 // encoder bitrate in kbps as reported by the camera
-	Fps             int32 // frame rate as reported by the camera
-	MotionAvailable int8  // non-zero if the camera reported motion in this frame
-}
-
 // Stream pairs a stream index with its codec configuration.
 // Idx matches Packet.Idx; it is the authoritative identifier and must not be inferred
 // from the slice position, as stream indices may be non-contiguous (e.g. MPEG-TS PIDs).

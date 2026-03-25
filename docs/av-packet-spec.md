@@ -16,38 +16,41 @@ pipeline. It is codec-agnostic and container-agnostic. Every demuxer produces
 
 ```go
 type Packet struct {
+    // ── Flags ─────────────────────────────────────────────────────────────
+    KeyFrame        bool // true iff this is an IDR/keyframe video packet; always false for audio
+    IsDiscontinuity bool // DTS does not follow from the previous packet; receivers must reinitialise timing
+
     // ── Identity / routing ────────────────────────────────────────────────
-    Idx      uint16    // stream index; matches Stream.Idx from GetCodecs
+    Idx       uint16    // stream index; matches Stream.Idx from GetCodecs
     CodecType CodecType // codec of this packet
 
     // FrameID is a stable identity assigned by the source device or stream.
-    // Comparable across sessions for the same source. 0 = not assigned.
+    // Comparable across sessions for the same source. 0 means not assigned.
     FrameID int64
 
-    // ── Flags ─────────────────────────────────────────────────────────────
-    KeyFrame        bool // true iff this is an IDR/keyframe video packet
-    IsDiscontinuity bool // DTS does not follow from the previous packet
-
     // ── Timing ────────────────────────────────────────────────────────────
-    DTS           time.Duration // decode timestamp; monotonically non-decreasing
-    PTSOffset     time.Duration // PTS = DTS + PTSOffset; zero for non-B-frame codecs
+    DTS           time.Duration // decode timestamp; monotonically non-decreasing within a stream
+    PTSOffset     time.Duration // PTS = DTS + PTSOffset; zero for codecs without B-frames
     Duration      time.Duration // nominal presentation duration; never 0 from a well-behaved demuxer
-    WallClockTime time.Time     // wall-clock capture/arrival time; zero = not set
+    WallClockTime time.Time     // wall-clock capture/arrival time; zero means not set
 
     // ── Payload ───────────────────────────────────────────────────────────
-    // Data is raw NALU bytes with no prefix of any kind.
-    // See §4 for the full format contract.
+    // Data carries the compressed media payload:
+    //   H.264/H.265 video — AVCC format: one or more NALUs, each prefixed with
+    //                        a 4-byte big-endian length (ISO 14496-15).
+    //   Audio             — raw encoded samples, no container framing
+    //                        (ADTS stripped for AAC).
+    //   Empty (nil/len=0) — valid only for a pure codec-change notification
+    //                        (KeyFrame==true, NewCodecs!=nil, no media data).
     Data []byte
 
-    // Metadata carries optional per-packet metadata (e.g. *avf.PVAData for
-    // object-detection analytics). nil when not set. Type is any to avoid
-    // a circular import; consumers that do not understand the concrete type
-    // must treat it as opaque.
-    Metadata any
+    // PVAData carries per-frame object-detection analytics (vehicle count,
+    // people count, bounding boxes, etc.). nil when analytics are absent.
+    PVAData *PVAData
 
     // ── Codec change ──────────────────────────────────────────────────────
-    // NewCodecs is non-nil on the I_FRAME packet that immediately follows a
-    // CONNECT_HEADER sequence. Contains only the streams whose codec changed.
+    // NewCodecs is non-nil on the keyframe packet that immediately follows a
+    // parameter-set change. Contains only the streams whose codec changed.
     // Receivers must update per-stream codec state when this is non-nil.
     NewCodecs []Stream
 }
@@ -121,69 +124,62 @@ for synchronisation when zero.
 
 ### 3.10 Data
 
-Compressed payload. **Format contract — exactly one encoded unit per packet:**
+Compressed payload. **Format contract:**
 
-- **H.264 / H.265 video** — **exactly one raw NALU**. No `\x00\x00\x00\x01`
-  Annex-B start code, no 4-byte AVCC length prefix. The NALU header byte is
-  at `Data[0]`.
-  **Forbidden:** start codes (`\x00\x00\x00\x01`) anywhere in `Data`,
-  AVCC length prefixes, or concatenated (multi-NALU) payloads.
+- **H.264 / H.265 video** — **AVCC format** (ISO 14496-15): one or more NALUs,
+  each prefixed with a 4-byte big-endian length. This is the native format for
+  MP4/fMP4 containers and the standard internal representation in Go media
+  pipelines (Joy4, go2rtc).
+  **Forbidden:** Annex-B start codes (`\x00\x00\x00\x01`) in `Data`.
+  Parameter-set NALUs (SPS/PPS/VPS) must not appear in sample data — they
+  belong in `CodecData` / `NewCodecs`.
 - **MJPEG** — complete JPEG frame bytes.
 - **Audio** — raw encoded samples. No container framing (no ADTS header for
   AAC; demuxer strips it).
 - **Empty (`nil` or `len == 0`)** — valid only for a pure codec-change
   notification packet (`KeyFrame == true`, `NewCodecs != nil`, no media data).
 
-Legacy AVF wire frames may pack an entire **access unit** (multiple NALUs —
-e.g. SEI + IDR, or inline SPS + PPS + IDR) into a single record. The AVF
-demuxer and proxy **must** split these into individual single-NALU packets
-using `avf.SplitFrame` before emitting. See `docs/frame-packet-conversion-spec.md §6`.
+Demuxer output format:
 
-Every muxer is responsible for adding its own framing at the write boundary:
+| Demuxer | Data format |
+|---------|-------------|
+| avgrabber (RTSP) | AVCC (converted from Annex-B, param-set NALUs stripped) |
+| fMP4 demuxer | AVCC (native MP4 format, passed through as-is) |
+| MP4 demuxer | AVCC (native MP4 format, passed through as-is) |
 
-| Muxer / transport | Framing added |
-|-------------------|---------------|
-| AVF muxer | prepend `\x00\x00\x00\x01` (Annex-B) per NALU |
-| fMP4 / MP4 muxer | 4-byte BE length + raw NALU (AVCC, ISO 14496-15) per NALU |
-| MPEG-TS / HLS | prepend `\x00\x00\x00\x01` (Annex-B) |
-| RTP packetizer | raw NALU slice passed directly |
+Muxer expectations:
 
-Every demuxer is responsible for stripping that framing before emitting:
+| Muxer / transport | Expectation |
+|-------------------|-------------|
+| fMP4 / MP4 muxer | AVCC — written directly into mdat |
+| MPEG-TS / HLS | Convert AVCC → Annex-B at write boundary |
+| RTP packetizer | Extract raw NALUs from AVCC length-prefix framing |
 
-| Demuxer | Stripping applied |
-|---------|-------------------|
-| AVF demuxer | strip 4-byte start code; split multi-NALU access units via `avf.SplitFrame` |
-| fMP4 demuxer | strip 4-byte AVCC length prefix (`normalizeVideoFromAVCC`) |
-| MP4 demuxer | strip 4-byte AVCC length prefix *(gap — not yet implemented)* |
-| RTP reassembler | raw NALU slices assembled into single `Data` |
+### 3.11 PVAData
 
-### 3.11 Metadata
-
-Optional per-packet metadata typed as `any`. The concrete value is typically
-`*avf.PVAData` (object-detection analytics: vehicle count, people count,
-bounding boxes, etc.) or `[]byte` (serialised payload). `nil` when not set.
-The field is typed `any` to avoid a circular import between `pkg/av` and
-`pkg/avf`. Muxers that do not understand the concrete type must treat it as
-opaque and forward or discard it.
+Per-frame object-detection analytics (`*av.PVAData`): vehicle count, people
+count, bounding boxes, reference dimensions. `nil` when analytics are absent.
+The fmp4 muxer serialises non-nil PVAData into emsg boxes; the fmp4 demuxer
+deserialises them back.
 
 ### 3.12 NewCodecs
 
-Non-nil on the `I_FRAME` packet that immediately follows a `CONNECT_HEADER`
-sequence (mid-stream codec change). Contains only the `Stream` entries that
-changed. Receivers must update their per-stream `CodecData` state. Streams
-not listed are unchanged.
+Non-nil on the keyframe packet that immediately follows a parameter-set change
+(mid-stream codec change). Contains only the `Stream` entries that changed.
+Receivers must update their per-stream `CodecData` state. Streams not listed
+are unchanged.
 
 A `NewCodecs` packet with `Data == nil` and `KeyFrame == true` is a pure
 codec-change notification; no media data should be decoded from it.
 
 ---
 
-## 4. Removed field: IsParamSetNALU
+## 4. Removed fields
 
-`IsParamSetNALU bool` has been removed. Per the AVF frame spec (Option A),
-`CONNECT_HEADER` frames **never** produce an `av.Packet`. Codec parameter sets
-are communicated exclusively through `NewCodecs` on the `I_FRAME` that follows.
-Any code path that previously set `IsParamSetNALU = true` is a bug.
+- `IsParamSetNALU bool` — removed. Codec parameter sets are communicated
+  exclusively through `NewCodecs` on the keyframe that follows.
+- `StreamMeta` — removed. Was never populated by any demuxer.
+- `Metadata any` — replaced by the strongly-typed `PVAData *PVAData`.
 
 ---
 
@@ -192,8 +188,8 @@ Any code path that previously set `IsParamSetNALU = true` is a bug.
 1. `Idx` must match a `Stream.Idx` from `GetCodecs` or a `NewCodecs` update.
 2. `DTS` is monotonically non-decreasing per stream index.
 3. `Duration > 0` from any well-behaved demuxer.
-4. `Data[0]` is the NALU header byte for H.264/H.265 video packets with data.
-5. `Data` contains exactly one NALU for H.264/H.265; no embedded start codes or AVCC length prefixes.
+4. `Data` is AVCC-framed for H.264/H.265 video — 4-byte BE length prefix per NALU.
+5. `Data` must not contain Annex-B start codes or parameter-set NALUs.
 6. `KeyFrame == true` implies video codec or `NewCodecs != nil`.
 7. `NewCodecs != nil` implies `KeyFrame == true`.
 8. `FrameID == 0` must not be treated as a meaningful frame identity.

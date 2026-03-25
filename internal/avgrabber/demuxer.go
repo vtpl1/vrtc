@@ -57,6 +57,15 @@ type Demuxer struct {
 	// codecDirty is true when a new PARAM_SET arrived since the last KEY.
 	// The next KEY packet will carry NewCodecs.
 	codecDirty bool
+
+	// Duration tracking: lastVideoDTS/lastAudioDTS hold the previous DTS for
+	// computing inter-frame Duration. nominalVideoDur is the fallback from codec
+	// metadata, used until a second frame arrives.
+	lastVideoDTS    time.Duration
+	lastAudioDTS    time.Duration
+	nominalVideoDur time.Duration
+	hasLastVideoDTS bool
+	hasLastAudioDTS bool
 }
 
 // NewDemuxer opens an RTSP session and returns a Demuxer.
@@ -185,6 +194,7 @@ func (d *Demuxer) videoFrameToPacket(f *Frame) (av.Packet, bool, error) {
 		pkt := d.basePacket(f, videoStreamIdx)
 		pkt.KeyFrame = true
 		pkt.Data = videoPayloadToAVCC(f.Data, f.CodecType)
+		pkt.Duration = d.videoDuration(pkt.DTS)
 
 		if d.codecDirty {
 			pkt.NewCodecs = d.buildStreams()
@@ -196,6 +206,7 @@ func (d *Demuxer) videoFrameToPacket(f *Frame) (av.Packet, bool, error) {
 	case FrameTypeDelta:
 		pkt := d.basePacket(f, videoStreamIdx)
 		pkt.Data = videoPayloadToAVCC(f.Data, f.CodecType)
+		pkt.Duration = d.videoDuration(pkt.DTS)
 
 		return pkt, false, nil
 
@@ -229,7 +240,14 @@ func (d *Demuxer) audioFrameToPacket(f *Frame) (av.Packet, bool, error) {
 
 	if d.audioClk > 0 && f.DurationTicks > 0 {
 		pkt.Duration = time.Duration(f.DurationTicks) * time.Second / time.Duration(d.audioClk)
+	} else if d.hasLastAudioDTS {
+		if delta := pkt.DTS - d.lastAudioDTS; delta > 0 {
+			pkt.Duration = delta
+		}
 	}
+
+	d.lastAudioDTS = pkt.DTS
+	d.hasLastAudioDTS = true
 
 	return pkt, false, nil
 }
@@ -262,6 +280,25 @@ func (d *Demuxer) basePacket(f *Frame, idx uint16) av.Packet {
 		WallClockTime:   time.UnixMilli(f.WallClockMS),
 		FrameID:         f.PTSTicks, // monotonic unique id — used for PVA correlation
 	}
+}
+
+// videoDuration returns the duration for the current video packet. Uses the DTS
+// delta from the previous video packet when available, falling back to the
+// nominal duration derived from codec metadata (SPS timing info).
+func (d *Demuxer) videoDuration(dts time.Duration) time.Duration {
+	if d.hasLastVideoDTS {
+		delta := dts - d.lastVideoDTS
+		d.lastVideoDTS = dts
+
+		if delta > 0 {
+			return delta
+		}
+	} else {
+		d.hasLastVideoDTS = true
+		d.lastVideoDTS = dts
+	}
+
+	return d.nominalVideoDur
 }
 
 // applyParamSet parses an Annex-B PARAM_SET frame into pending SPS/PPS/VPS state.
@@ -303,6 +340,7 @@ func (d *Demuxer) applyH264ParamSet(data []byte) error {
 
 	d.videoCodec = cd
 	d.videoClk = cd.TimeScale()
+	d.nominalVideoDur = cd.PacketDuration(nil)
 	d.pendingSPSH264 = sps
 	d.pendingPPSH264 = pps
 	d.codecDirty = true
@@ -341,6 +379,7 @@ func (d *Demuxer) applyH265ParamSet(data []byte) error {
 
 	d.videoCodec = cd
 	d.videoClk = cd.TimeScale()
+	d.nominalVideoDur = cd.PacketDuration(nil)
 	d.pendingVPSH265 = vps
 	d.pendingSPSH265 = sps
 	d.pendingPPSH265 = pps

@@ -3,6 +3,7 @@ package fmp4_test
 import (
 	"bytes"
 	"context"
+	"encoding/binary"
 	"errors"
 	"io"
 	"testing"
@@ -11,6 +12,16 @@ import (
 	"github.com/vtpl1/vrtc/pkg/av"
 	"github.com/vtpl1/vrtc/pkg/av/format/fmp4"
 )
+
+// avcc wraps raw NALU bytes in a single-NALU AVCC container
+// (4-byte big-endian length prefix + NALU data).
+func avcc(nalu ...byte) []byte {
+	out := make([]byte, 4+len(nalu))
+	binary.BigEndian.PutUint32(out, uint32(len(nalu)))
+	copy(out[4:], nalu)
+
+	return out
+}
 
 // compile-time check: *fmp4.Demuxer satisfies av.DemuxCloser.
 var _ av.DemuxCloser = (*fmp4.Demuxer)(nil)
@@ -156,9 +167,9 @@ func TestDemuxer_ReadPacket_VideoOnlyRoundTrip(t *testing.T) {
 	// Three frames: keyframe, non-keyframe, keyframe.
 	// The muxer flushes on the second keyframe; WriteTrailer flushes the rest.
 	inPkts := []av.Packet{
-		{Idx: 0, KeyFrame: true, DTS: 0, Duration: frameDur, Data: []byte{0x01, 0x02, 0x03}, CodecType: av.H264},
-		{Idx: 0, KeyFrame: false, DTS: frameDur, Duration: frameDur, Data: []byte{0x04, 0x05, 0x06}, CodecType: av.H264},
-		{Idx: 0, KeyFrame: true, DTS: 2 * frameDur, Duration: frameDur, Data: []byte{0x07, 0x08, 0x09}, CodecType: av.H264},
+		{Idx: 0, KeyFrame: true, DTS: 0, Duration: frameDur, Data: avcc(0x01, 0x02, 0x03), CodecType: av.H264},
+		{Idx: 0, KeyFrame: false, DTS: frameDur, Duration: frameDur, Data: avcc(0x04, 0x05, 0x06), CodecType: av.H264},
+		{Idx: 0, KeyFrame: true, DTS: 2 * frameDur, Duration: frameDur, Data: avcc(0x07, 0x08, 0x09), CodecType: av.H264},
 	}
 
 	data := muxToBytes(t, streams, inPkts)
@@ -256,10 +267,10 @@ func TestDemuxer_ReadPacket_VideoAndAudioRoundTrip(t *testing.T) {
 	//   contains [video@0(key), audio@0, video@33ms(non-key)].
 	// WriteTrailer flushes fragment 2: [video@66ms(key)].
 	inPkts := []av.Packet{
-		{Idx: 0, KeyFrame: true, DTS: 0, Duration: vidDur, Data: []byte{0x01}, CodecType: av.H264},
+		{Idx: 0, KeyFrame: true, DTS: 0, Duration: vidDur, Data: avcc(0x01), CodecType: av.H264},
 		{Idx: 1, DTS: 0, Duration: audDur, Data: []byte{0xA1}, CodecType: av.AAC},
-		{Idx: 0, KeyFrame: false, DTS: vidDur, Duration: vidDur, Data: []byte{0x02}, CodecType: av.H264},
-		{Idx: 0, KeyFrame: true, DTS: 2 * vidDur, Duration: vidDur, Data: []byte{0x03}, CodecType: av.H264},
+		{Idx: 0, KeyFrame: false, DTS: vidDur, Duration: vidDur, Data: avcc(0x02), CodecType: av.H264},
+		{Idx: 0, KeyFrame: true, DTS: 2 * vidDur, Duration: vidDur, Data: avcc(0x03), CodecType: av.H264},
 	}
 
 	data := muxToBytes(t, streams, inPkts)
@@ -288,18 +299,23 @@ func TestDemuxer_ReadPacket_VideoAndAudioRoundTrip(t *testing.T) {
 		}
 	}
 
-	// Verify all expected data bytes appear.
-	dataSet := map[byte]bool{}
-	for _, pkt := range outPkts {
-		if len(pkt.Data) > 0 {
-			dataSet[pkt.Data[0]] = true
+	// Verify all expected payloads appear. Video packets are AVCC (4-byte
+	// length prefix + NALU), audio packets are raw bytes.
+	wantPayloads := [][]byte{avcc(0x01), {0xA1}, avcc(0x02), avcc(0x03)}
+	foundCount := 0
+
+	for _, want := range wantPayloads {
+		for _, pkt := range outPkts {
+			if bytes.Equal(pkt.Data, want) {
+				foundCount++
+
+				break
+			}
 		}
 	}
 
-	for _, b := range []byte{0x01, 0x02, 0x03, 0xA1} {
-		if !dataSet[b] {
-			t.Errorf("packet with data byte 0x%02X missing from output", b)
-		}
+	if foundCount != len(wantPayloads) {
+		t.Errorf("expected %d matching payloads, found %d", len(wantPayloads), foundCount)
 	}
 }
 
@@ -311,9 +327,9 @@ func TestDemuxer_ReadPacket_PTSOffset(t *testing.T) {
 	streams := []av.Stream{{Idx: 0, Codec: h264}}
 
 	inPkts := []av.Packet{
-		{Idx: 0, KeyFrame: true, DTS: 0, PTSOffset: ptsOff, Duration: frameDur, Data: []byte{0x01}, CodecType: av.H264},
-		{Idx: 0, KeyFrame: false, DTS: frameDur, PTSOffset: ptsOff, Duration: frameDur, Data: []byte{0x02}, CodecType: av.H264},
-		{Idx: 0, KeyFrame: true, DTS: 2 * frameDur, Duration: frameDur, Data: []byte{0x03}, CodecType: av.H264},
+		{Idx: 0, KeyFrame: true, DTS: 0, PTSOffset: ptsOff, Duration: frameDur, Data: avcc(0x01), CodecType: av.H264},
+		{Idx: 0, KeyFrame: false, DTS: frameDur, PTSOffset: ptsOff, Duration: frameDur, Data: avcc(0x02), CodecType: av.H264},
+		{Idx: 0, KeyFrame: true, DTS: 2 * frameDur, Duration: frameDur, Data: avcc(0x03), CodecType: av.H264},
 	}
 
 	data := muxToBytes(t, streams, inPkts)
@@ -347,9 +363,9 @@ func TestDemuxer_ReadPacket_KeyFrameFlags(t *testing.T) {
 	streams := []av.Stream{{Idx: 0, Codec: h264}}
 
 	inPkts := []av.Packet{
-		{Idx: 0, KeyFrame: true, DTS: 0, Duration: frameDur, Data: []byte{0x01}, CodecType: av.H264},
-		{Idx: 0, KeyFrame: false, DTS: frameDur, Duration: frameDur, Data: []byte{0x02}, CodecType: av.H264},
-		{Idx: 0, KeyFrame: true, DTS: 2 * frameDur, Duration: frameDur, Data: []byte{0x03}, CodecType: av.H264},
+		{Idx: 0, KeyFrame: true, DTS: 0, Duration: frameDur, Data: avcc(0x01), CodecType: av.H264},
+		{Idx: 0, KeyFrame: false, DTS: frameDur, Duration: frameDur, Data: avcc(0x02), CodecType: av.H264},
+		{Idx: 0, KeyFrame: true, DTS: 2 * frameDur, Duration: frameDur, Data: avcc(0x03), CodecType: av.H264},
 	}
 
 	data := muxToBytes(t, streams, inPkts)

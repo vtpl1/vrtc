@@ -16,7 +16,7 @@ import (
 // ── codec fixtures ────────────────────────────────────────────────────────────
 
 // minimalAVCRecord is a synthetic AVCDecoderConfigurationRecord for a 320×240
-// H.264 Baseline stream, shared with the fmp4 and avf unit tests.
+// H.264 Baseline stream, shared with the fmp4 unit tests.
 var minimalAVCRecord = []byte{
 	0x01,
 	0x42, 0x00, 0x1E,
@@ -69,14 +69,9 @@ type formatSpec struct {
 	newDemuxer func(r *bytes.Reader) av.DemuxCloser
 }
 
-// allFormats lists the three supported container formats in a canonical order.
+// allFormats lists the supported container formats in a canonical order.
 // Tests iterate over this slice to generate all source×destination combinations.
 var allFormats = []formatSpec{
-	// {
-	// 	name:       "avf",
-	// 	newMuxer:   func(w io.Writer) av.MuxCloser { return avf.NewMuxer(w) },
-	// 	newDemuxer: func(r *bytes.Reader) av.DemuxCloser { return avf.New(r) },
-	// },
 	{
 		name:       "fmp4",
 		newMuxer:   func(w io.Writer) av.MuxCloser { return fmp4.NewMuxer(w) },

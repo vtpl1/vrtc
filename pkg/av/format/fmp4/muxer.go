@@ -60,7 +60,7 @@ type sample struct {
 	flags              uint32
 	ptsOffset          int32 // composition-time offset in timescale units (B-frame support)
 	data               []byte
-	extra              []byte // optional metadata payload (e.g. bounding-box JSON) from av.Packet.Extra
+	extra              []byte // optional metadata payload (e.g. bounding-box JSON) from av.Packet.PVAData
 	presentationTimeMS int64  // absolute presentation time in milliseconds for emsg
 	dts                int64  // decode time in timescale units; used to back-fill preceding sample duration
 }
@@ -374,11 +374,8 @@ func makeSample(pkt av.Packet, ts *trackState) sample {
 
 // normalizeVideoToAVCC ensures H.264/H.265 sample data is in AVCC format
 // (4-byte big-endian length prefix per NALU), as required by ISO 14496-15.
-// It handles three input formats:
-//   - AVCC: already correct, returned as-is.
-//   - Annex-B: converted to AVCC by replacing start codes with length prefixes.
-//   - Raw single NALU (e.g. from AVF demuxer after start-code stripping):
-//     wrapped with a 4-byte BE length prefix.
+// All pipeline demuxers already produce AVCC, so this is a defensive pass-through.
+// It handles non-AVCC input (Annex-B, raw NALU) for robustness.
 func normalizeVideoToAVCC(data []byte) []byte {
 	nalus, typ := parser.SplitNALUs(data)
 	switch typ {

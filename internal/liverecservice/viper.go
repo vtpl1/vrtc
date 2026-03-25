@@ -47,7 +47,6 @@ func SaveConfig(cfgFile string) error {
 			EnableMinorStreamGrabbing: true,
 			EnableTCPServer:           false,
 			EnableGRPCServer:          true,
-			DisableAVFSinkOverride:    false,
 			NASPaths:                  []string{""},
 			EdgeEventManagerIP:        "127.0.0.1",
 			PreMotionDurSecs:          10,

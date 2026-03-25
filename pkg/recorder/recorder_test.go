@@ -70,6 +70,9 @@ func (sm *fakeStreamManager) Start(_ context.Context) error                    {
 func (sm *fakeStreamManager) Stop() error                                      { return nil }
 func (sm *fakeStreamManager) SignalStop() bool                                 { return true }
 func (sm *fakeStreamManager) WaitStop() error                                  { return nil }
+func (sm *fakeStreamManager) GetProducersStats(_ context.Context) []av.ProducerStats {
+	return nil
+}
 
 func (sm *fakeStreamManager) consumeCount() int {
 	sm.mu.Lock()

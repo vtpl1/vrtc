@@ -49,8 +49,8 @@ func (cw *closingWriter) Close() error {
 	return nil
 }
 
-// All durations are exact ms multiples so they round-trip through AVF (1ms
-// precision) and FMP4/MP4 (timescale units) without rounding error.
+// All durations are exact ms multiples so they round-trip through
+// FMP4/MP4 (timescale units) without rounding error.
 const (
 	vidDur = 33 * time.Millisecond // 2970 ticks @ 90000 Hz
 	audDur = 20 * time.Millisecond // 882 ticks  @ 44100 Hz

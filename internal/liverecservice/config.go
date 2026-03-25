@@ -16,7 +16,6 @@ type LiveRecordingConfig struct {
 	EnableMinorStreamGrabbing bool        `json:"enable_minor_stream_grabbing,omitempty" mapstructure:"enable_minor_stream_grabbing"` //nolint:tagliatelle
 	EnableTCPServer           bool        `json:"enable_tcp_server,omitempty"            mapstructure:"enable_tcp_server"`            //nolint:tagliatelle
 	EnableGRPCServer          bool        `json:"enable_grpc_server,omitempty"           mapstructure:"enable_grpc_server"`           //nolint:tagliatelle
-	DisableAVFSinkOverride    bool        `json:"disable_avf_sink_override,omitempty"    mapstructure:"disable_avf_sink_override"`    //nolint:tagliatelle
 	NASPaths                  []string    `json:"nas_paths"                              mapstructure:"nas_paths"`                    //nolint:tagliatelle
 	EdgeEventManagerIP        string      `json:"edge_event_manager_ip,omitempty"        mapstructure:"edge_event_manager_ip"`        //nolint:tagliatelle
 	IsTestMode                bool        `json:"is_test_mode,omitempty"                 mapstructure:"is_test_mode"`                 //nolint:tagliatelle
