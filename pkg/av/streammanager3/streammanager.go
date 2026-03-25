@@ -162,6 +162,19 @@ func (m *StreamManager) GetActiveProducersCount(_ context.Context) int {
 	return len(m.producers)
 }
 
+func (m *StreamManager) GetProducersStats(_ context.Context) []av.ProducerStats {
+	m.mu.RLock()
+	stats := make([]av.ProducerStats, 0, len(m.producers))
+
+	for _, p := range m.producers {
+		stats = append(stats, p.Stats())
+	}
+
+	m.mu.RUnlock()
+
+	return stats
+}
+
 func (m *StreamManager) PauseProducer(ctx context.Context, producerID string) error {
 	m.mu.RLock()
 	p, ok := m.producers[producerID]

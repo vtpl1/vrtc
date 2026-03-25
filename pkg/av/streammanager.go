@@ -2,9 +2,23 @@ package av
 
 import (
 	"context"
+	"time"
 
 	"github.com/vtpl1/vrtc/pkg/lifecycle"
 )
+
+// ProducerStats is a point-in-time snapshot of a single producer's metrics.
+type ProducerStats struct {
+	ID             string    `json:"id"`
+	ConsumerCount  int       `json:"consumerCount"`
+	PacketsRead    uint64    `json:"packetsRead"`
+	BytesRead      uint64    `json:"bytesRead"`
+	KeyFrames      uint64    `json:"keyFrames"`
+	DroppedPackets uint64    `json:"droppedPackets"`
+	StartedAt      time.Time `json:"startedAt"`
+	LastPacketAt   time.Time `json:"lastPacketAt"`
+	LastError      string    `json:"lastError,omitempty"`
+}
 
 // ConsumeOptions configures a consumer attachment to a producer.
 type ConsumeOptions struct {
@@ -64,6 +78,9 @@ type ConsumerHandle interface {
 //
 // All methods are safe to call concurrently from multiple goroutines.
 type StreamManager interface {
+	// GetProducersStats returns a point-in-time snapshot of all active producers.
+	GetProducersStats(ctx context.Context) []ProducerStats
+
 	// GetActiveProducersCount returns the number of producers currently managed
 	// by this StreamManager. A producer is considered active from the moment its
 	// first consumer is registered until all its consumers have been removed and

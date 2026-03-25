@@ -158,6 +158,16 @@ func Run(appName string, cfg Config) error {
 		timebarHandler(req.Context(), w, req, req.PathValue("channelID"), recIndex)
 	})
 
+	// GET /stats/producers — per-producer packet/byte/drop counters
+	mux.HandleFunc("GET /stats/producers", func(w http.ResponseWriter, req *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.Header().Set("Cache-Control", "no-cache")
+
+		if err := json.NewEncoder(w).Encode(sm.GetProducersStats(req.Context())); err != nil {
+			log.Error().Err(err).Msg("stats/producers: encode response")
+		}
+	})
+
 	// GET /health — system health snapshot
 	mux.HandleFunc("GET /health", func(w http.ResponseWriter, req *http.Request) {
 		healthHandler(req.Context(), w, sm, rm, ct, startTime)

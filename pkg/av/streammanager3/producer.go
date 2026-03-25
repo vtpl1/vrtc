@@ -29,6 +29,14 @@ type Producer struct {
 	headers          []av.Stream
 	headersErr       error
 	headersAvailable chan struct{}
+
+	// metrics — updated from readWriteLoop; read via Stats()
+	packetsRead    atomic.Uint64
+	bytesRead      atomic.Uint64
+	keyFrames      atomic.Uint64
+	droppedPackets atomic.Uint64
+	lastPacketAtNs atomic.Int64 // unix nanoseconds; 0 = no packet yet
+	startedAt      time.Time    // set once in Start; zero until Start is called
 }
 
 func NewProducer(
@@ -62,6 +70,10 @@ func (m *Producer) Start(ctx context.Context) error {
 	m.cancel = cancel
 	m.sctx = sctx
 	m.mu.Unlock()
+	m.mu.Lock()
+	m.startedAt = time.Now()
+	m.mu.Unlock()
+
 	m.wg.Go(func() {
 		defer cancel()
 
@@ -208,6 +220,38 @@ func (m *Producer) ConsumerCount() int {
 	return len(m.consumers)
 }
 
+// Stats returns a point-in-time snapshot of the producer's metrics.
+func (m *Producer) Stats() av.ProducerStats {
+	m.mu.RLock()
+	consumerCount := len(m.consumers)
+	lastErr := m.headersErr
+	startedAt := m.startedAt
+	m.mu.RUnlock()
+
+	errStr := ""
+	if lastErr != nil {
+		errStr = lastErr.Error()
+	}
+
+	var lastPacketAt time.Time
+
+	if ns := m.lastPacketAtNs.Load(); ns > 0 {
+		lastPacketAt = time.Unix(0, ns)
+	}
+
+	return av.ProducerStats{
+		ID:             m.id,
+		ConsumerCount:  consumerCount,
+		PacketsRead:    m.packetsRead.Load(),
+		BytesRead:      m.bytesRead.Load(),
+		KeyFrames:      m.keyFrames.Load(),
+		DroppedPackets: m.droppedPackets.Load(),
+		StartedAt:      startedAt,
+		LastPacketAt:   lastPacketAt,
+		LastError:      errStr,
+	}
+}
+
 func (m *Producer) readWriteLoop(ctx context.Context) {
 	fpsLimitTicker := time.NewTicker(time.Second / time.Duration(maxFps))
 	defer fpsLimitTicker.Stop()
@@ -229,6 +273,15 @@ func (m *Producer) readWriteLoop(ctx context.Context) {
 
 				return
 			}
+
+			m.packetsRead.Add(1)
+			m.bytesRead.Add(uint64(len(pkt.Data)))
+
+			if pkt.KeyFrame {
+				m.keyFrames.Add(1)
+			}
+
+			m.lastPacketAtNs.Store(time.Now().UnixNano())
 
 			if pkt.NewCodecs != nil {
 				m.mu.Lock()
@@ -268,7 +321,9 @@ func (m *Producer) readWriteLoop(ctx context.Context) {
 			}
 
 			for _, c := range active {
-				_ = c.WritePacketLeaky(ctx, pkt)
+				if err := c.WritePacketLeaky(ctx, pkt); errors.Is(err, ErrDroppingPacket) {
+					m.droppedPackets.Add(1)
+				}
 			}
 		}
 	}
