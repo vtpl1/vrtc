@@ -112,6 +112,13 @@ func Run(appName string, cfg Config) error {
 	// -----------------------------------------------------------------------
 	pbRouter := playback.New(recIndex)
 
+	startTime := time.Now()
+
+	// -----------------------------------------------------------------------
+	// Periodic health logging
+	// -----------------------------------------------------------------------
+	startHealthLogger(ctx, sm, rm, startTime, 60*time.Second)
+
 	// -----------------------------------------------------------------------
 	// HTTP / WebSocket API
 	// -----------------------------------------------------------------------
@@ -140,6 +147,11 @@ func Run(appName string, cfg Config) error {
 	// GET /recordings/{channelID}?from=RFC3339&to=RFC3339 — timebar JSON
 	mux.HandleFunc("GET /recordings/{channelID}", func(w http.ResponseWriter, req *http.Request) {
 		timebarHandler(req.Context(), w, req, req.PathValue("channelID"), recIndex)
+	})
+
+	// GET /health — system health snapshot
+	mux.HandleFunc("GET /health", func(w http.ResponseWriter, req *http.Request) {
+		healthHandler(req.Context(), w, sm, rm, startTime)
 	})
 
 	srv := &http.Server{

@@ -279,6 +279,15 @@ func (rm *RecordingManager) stopAll(parentCtx context.Context) {
 	}
 }
 
+// ActiveCount returns the number of recording segments currently in progress.
+func (rm *RecordingManager) ActiveCount() int {
+	rm.mu.Lock()
+	n := len(rm.active)
+	rm.mu.Unlock()
+
+	return n
+}
+
 func (rm *RecordingManager) closeHandle(ctx context.Context, ar *activeRec) {
 	if err := ar.handle.Close(ctx); err != nil {
 		log.Error().Err(err).Str("schedule", ar.sched.ID).Msg("recorder: close handle")
