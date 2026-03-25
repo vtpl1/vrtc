@@ -2,7 +2,6 @@ package av
 
 import (
 	"fmt"
-	"reflect"
 	"strings"
 	"time"
 )
@@ -38,13 +37,13 @@ type Packet struct {
 	// See docs/av-packet-spec.md §3.10.
 	Data []byte
 
-	// Metadata carries optional per-packet metadata (e.g. *pva.PVAData for
-	// object-detection analytics). nil when not set. Consumers that do not
-	// understand the concrete type must treat it as opaque and forward or
-	// discard it.
-	//
-	// Typed as any to avoid a circular import between pkg/av and pkg/pva.
-	Metadata any
+	// PVAData carries per-frame object-detection analytics (vehicle count,
+	// people count, bounding boxes, etc.). nil when analytics are absent.
+	PVAData *PVAData
+
+	// StreamMeta carries live-stream source metadata reported by the device.
+	// Zero-valued when the packet was decoded from a recording.
+	StreamMeta StreamMeta
 
 	// ── Codec change ──────────────────────────────────────────────────────
 	// NewCodecs is non-nil on the I_FRAME packet that immediately follows a
@@ -120,13 +119,6 @@ func packetSizeString(n int) string {
 // GoString returns a detailed developer-friendly representation of the packet.
 // Used when printing with %#v.
 func (m *Packet) GoString() string {
-	var metaType string
-	if m.Metadata != nil {
-		metaType = reflect.TypeOf(m.Metadata).String()
-	} else {
-		metaType = "nil"
-	}
-
 	wallStr := "not set"
 	if m.HasWallClockTime() {
 		wallStr = m.WallClockTime.String()
@@ -145,7 +137,8 @@ func (m *Packet) GoString() string {
 			"  Duration:        %s,\n"+
 			"  WallClockTime:   %s,\n"+
 			"  DataLen:         %d,\n"+
-			"  Metadata:        %v (%s),\n"+
+			"  PVAData:         %s,\n"+
+			"  StreamMeta:      %+v,\n"+
 			"}",
 		m.FrameID,
 		m.KeyFrame,
@@ -158,8 +151,8 @@ func (m *Packet) GoString() string {
 		m.Duration,
 		wallStr,
 		len(m.Data),
-		fmt.Sprintf("%v", m.Metadata),
-		metaType,
+		m.PVAData.String(),
+		m.StreamMeta,
 	)
 }
 

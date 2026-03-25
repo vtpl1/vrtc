@@ -172,7 +172,7 @@ func TestMP4Muxer_Output_HasFtypAndMoovBeforeMdat(t *testing.T) {
 		{Idx: 0, KeyFrame: true, DTS: 0, Duration: vidDur, Data: []byte{0x65, 0x01}, CodecType: av.H264},
 	}
 
-	data := muxFmt(t, allFormats[2], streams, inPkts) // allFormats[2] = mp4
+	data := muxFmt(t, allFormats[1], streams, inPkts) // allFormats[1] = mp4
 	r := bytes.NewReader(data)
 
 	typ1 := readBoxType(t, r)

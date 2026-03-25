@@ -7,7 +7,7 @@ import (
 )
 
 // MetadataMerger is a decorator around av.DemuxCloser that attaches *PVAData
-// to each av.Packet via av.Packet.Metadata. The demuxer and muxer layers are
+// to each av.Packet via av.Packet.PVAData. The demuxer and muxer layers are
 // completely unaware of analytics; the merger is the single injection point.
 //
 // Usage:
@@ -32,15 +32,15 @@ func (m *MetadataMerger) GetCodecs(ctx context.Context) ([]av.Stream, error) {
 }
 
 // ReadPacket reads from the inner demuxer and injects *PVAData into
-// pkt.Metadata when the source has analytics for the packet's FrameID.
+// pkt.PVAData when the source has analytics for the packet's FrameID.
 func (m *MetadataMerger) ReadPacket(ctx context.Context) (av.Packet, error) {
 	pkt, err := m.inner.ReadPacket(ctx)
 	if err != nil {
 		return pkt, err
 	}
 
-	if pva := m.source.Fetch(pkt.FrameID, pkt.WallClockTime); pva != nil {
-		pkt.Metadata = pva
+	if pvd := m.source.Fetch(pkt.FrameID, pkt.WallClockTime); pvd != nil {
+		pkt.PVAData = pvd
 	}
 
 	return pkt, nil

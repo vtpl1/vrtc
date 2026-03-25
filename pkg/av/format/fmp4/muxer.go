@@ -7,6 +7,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/binary"
+	"encoding/json"
 	"errors"
 	"io"
 	"time"
@@ -323,10 +324,8 @@ func makeSample(pkt av.Packet, ts *trackState) sample {
 
 	var extra []byte
 
-	if pkt.Metadata != nil {
-		if b, ok := pkt.Metadata.([]byte); ok {
-			extra = b
-		}
+	if pkt.PVAData != nil {
+		extra, _ = json.Marshal(pkt.PVAData)
 	}
 
 	return sample{

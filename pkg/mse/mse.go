@@ -202,7 +202,7 @@ func (m *MSEWriter) WriteHeader(ctx context.Context, streams []av.Stream) error 
 }
 
 // WritePacket buffers a sample; flushes and broadcasts a binary fMP4 fragment on
-// each video keyframe (or immediately for audio-only streams). If pkt.Metadata is
+// each video keyframe (or immediately for audio-only streams). If pkt.PVAData is
 // non-nil it is marshalled to JSON and broadcast as a text message.
 //
 // Ordering: when pkt is a keyframe it triggers a flush of the previous GOP.
@@ -225,8 +225,8 @@ func (m *MSEWriter) WritePacket(ctx context.Context, pkt av.Packet) error {
 		}
 	}
 
-	if pkt.Metadata != nil {
-		if meta, jerr := json.Marshal(pkt.Metadata); jerr == nil {
+	if pkt.PVAData != nil {
+		if meta, jerr := json.Marshal(pkt.PVAData); jerr == nil {
 			if err := m.broadcast(outFrame{websocket.MessageText, meta}); err != nil {
 				return err
 			}

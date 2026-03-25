@@ -1,56 +1,19 @@
 // Package pva defines per-frame analytics types produced by object-detection
-// pipelines and attached to av.Packet.Metadata in the streaming pipeline.
-//
-// This package has no dependency on pkg/av, which keeps av.Packet free of a
-// circular import while still carrying a typed analytics payload via its
-// Metadata any field.
+// pipelines and attached to av.Packet.PVAData in the streaming pipeline.
 package pva
 
 import (
-	"encoding/json"
 	"time"
+
+	"github.com/vtpl1/vrtc/pkg/av"
 )
 
-// ObjectInfo represents a single detected object within a video frame.
-type ObjectInfo struct {
-	X uint32 `bson:"x" json:"x"`
-	Y uint32 `bson:"y" json:"y"`
-	W uint32 `bson:"w" json:"w"`
-	H uint32 `bson:"h" json:"h"`
-	T uint32 `bson:"t" json:"t"` // object type / class id
-	C uint32 `bson:"c" json:"c"` // confidence score
-	I int64  `bson:"i" json:"i"` // object instance id
-	E bool   `bson:"e" json:"e"` // event flag
-}
+// ObjectInfo is an alias for av.ObjectInfo.
+type ObjectInfo = av.ObjectInfo
 
-// PVAData carries object-detection analytics associated with a single video frame.
-// A nil *PVAData means analytics are absent for that frame.
-type PVAData struct {
-	SiteID           int32         `bson:"siteId"           json:"siteId"`
-	ChannelID        int32         `bson:"channelId"        json:"channelId"`
-	StartTimestamp   int64         `bson:"timeStamp"        json:"timeStamp"`
-	EndTimestamp     int64         `bson:"timeStampEnd"     json:"timeStampEnd"`
-	EncodedTimestamp int64         `bson:"timeStampEncoded" json:"timeStampEncoded"`
-	FrameID          int64         `bson:"frameId"          json:"frameId"`
-	VehicleCount     int32         `bson:"vehicleCount"     json:"vehicleCount"`
-	PeopleCount      int32         `bson:"peopleCount"      json:"peopleCount"`
-	RefWidth         int32         `bson:"refWidth"         json:"refWidth"`
-	RefHeight        int32         `bson:"refHeight"        json:"refHeight"`
-	Objects          []*ObjectInfo `bson:"objectList"       json:"objectList,omitempty"`
-}
-
-func (p *PVAData) String() string {
-	if p == nil {
-		return "nil"
-	}
-
-	b, err := json.Marshal(p)
-	if err != nil {
-		return ""
-	}
-
-	return string(b)
-}
+// PVAData is an alias for av.PVAData.
+// Callers may use either pva.PVAData or av.PVAData — they are the same type.
+type PVAData = av.PVAData
 
 // Source is the interface implemented by any component that can supply
 // PVAData for a given frame. The merger calls Fetch on every packet;

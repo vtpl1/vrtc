@@ -132,17 +132,20 @@ typedef struct AVGrabberFrame AVGrabberFrame;
 
 /* Frame type (AVGrabberFrameHeader.frame_type) */
 /** Decoder parameter sets (SPS+PPS for H.264; VPS+SPS+PPS for H.265), Annex-B.
- *  Emitted before the first keyframe, after reconnect, and on SPS/PPS change. */
+ *  Emitted before the first keyframe, after reconnect, and on SPS/PPS change.
+ *  MJPEG/MPEG streams do not emit PARAM_SET frames. */
 #define AVGRABBER_FRAME_PARAM_SET 0
-/** IDR / random-access video keyframe, Annex-B. A PARAM_SET frame always
- *  precedes this in the frame sequence. */
+/** Random-access video frame. For H.264/H.265 this is an Annex-B keyframe and a
+ *  PARAM_SET frame precedes it. MJPEG currently uses KEY directly with no
+ *  preceding PARAM_SET. */
 #define AVGRABBER_FRAME_KEY 1
 /** Non-key (delta) video frame, Annex-B. */
 #define AVGRABBER_FRAME_DELTA 2
 /** Raw audio payload (ADTS-framed AAC, G.711, G.722, G.726, Opus). */
 #define AVGRABBER_FRAME_AUDIO 16
 /** Fallback type for frames that cannot be classified. Inspect media_type and
- *  codec_type to determine how to handle the payload. */
+ *  codec_type to determine how to handle the payload. MPEG currently uses this
+ *  fallback path. */
 #define AVGRABBER_FRAME_UNKNOWN 255
 
 /* Media type (AVGrabberFrameHeader.media_type) */
@@ -177,12 +180,12 @@ typedef struct AVGrabberFrame AVGrabberFrame;
 #define AVGRABBER_FLAG_HAS_SEI 0x10u
 
 /* Status codes — the complete set of values this API can return. */
-#define AVGRABBER_OK              0    /**< Success. */
-#define AVGRABBER_ERR_NULL_POINTER 3   /**< A required pointer argument was NULL. */
-#define AVGRABBER_ERR_NOT_READY   10   /**< No frame available within the requested timeout. */
-#define AVGRABBER_ERR_STOPPED     18   /**< The session is stopped or being destroyed. */
-#define AVGRABBER_ERR_INVALID_ARG 37   /**< url, username, or password is NULL or empty. */
-#define AVGRABBER_ERR_AUTH_FAILED 1101 /**< Camera rejected credentials. */
+#define AVGRABBER_OK               0    /**< Success. */
+#define AVGRABBER_ERR_NULL_POINTER 3    /**< A required pointer argument was NULL. */
+#define AVGRABBER_ERR_NOT_READY    10   /**< No frame available within the requested timeout. */
+#define AVGRABBER_ERR_STOPPED      18   /**< The session is stopped or being destroyed. */
+#define AVGRABBER_ERR_INVALID_ARG  37   /**< url, username, or password is NULL or empty. */
+#define AVGRABBER_ERR_AUTH_FAILED  1101 /**< Camera rejected credentials. */
 
 /* ══════════════════════════════════════════════════════════════════════════
  * AVGrabberFrameHeader
@@ -234,19 +237,19 @@ typedef struct AVGrabberFrame AVGrabberFrame;
  *   AVGrabberFrameHeader.frame_type(seg), .pts_ticks(seg), etc.
  * ══════════════════════════════════════════════════════════════════════════ */
 typedef struct {
-  int32_t  frame_type;     /**< AVGRABBER_FRAME_* constant. */
-  int32_t  media_type;     /**< AVGRABBER_MEDIA_VIDEO or AVGRABBER_MEDIA_AUDIO. */
-  int32_t  frame_size;     /**< Payload bytes; matches avgrabber_frame_data() length. */
-  uint8_t  codec_type;     /**< AVGRABBER_CODEC_* constant. */
-  uint8_t  flags;          /**< Bitmask of AVGRABBER_FLAG_* bits. */
-  uint8_t  _pad[2];        /**< Reserved, always zero. */
-  int64_t  wall_clock_ms;  /**< Wall-clock ms anchored to system_clock::now(). */
-  int64_t  ntp_ms;         /**< Raw NTP ms from camera (0 = not yet RTCP-synced). */
-  int64_t  pts_ticks;      /**< Presentation timestamp in stream clock ticks.
+  int32_t frame_type;      /**< AVGRABBER_FRAME_* constant. */
+  int32_t media_type;      /**< AVGRABBER_MEDIA_VIDEO or AVGRABBER_MEDIA_AUDIO. */
+  int32_t frame_size;      /**< Payload bytes; matches avgrabber_frame_data() length. */
+  uint8_t codec_type;      /**< AVGRABBER_CODEC_* constant. */
+  uint8_t flags;           /**< Bitmask of AVGRABBER_FLAG_* bits. */
+  uint8_t _pad[2];         /**< Reserved, always zero. */
+  int64_t wall_clock_ms;   /**< Wall-clock ms anchored to system_clock::now(). */
+  int64_t ntp_ms;          /**< Raw NTP ms from camera (0 = not yet RTCP-synced). */
+  int64_t pts_ticks;       /**< Presentation timestamp in stream clock ticks.
                             *  64-bit, never wraps. Clock rate: video_clock_rate for
                             *  video (typically 90000 Hz); audio_sample_rate for audio.
                             *  Use this as the primary timestamp for fMP4 composition. */
-  int64_t  dts_ticks;      /**< Decode timestamp in stream clock ticks.
+  int64_t dts_ticks;       /**< Decode timestamp in stream clock ticks.
                             *  Equal to pts_ticks for IP cameras that do not use
                             *  B-frames (the common case). A future flag bit will
                             *  indicate when dts_ticks independently differs. */
@@ -307,8 +310,10 @@ typedef void (*AVGrabberFrameCallback)(AVGrabberSession* session, const AVGrabbe
  * AVGrabberStreamInfo
  *
  * Negotiated stream parameters. Populated after the first
- * AVGRABBER_FRAME_PARAM_SET frame is received. Codec fields default to
- * AVGRABBER_CODEC_UNKNOWN until observed; numeric properties default to zero.
+ * AVGRABBER_FRAME_PARAM_SET frame is received, or after the first video frame
+ * for codecs that do not emit parameter-set frames (for example MJPEG/MPEG).
+ * Codec fields default to AVGRABBER_CODEC_UNKNOWN until observed; numeric
+ * properties default to zero.
  *
  * Layout (24 bytes, naturally aligned):
  *
@@ -459,9 +464,10 @@ AVGRABBER_API const char* avgrabber_strerror(int status);
 /**
  * Open an RTSP session and begin connecting to the camera in the background.
  *
- * The library starts connecting immediately; the first AVGRABBER_FRAME_PARAM_SET
- * frame returned by avgrabber_next_frame() (or delivered to the callback)
- * signals that the stream is live.
+ * The library starts connecting immediately. For H.264/H.265, the first
+ * AVGRABBER_FRAME_PARAM_SET frame returned by avgrabber_next_frame() (or
+ * delivered to the callback) signals that the stream is live. MJPEG/MPEG do
+ * not emit PARAM_SET frames; their first video frame signals liveness instead.
  *
  * @param[out] session_out  Set to the new session handle on AVGRABBER_OK.
  *                          Set to NULL on error. Must not be NULL itself.
@@ -531,7 +537,8 @@ AVGRABBER_API int avgrabber_set_callback(AVGrabberSession* session, AVGrabberFra
  * Query negotiated stream parameters.
  *
  * Returns AVGRABBER_ERR_NOT_READY until the first AVGRABBER_FRAME_PARAM_SET
- * frame has been received (typically within the first few seconds of stream start).
+ * frame has been received, or until the first video frame for codecs that do
+ * not emit parameter-set frames.
  *
  * @param session    Must not be NULL.
  * @param[out] info  Populated on AVGRABBER_OK. Must not be NULL.

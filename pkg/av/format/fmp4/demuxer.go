@@ -1,8 +1,10 @@
 package fmp4
 
 import (
+	"bytes"
 	"context"
 	"encoding/binary"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -64,6 +66,14 @@ type rawSample struct {
 	size     int
 }
 
+// emsgEntry holds the parsed fields of one emsg (Event Message) box.
+type emsgEntry struct {
+	schemeIDURI   string
+	presentTimeMS int64
+	id            uint32
+	payload       []byte
+}
+
 // Demuxer parses a fragmented MP4 byte stream and implements av.DemuxCloser.
 // Create with NewDemuxer; call GetCodecs once, then loop on ReadPacket until io.EOF.
 type Demuxer struct {
@@ -72,6 +82,7 @@ type Demuxer struct {
 	streams            []av.Stream
 	pending            []av.Packet
 	pendingCodecChange []av.Stream // emitted on the first packet of the next fragment
+	pendingEmsg        []emsgEntry // stashed emsg boxes awaiting the next moof+mdat pair
 	moovRead           bool
 }
 
@@ -142,6 +153,25 @@ func (d *Demuxer) ReadPacket(ctx context.Context) (av.Packet, error) {
 				d.pendingCodecChange = nil
 			}
 
+			// Attach PVAData from any emsg boxes that preceded this fragment.
+			if len(d.pendingEmsg) > 0 {
+				for i := range pkts {
+					ptMS := (pkts[i].DTS + pkts[i].PTSOffset).Milliseconds()
+					for _, e := range d.pendingEmsg {
+						if e.presentTimeMS == ptMS && e.schemeIDURI == emsgSchemeIDURI {
+							var pvd av.PVAData
+							if json.Unmarshal(e.payload, &pvd) == nil {
+								pkts[i].PVAData = &pvd
+							}
+
+							break
+						}
+					}
+				}
+
+				d.pendingEmsg = d.pendingEmsg[:0]
+			}
+
 			d.pending = pkts
 
 		case "moov":
@@ -149,8 +179,15 @@ func (d *Demuxer) ReadPacket(ctx context.Context) (av.Packet, error) {
 			d.parseMoov(payload)
 			d.pendingCodecChange = d.streams
 
+		case "emsg":
+			// Stash the event message; it will be matched to a packet after the
+			// following moof+mdat is parsed (emsg always precedes its moof box).
+			if e, ok := parseEmsg(payload); ok {
+				d.pendingEmsg = append(d.pendingEmsg, e)
+			}
+
 		default:
-			// Skip ftyp, sidx, styp, emsg, and any other boxes between fragments.
+			// Skip ftyp, sidx, styp, and any other boxes between fragments.
 		}
 	}
 }
@@ -162,6 +199,63 @@ func (d *Demuxer) Close() error {
 	}
 
 	return nil
+}
+
+// ── emsg parsing ─────────────────────────────────────────────────────────────
+
+// emsgSchemeIDURI is the scheme identifier written by buildEmsg in muxer.go.
+const emsgSchemeIDURI = "urn:vtpl:bboxes:1"
+
+// parseEmsg parses an emsg (Event Message) version-1 full-box payload (the bytes
+// after the 8-byte box header). Returns (entry, true) on success; (zero, false)
+// if the box is malformed or not version 1.
+func parseEmsg(payload []byte) (emsgEntry, bool) {
+	// Full-box prefix: version(1) + flags(3) = 4 bytes. We only handle version 1
+	// because version 0 uses a 32-bit presentation_time which is less precise.
+	if len(payload) < 5 || payload[0] != 1 {
+		return emsgEntry{}, false
+	}
+
+	pos := 4 // skip version + flags
+
+	// null-terminated scheme_id_uri
+	end := bytes.IndexByte(payload[pos:], 0)
+	if end < 0 {
+		return emsgEntry{}, false
+	}
+
+	scheme := string(payload[pos : pos+end])
+	pos += end + 1
+
+	// null-terminated value string (ignored)
+	end = bytes.IndexByte(payload[pos:], 0)
+	if end < 0 {
+		return emsgEntry{}, false
+	}
+
+	pos += end + 1
+
+	// timescale(4) + presentation_time(8) + event_duration(4) + id(4) = 20 bytes
+	if len(payload) < pos+20 {
+		return emsgEntry{}, false
+	}
+
+	timescale := binary.BigEndian.Uint32(payload[pos:])
+	presentTime := binary.BigEndian.Uint64(payload[pos+4:])
+	id := binary.BigEndian.Uint32(payload[pos+16:])
+	pos += 20
+
+	var ptMS int64
+	if timescale > 0 {
+		ptMS = int64(presentTime) * 1000 / int64(timescale)
+	}
+
+	return emsgEntry{
+		schemeIDURI:   scheme,
+		presentTimeMS: ptMS,
+		id:            id,
+		payload:       append([]byte(nil), payload[pos:]...),
+	}, true
 }
 
 // ── Box reading ───────────────────────────────────────────────────────────────

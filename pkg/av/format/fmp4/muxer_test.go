@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/binary"
+	"encoding/json"
 	"io"
 	"testing"
 	"time"
@@ -652,16 +653,29 @@ func findMFHD(t *testing.T, data []byte, seqs *[]uint32) {
 	}
 }
 
-// TestEmsg_BoundingBoxes verifies that a packet carrying bounding-box JSON in
-// its Metadata field results in an emsg box appearing before the moof box in the
-// flushed fragment, and that the emsg payload matches the original JSON.
+// TestEmsg_BoundingBoxes verifies that a packet carrying PVAData results in an
+// emsg box appearing before the moof box in the flushed fragment, and that the
+// emsg payload is the JSON-marshalled PVAData.
 func TestEmsg_BoundingBoxes(t *testing.T) {
 	t.Parallel()
 
 	h264 := makeH264Codec(t)
 	streams := []av.Stream{{Idx: 0, Codec: h264}}
 
-	bboxJSON := []byte(`{"boxes":[{"label":"person","x":0.1,"y":0.2,"w":0.3,"h":0.4}]}`)
+	pvd := &av.PVAData{
+		SiteID:       1,
+		ChannelID:    2,
+		VehicleCount: 3,
+		PeopleCount:  5,
+		Objects: []*av.ObjectInfo{
+			{X: 10, Y: 20, W: 100, H: 200, T: 1, C: 90, I: 42, E: true},
+		},
+	}
+
+	bboxJSON, err := json.Marshal(pvd)
+	if err != nil {
+		t.Fatalf("json.Marshal PVAData: %v", err)
+	}
 
 	fw, _, err := fmp4.NewFragmentWriter(streams)
 	if err != nil {
@@ -674,7 +688,7 @@ func TestEmsg_BoundingBoxes(t *testing.T) {
 		DTS:      33 * time.Millisecond,
 		Duration: 33 * time.Millisecond,
 		Data:     []byte{0x65, 0x88},
-		Metadata: bboxJSON,
+		PVAData:  pvd,
 	})
 
 	fragment := fw.Flush()

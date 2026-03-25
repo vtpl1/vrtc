@@ -77,7 +77,7 @@ func TestMP4Demuxer_ReadPacket_EOF(t *testing.T) {
 	h264 := makeH264Codec(t)
 
 	// Mux a file with no packets (empty mdat).
-	data := muxFmt(t, allFormats[2], []av.Stream{{Idx: 0, Codec: h264}}, nil)
+	data := muxFmt(t, allFormats[1], []av.Stream{{Idx: 0, Codec: h264}}, nil)
 
 	d := mp4.NewDemuxer(bytes.NewReader(data))
 
@@ -95,7 +95,7 @@ func TestMP4Demuxer_ReadPacket_CancelledContext(t *testing.T) {
 	t.Parallel()
 
 	h264 := makeH264Codec(t)
-	data := muxFmt(t, allFormats[2], []av.Stream{{Idx: 0, Codec: h264}}, nil)
+	data := muxFmt(t, allFormats[1], []av.Stream{{Idx: 0, Codec: h264}}, nil)
 
 	d := mp4.NewDemuxer(bytes.NewReader(data))
 
@@ -150,7 +150,7 @@ func TestMP4Demuxer_GetCodecs_MultiCodec(t *testing.T) {
 		{Idx: 1, Codec: makeAACCodec(t)},
 	}
 
-	data := muxFmt(t, allFormats[2], streams, nil)
+	data := muxFmt(t, allFormats[1], streams, nil)
 
 	d := mp4.NewDemuxer(bytes.NewReader(data))
 
@@ -186,8 +186,8 @@ func TestMP4Demuxer_KeyFrameFlags(t *testing.T) {
 		{Idx: 0, KeyFrame: true, DTS: 2 * vidDur, Duration: vidDur, Data: []byte{0x65, 0x03}, CodecType: av.H264},
 	}
 
-	data := muxFmt(t, allFormats[2], streams, inPkts)
-	_, outPkts := demuxFmt(t, allFormats[2], data)
+	data := muxFmt(t, allFormats[1], streams, inPkts)
+	_, outPkts := demuxFmt(t, allFormats[1], data)
 
 	if len(outPkts) != len(inPkts) {
 		t.Fatalf("want %d packets, got %d", len(inPkts), len(outPkts))
