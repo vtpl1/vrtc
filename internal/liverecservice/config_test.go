@@ -39,6 +39,18 @@ func TestSaveAndLoadConfig_Defaults(t *testing.T) {
 	if lrc.MySQLConfig.Password != "" {
 		t.Errorf("Password = %q, want empty (should come from env)", lrc.MySQLConfig.Password)
 	}
+
+	if lrc.ChannelSource != "file" {
+		t.Errorf("ChannelSource = %q, want %q", lrc.ChannelSource, "file")
+	}
+
+	if lrc.ScheduleSource != "file" {
+		t.Errorf("ScheduleSource = %q, want %q", lrc.ScheduleSource, "file")
+	}
+
+	if lrc.APIListen != ":8080" {
+		t.Errorf("APIListen = %q, want %q", lrc.APIListen, ":8080")
+	}
 }
 
 func TestLoadConfig_EnvOverridesSecrets(t *testing.T) {

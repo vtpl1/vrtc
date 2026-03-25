@@ -27,6 +27,23 @@ type LiveRecordingConfig struct {
 	VMSIP                     string      `json:"vms_ip,omitempty"                       mapstructure:"vms_ip"`                       //nolint:tagliatelle
 
 	EnableAlternateStreamGrabbing bool `json:"enable_alternate_stream_grabbing,omitempty" mapstructure:"enable_alternate_stream_grabbing"` //nolint:tagliatelle
+
+	// Channel / schedule / recording / API
+	ChannelSource      string      `json:"channel_source,omitempty"       mapstructure:"channel_source"`       //nolint:tagliatelle
+	ScheduleSource     string      `json:"schedule_source,omitempty"      mapstructure:"schedule_source"`      //nolint:tagliatelle
+	ChannelFilePath    string      `json:"channel_file_path,omitempty"    mapstructure:"channel_file_path"`    //nolint:tagliatelle
+	ScheduleFilePath   string      `json:"schedule_file_path,omitempty"   mapstructure:"schedule_file_path"`   //nolint:tagliatelle
+	RecordingIndexPath string      `json:"recording_index_path,omitempty" mapstructure:"recording_index_path"` //nolint:tagliatelle
+	APIListen          string      `json:"api_listen,omitempty"           mapstructure:"api_listen"`           //nolint:tagliatelle
+	ChannelDB          string      `json:"channel_db,omitempty"           mapstructure:"channel_db"`           //nolint:tagliatelle
+	ScheduleDB         string      `json:"schedule_db,omitempty"          mapstructure:"schedule_db"`          //nolint:tagliatelle
+	MongoConfig        MongoConfig `json:"mongo_config"                   mapstructure:"mongo_config"`         //nolint:tagliatelle
+}
+
+// MongoConfig holds connection parameters for a MongoDB deployment.
+type MongoConfig struct {
+	URI      string `json:"uri"      mapstructure:"uri"`
+	Database string `json:"database" mapstructure:"database"`
 }
 
 type MySQLConfig struct {

@@ -59,6 +59,19 @@ func SaveConfig(cfgFile string) error {
 				Password: "", // set via LIVE_REC_SERVICE_MYSQL_CONFIG_PASSWORD env var
 			},
 			EnableAlternateStreamGrabbing: false,
+
+			ChannelSource:      "file",
+			ScheduleSource:     "file",
+			ChannelFilePath:    "",
+			ScheduleFilePath:   "",
+			RecordingIndexPath: "",
+			APIListen:          ":8080",
+			ChannelDB:          "liverecservice",
+			ScheduleDB:         "liverecservice",
+			MongoConfig: MongoConfig{
+				URI:      "mongodb://localhost:27017",
+				Database: "liverecservice",
+			},
 		},
 	}
 
