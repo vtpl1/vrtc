@@ -25,61 +25,65 @@ type connTracker struct {
 // trackHTTPLive increments the live-HTTP counter and returns a release func.
 func (t *connTracker) trackHTTPLive() func() {
 	t.httpLive.Add(1)
+
 	return func() { t.httpLive.Add(-1) }
 }
 
 // trackHTTPRecorded increments the recorded-HTTP counter and returns a release func.
 func (t *connTracker) trackHTTPRecorded() func() {
 	t.httpRecorded.Add(1)
+
 	return func() { t.httpRecorded.Add(-1) }
 }
 
 // trackWSLive increments the live-WebSocket counter and returns a release func.
 func (t *connTracker) trackWSLive() func() {
 	t.wsLive.Add(1)
+
 	return func() { t.wsLive.Add(-1) }
 }
 
 // trackWSRecorded increments the recorded-WebSocket counter and returns a release func.
 func (t *connTracker) trackWSRecorded() func() {
 	t.wsRecorded.Add(1)
+
 	return func() { t.wsRecorded.Add(-1) }
 }
 
 // healthMemory contains Go runtime memory counters.
 type healthMemory struct {
-	AllocMB   float64 `json:"alloc_mb"`
-	SysMB     float64 `json:"sys_mb"`
-	HeapInuse float64 `json:"heap_inuse_mb"`
-	GCRuns    uint32  `json:"gc_runs"`
+	AllocMB   float64 `json:"allocMb"`
+	SysMB     float64 `json:"sysMb"`
+	HeapInuse float64 `json:"heapInuseMb"`
+	GCRuns    uint32  `json:"gcRuns"`
 }
 
 // healthStreams summarises the live StreamManager state.
 type healthStreams struct {
-	ActiveProducers int `json:"active_producers"`
+	ActiveProducers int `json:"activeProducers"`
 }
 
 // healthRecorder summarises the RecordingManager state.
 type healthRecorder struct {
-	ActiveSegments int `json:"active_segments"`
+	ActiveSegments int `json:"activeSegments"`
 }
 
 // healthConsumers counts active client connections by type.
 type healthConsumers struct {
-	HTTPLive     int64 `json:"http_live"`
-	HTTPRecorded int64 `json:"http_recorded"`
-	WSLive       int64 `json:"ws_live"`
-	WSRecorded   int64 `json:"ws_recorded"`
+	HTTPLive     int64 `json:"httpLive"`
+	HTTPRecorded int64 `json:"httpRecorded"`
+	WSLive       int64 `json:"wsLive"`
+	WSRecorded   int64 `json:"wsRecorded"`
 	Total        int64 `json:"total"`
 }
 
 // healthSnapshot is the JSON body returned by GET /health and logged periodically.
 type healthSnapshot struct {
 	Status     string          `json:"status"`
-	UptimeSec  int64           `json:"uptime_seconds"`
+	UptimeSec  int64           `json:"uptimeSeconds"`
 	Goroutines int             `json:"goroutines"`
 	Memory     healthMemory    `json:"memory"`
-	Streams    healthStreams    `json:"streams"`
+	Streams    healthStreams   `json:"streams"`
 	Recorder   healthRecorder  `json:"recorder"`
 	Consumers  healthConsumers `json:"consumers"`
 	Timestamp  time.Time       `json:"timestamp"`

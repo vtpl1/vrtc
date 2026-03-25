@@ -92,6 +92,15 @@ func (rm *RecordingManager) Stop() error {
 	return nil
 }
 
+// ActiveCount returns the number of recording segments currently in progress.
+func (rm *RecordingManager) ActiveCount() int {
+	rm.mu.Lock()
+	n := len(rm.active)
+	rm.mu.Unlock()
+
+	return n
+}
+
 // loop is the background goroutine.
 func (rm *RecordingManager) loop(ctx context.Context) {
 	defer close(rm.done)
@@ -277,15 +286,6 @@ func (rm *RecordingManager) stopAll(parentCtx context.Context) {
 	for _, ar := range all {
 		rm.closeHandle(ctx, ar)
 	}
-}
-
-// ActiveCount returns the number of recording segments currently in progress.
-func (rm *RecordingManager) ActiveCount() int {
-	rm.mu.Lock()
-	n := len(rm.active)
-	rm.mu.Unlock()
-
-	return n
 }
 
 func (rm *RecordingManager) closeHandle(ctx context.Context, ar *activeRec) {

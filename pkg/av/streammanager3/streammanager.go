@@ -14,7 +14,7 @@ import (
 
 // consumerSeq is a process-wide monotonic counter used to generate unique
 // consumer IDs when the caller does not supply one.
-var consumerSeq atomic.Uint64
+var consumerSeq atomic.Uint64 //nolint:gochecknoglobals
 
 type StreamManager struct {
 	demuxerFactory av.DemuxerFactory

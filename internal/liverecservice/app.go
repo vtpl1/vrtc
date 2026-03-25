@@ -128,24 +128,28 @@ func Run(appName string, cfg Config) error {
 	// GET /live/{channelID} — chunked fMP4 over HTTP
 	mux.HandleFunc("GET /live/{channelID}", func(w http.ResponseWriter, req *http.Request) {
 		defer ct.trackHTTPLive()()
+
 		liveHTTPHandler(req.Context(), w, req.PathValue("channelID"), sm)
 	})
 
 	// GET /recorded/{channelID}?from=RFC3339&to=RFC3339 — chunked fMP4 over HTTP
 	mux.HandleFunc("GET /recorded/{channelID}", func(w http.ResponseWriter, req *http.Request) {
 		defer ct.trackHTTPRecorded()()
+
 		recordedHTTPHandler(req.Context(), w, req, req.PathValue("channelID"), pbRouter)
 	})
 
 	// GET /ws/live?producerID=…&consumerID=… — MSE over WebSocket (live)
 	mux.HandleFunc("GET /ws/live", func(w http.ResponseWriter, req *http.Request) {
 		defer ct.trackWSLive()()
+
 		httprouter.WSHandler(req.Context(), w, req, sm)
 	})
 
 	// GET /ws/recorded?producerID=…&consumerID=…&from=RFC3339&to=RFC3339
 	mux.HandleFunc("GET /ws/recorded", func(w http.ResponseWriter, req *http.Request) {
 		defer ct.trackWSRecorded()()
+
 		wsRecordedHandler(req.Context(), w, req, pbRouter)
 	})
 
