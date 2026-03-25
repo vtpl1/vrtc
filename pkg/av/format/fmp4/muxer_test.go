@@ -747,3 +747,76 @@ func TestEmsg_BoundingBoxes(t *testing.T) {
 		t.Errorf("second box: want moof, got %q", typ)
 	}
 }
+
+// TestWritePacket_DropsLeadingNonKeyframes verifies that when packets arrive
+// before the first IDR (simulating a late-joining consumer that attaches
+// mid-GOP), no fragment is emitted until the first keyframe.  The first
+// fragment produced must start on the IDR sample.
+func TestWritePacket_DropsLeadingNonKeyframes(t *testing.T) {
+	t.Parallel()
+
+	h264 := makeH264Codec(t)
+	aac := makeAACCodec(t)
+
+	streams := []av.Stream{
+		{Idx: 0, Codec: h264},
+		{Idx: 1, Codec: aac},
+	}
+
+	var buf bytes.Buffer
+	ctx := context.Background()
+	m := fmp4.NewMuxer(&buf)
+
+	if err := m.WriteHeader(ctx, streams); err != nil {
+		t.Fatalf("WriteHeader: %v", err)
+	}
+
+	initSize := buf.Len()
+	buf.Reset()
+
+	dur := 33 * time.Millisecond
+	dts0 := 100 * time.Millisecond // non-zero wall-clock origin
+
+	// Send: audio, P-frame, P-frame — all before the first IDR.
+	// These must be dropped; no fragment should be emitted.
+	_ = m.WritePacket(ctx, av.Packet{Idx: 1, DTS: dts0, Duration: dur, Data: []byte{0x01}})
+	_ = m.WritePacket(ctx, av.Packet{Idx: 0, DTS: dts0, Duration: dur, Data: []byte{0x41, 0x9A, 0x00, 0x00}}) // P-frame NALU (nal_unit_type=1)
+	_ = m.WritePacket(ctx, av.Packet{Idx: 0, DTS: dts0 + dur, Duration: dur, Data: []byte{0x41, 0x9A, 0x00, 0x00}})
+
+	if buf.Len() != 0 {
+		t.Fatalf("expected no fragment before first IDR, got %d bytes", buf.Len())
+	}
+
+	_ = initSize // suppress unused warning
+
+	// Now send the first IDR — no pending samples exist, so no flush yet.
+	idrData := []byte{0x65, 0x88, 0x84, 0x00, 0xAF, 0x3C} // IDR NALU (nal_unit_type=5)
+	_ = m.WritePacket(ctx, av.Packet{Idx: 0, DTS: dts0 + 2*dur, Duration: dur, KeyFrame: true, Data: idrData})
+
+	if buf.Len() != 0 {
+		t.Fatalf("expected no fragment after first IDR (no second IDR yet), got %d bytes", buf.Len())
+	}
+
+	// Send a P-frame after the IDR — still no flush.
+	_ = m.WritePacket(ctx, av.Packet{Idx: 0, DTS: dts0 + 3*dur, Duration: dur, Data: []byte{0x41, 0x9A, 0x00, 0x00}})
+
+	// Send a second IDR — this flushes the first GOP.
+	_ = m.WritePacket(ctx, av.Packet{Idx: 0, DTS: dts0 + 4*dur, Duration: dur, KeyFrame: true, Data: idrData})
+
+	if buf.Len() == 0 {
+		t.Fatal("expected a fragment after second IDR, got nothing")
+	}
+
+	// Parse the fragment: expect moof then mdat.
+	r := bytes.NewReader(buf.Bytes())
+
+	typ, _ := readBox(t, r)
+	if typ != "moof" {
+		t.Fatalf("first fragment box: want moof, got %q", typ)
+	}
+
+	typ, _ = readBox(t, r)
+	if typ != "mdat" {
+		t.Fatalf("second fragment box: want mdat, got %q", typ)
+	}
+}

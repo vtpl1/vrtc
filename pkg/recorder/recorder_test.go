@@ -63,13 +63,13 @@ func (sm *fakeStreamManager) Consume(_ context.Context, producerID string, opts 
 	return h, nil
 }
 
-func (sm *fakeStreamManager) GetActiveProducersCount(_ context.Context) int { return 0 }
+func (sm *fakeStreamManager) GetActiveProducersCount(_ context.Context) int    { return 0 }
 func (sm *fakeStreamManager) PauseProducer(_ context.Context, _ string) error  { return nil }
 func (sm *fakeStreamManager) ResumeProducer(_ context.Context, _ string) error { return nil }
 func (sm *fakeStreamManager) Start(_ context.Context) error                    { return nil }
 func (sm *fakeStreamManager) Stop() error                                      { return nil }
-func (sm *fakeStreamManager) SignalStop() bool { return true }
-func (sm *fakeStreamManager) WaitStop() error  { return nil }
+func (sm *fakeStreamManager) SignalStop() bool                                 { return true }
+func (sm *fakeStreamManager) WaitStop() error                                  { return nil }
 
 func (sm *fakeStreamManager) consumeCount() int {
 	sm.mu.Lock()
@@ -115,6 +115,8 @@ func (idx *fakeIndex) Insert(_ context.Context, e recorder.RecordingEntry) error
 func (idx *fakeIndex) QueryByChannel(_ context.Context, _ string, _, _ time.Time) ([]recorder.RecordingEntry, error) {
 	return nil, nil
 }
+
+func (idx *fakeIndex) SealInterrupted(_ context.Context) error { return nil }
 
 func (idx *fakeIndex) Close() error { return nil }
 

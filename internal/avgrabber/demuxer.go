@@ -4,6 +4,7 @@ package avgrabber
 
 import (
 	"context"
+	"encoding/binary"
 	"time"
 
 	"github.com/vtpl1/vrtc/pkg/av"
@@ -183,7 +184,7 @@ func (d *Demuxer) videoFrameToPacket(f *Frame) (av.Packet, bool, error) {
 	case FrameTypeKey:
 		pkt := d.basePacket(f, videoStreamIdx)
 		pkt.KeyFrame = true
-		pkt.Data = stripStartCode(f.Data)
+		pkt.Data = videoPayloadToAVCC(f.Data, f.CodecType)
 
 		if d.codecDirty {
 			pkt.NewCodecs = d.buildStreams()
@@ -194,7 +195,7 @@ func (d *Demuxer) videoFrameToPacket(f *Frame) (av.Packet, bool, error) {
 
 	case FrameTypeDelta:
 		pkt := d.basePacket(f, videoStreamIdx)
-		pkt.Data = stripStartCode(f.Data)
+		pkt.Data = videoPayloadToAVCC(f.Data, f.CodecType)
 
 		return pkt, false, nil
 
@@ -539,15 +540,68 @@ func annexBStartCodeLen(data []byte, i int) int {
 	return 0
 }
 
-// stripStartCode removes the leading Annex-B start code from a single-NALU payload.
-func stripStartCode(data []byte) []byte {
-	if len(data) >= 4 && data[0] == 0 && data[1] == 0 && data[2] == 0 && data[3] == 1 {
-		return data[4:]
+// videoPayloadToAVCC converts a raw video frame payload to AVCC format
+// (4-byte big-endian length prefix per NALU), stripping any embedded
+// parameter-set NALUs (SPS/PPS for H.264; VPS/SPS/PPS for H.265).
+//
+// The input may be:
+//   - Annex-B with a leading start code:  00 00 00 01 [NALUs...]
+//   - Annex-B without a leading start code (leading start code already removed):
+//     [NALU bytes] 00 00 00 01 [more NALUs...]
+//   - A single raw NALU with no start codes at all
+//
+// In all cases the function returns well-formed AVCC that contains only
+// slice NALUs (IDR or non-IDR), suitable for embedding in an fMP4 sample.
+func videoPayloadToAVCC(data []byte, codecType uint8) []byte {
+	nalus := splitAnnexB(data)
+
+	if len(nalus) == 0 {
+		// No start codes found: treat the entire payload as a single raw NALU.
+		// This handles cameras that deliver bare NALU bytes without any framing.
+		out := make([]byte, 4+len(data))
+		binary.BigEndian.PutUint32(out, uint32(len(data)))
+		copy(out[4:], data)
+
+		return out
 	}
 
-	if len(data) >= 3 && data[0] == 0 && data[1] == 0 && data[2] == 1 {
-		return data[3:]
+	var buf []byte
+
+	for _, nal := range nalus {
+		if len(nal) == 0 || isParamSetNALU(nal, codecType) {
+			continue
+		}
+
+		var sz [4]byte
+		binary.BigEndian.PutUint32(sz[:], uint32(len(nal)))
+		buf = append(buf, sz[:]...)
+		buf = append(buf, nal...)
 	}
 
-	return data
+	return buf
+}
+
+// isParamSetNALU reports whether nal is a parameter-set NAL unit that should
+// be excluded from sample data (it belongs in the codec init segment).
+//
+//   - H.264: SPS (type 7), PPS (type 8)
+//   - H.265: VPS (type 32), SPS (type 33), PPS (type 34)
+func isParamSetNALU(nal []byte, codecType uint8) bool {
+	if len(nal) == 0 {
+		return false
+	}
+
+	switch codecType {
+	case CodecH264:
+		t := nal[0] & 0x1F
+
+		return t == 7 || t == 8
+
+	case CodecH265:
+		t := (nal[0] & 0x7E) >> 1
+
+		return t == 32 || t == 33 || t == 34
+	}
+
+	return false
 }

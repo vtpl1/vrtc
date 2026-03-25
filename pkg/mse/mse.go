@@ -256,11 +256,17 @@ func (m *MSEWriter) WriteTrailer(ctx context.Context, upstreamErr error) error {
 // WriteCodecChange implements av.CodecChanger. It flushes the current fragment,
 // broadcasts the codec-change data to existing clients, and stores a fresh init
 // segment and updated codec string for clients that connect after the change.
+//
+// If the resulting codec string is identical to the current one (e.g. the
+// upstream source re-sends SPS/PPS in-band on every keyframe without actually
+// changing them), the call is a no-op: no new init segment is written and
+// nothing is sent over the WebSocket. This prevents the browser's SourceBuffer
+// from being reset on every keyframe interval.
 func (m *MSEWriter) WriteCodecChange(ctx context.Context, changed []av.Stream) error {
 	transcodedChanged, newEncoders := transcodePCM(changed)
 
+	// Compute the updated stream list with the changed entries merged in.
 	m.mu.Lock()
-
 	maps.Copy(m.pcmEncoders, newEncoders)
 
 	for _, c := range transcodedChanged {
@@ -274,7 +280,22 @@ func (m *MSEWriter) WriteCodecChange(ctx context.Context, changed []av.Stream) e
 	}
 
 	updatedStreams := cloneStreams(m.streams)
+	m.mu.Unlock()
 
+	newCodecStr := buildCodecString(updatedStreams)
+
+	// Skip everything if the codec string hasn't changed — the upstream is
+	// just refreshing in-band parameter sets, not changing the actual codec.
+	m.codecsMu.RLock()
+	unchanged := newCodecStr == m.codecStr
+	m.codecsMu.RUnlock()
+
+	if unchanged {
+		return nil
+	}
+
+	// Actual codec change: flush the current fragment and write a new init segment.
+	m.mu.Lock()
 	m.buf.Reset()
 	err := m.mux.WriteCodecChange(ctx, transcodedChanged)
 	data := cloneBytes(m.buf.Bytes())
@@ -285,8 +306,6 @@ func (m *MSEWriter) WriteCodecChange(ctx context.Context, changed []av.Stream) e
 
 	timeOutCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
 	defer cancel()
-
-	newCodecStr := buildCodecString(updatedStreams)
 
 	tmp := fmp4.NewMuxer(&initBuf)
 	if herr := tmp.WriteHeader(timeOutCtx, updatedStreams); herr == nil {

@@ -17,7 +17,9 @@ type Channel struct {
 	ID        string            `json:"id"`
 	Name      string            `json:"name"`
 	StreamURL string            `json:"stream_url"` //nolint:tagliatelle
-	SiteID    int               `json:"site_id"`    //nolint:tagliatelle
+	Username  string            `json:"username,omitempty"`
+	Password  string            `json:"password,omitempty"`
+	SiteID    int               `json:"site_id"` //nolint:tagliatelle
 	Extra     map[string]string `json:"extra,omitempty"`
 }
 

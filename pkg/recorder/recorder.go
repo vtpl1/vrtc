@@ -3,11 +3,12 @@ package recorder
 import (
 	"context"
 	"fmt"
-	"log/slog"
 	"os"
+	"path/filepath"
 	"sync"
 	"time"
 
+	"github.com/rs/zerolog/log"
 	"github.com/vtpl1/vrtc/pkg/av"
 	"github.com/vtpl1/vrtc/pkg/schedule"
 )
@@ -63,12 +64,17 @@ func New(
 	}
 }
 
-// Start launches the background poll goroutine. ctx is used only to derive
-// the internal context; the returned error is always nil.
+// Start seals any recordings interrupted by a previous run, then launches the
+// background poll goroutine. ctx is used only to derive the internal context;
+// the returned error is always nil.
 func (rm *RecordingManager) Start(ctx context.Context) error {
-	ctx, rm.cancel = context.WithCancel(
-		ctx,
-	)
+	if err := rm.index.SealInterrupted(ctx); err != nil {
+		log.Error().Err(err).Msg("recorder: seal interrupted recordings")
+		// non-fatal — continue starting
+	}
+
+	ctx, cancel := context.WithCancel(ctx) //nolint:gosec // stored in rm.cancel; called by Stop
+	rm.cancel = cancel
 
 	go rm.loop(ctx)
 
@@ -112,7 +118,7 @@ func (rm *RecordingManager) loop(ctx context.Context) {
 func (rm *RecordingManager) tick(ctx context.Context) {
 	schedules, err := rm.schedules.ListSchedules(ctx)
 	if err != nil {
-		slog.Error("recorder: list schedules", "err", err)
+		log.Error().Err(err).Msg("recorder: list schedules")
 
 		return
 	}
@@ -173,8 +179,8 @@ func (rm *RecordingManager) tick(ctx context.Context) {
 func (rm *RecordingManager) startSegment(ctx context.Context, s schedule.Schedule, now time.Time) {
 	path := SegmentPath(s.StoragePath, s.ChannelID, now)
 
-	if err := os.MkdirAll(fmt.Sprintf("%s/%s", s.StoragePath, s.ChannelID), 0o750); err != nil {
-		slog.Error("recorder: mkdir", "path", path, "err", err)
+	if err := os.MkdirAll(filepath.Dir(path), 0o750); err != nil {
+		log.Error().Err(err).Str("path", path).Msg("recorder: mkdir")
 
 		return
 	}
@@ -190,13 +196,14 @@ func (rm *RecordingManager) startSegment(ctx context.Context, s schedule.Schedul
 				EndTime:   end,
 				FilePath:  filePath,
 				SizeBytes: sizeBytes,
+				Status:    StatusComplete,
 			}
 
 			// onClose is called from the muxer's Close() which runs in a
 			// detached goroutine after the stream context is cancelled, so
 			// we use a fresh background context for the index write.
 			if iErr := rm.index.Insert(context.Background(), entry); iErr != nil {
-				slog.Error("recorder: index insert", "err", iErr)
+				log.Error().Err(iErr).Msg("recorder: index insert complete")
 			}
 		}
 
@@ -208,17 +215,26 @@ func (rm *RecordingManager) startSegment(ctx context.Context, s schedule.Schedul
 		MuxerFactory: muxerFactory,
 	})
 	if err != nil {
-		slog.Error(
-			"recorder: attach consumer",
-			"schedule",
-			s.ID,
-			"channel",
-			s.ChannelID,
-			"err",
-			err,
-		)
+		log.Error().
+			Err(err).
+			Str("schedule", s.ID).
+			Str("channel", s.ChannelID).
+			Msg("recorder: attach consumer")
 
 		return
+	}
+
+	// Write a "recording" entry immediately so that a restart can detect and
+	// flag this segment as interrupted if the process exits before onClose runs.
+	startEntry := RecordingEntry{
+		ID:        consumerID,
+		ChannelID: s.ChannelID,
+		StartTime: now,
+		FilePath:  path,
+		Status:    StatusRecording,
+	}
+	if iErr := rm.index.Insert(ctx, startEntry); iErr != nil {
+		log.Error().Err(iErr).Msg("recorder: index insert recording")
 	}
 
 	rm.mu.Lock()
@@ -265,6 +281,6 @@ func (rm *RecordingManager) stopAll(parentCtx context.Context) {
 
 func (rm *RecordingManager) closeHandle(ctx context.Context, ar *activeRec) {
 	if err := ar.handle.Close(ctx); err != nil {
-		slog.Error("recorder: close handle", "schedule", ar.sched.ID, "err", err)
+		log.Error().Err(err).Str("schedule", ar.sched.ID).Msg("recorder: close handle")
 	}
 }

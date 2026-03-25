@@ -10,6 +10,7 @@ import (
 	"github.com/vtpl1/vrtc/internal/liverecservice"
 	"github.com/vtpl1/vrtc/pkg/appinfo"
 	"github.com/vtpl1/vrtc/pkg/configpath"
+	"github.com/vtpl1/vrtc/pkg/logger"
 )
 
 func main() {
@@ -46,7 +47,28 @@ func main() {
 			return nil
 		},
 		RunE: func(_ *cobra.Command, _ []string) error {
-			return liverecservice.Run("liverecservice", cfgGlobal)
+			logLevel := cfgGlobal.LiveRecordingConfig.LogLevel
+			if logLevel == "" {
+				logLevel = "info"
+			}
+
+			logFile := configpath.GetLogFilePath(liverecservice.AppName)
+
+			closeLog, err := logger.InitLogger(logFile, logLevel)
+			if err != nil {
+				return err
+			}
+
+			defer closeLog()
+
+			log.Info().
+				Str("appName", liverecservice.AppName).
+				Str("version", appinfo.GetVersion()).
+				Str("logFile", logFile).
+				Str("logLevel", logLevel).
+				Msg("starting")
+
+			return liverecservice.Run(liverecservice.AppName, cfgGlobal)
 		},
 	}
 

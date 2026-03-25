@@ -3,22 +3,21 @@ package liverecservice
 import (
 	"context"
 	"database/sql"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"net/http"
-	"os"
-	"os/signal"
-	"syscall"
 	"time"
 
-	"github.com/go-chi/chi/v5"
 	_ "github.com/go-sql-driver/mysql" // register mysql driver
+	"github.com/rs/zerolog/log"
 	"github.com/vtpl1/vrtc/internal/avgrabber"
 	"github.com/vtpl1/vrtc/internal/httprouter"
 	"github.com/vtpl1/vrtc/pkg/av"
 	"github.com/vtpl1/vrtc/pkg/av/format/fmp4"
 	"github.com/vtpl1/vrtc/pkg/av/streammanager3"
 	"github.com/vtpl1/vrtc/pkg/channel"
+	"github.com/vtpl1/vrtc/pkg/lifecycle"
 	"github.com/vtpl1/vrtc/pkg/playback"
 	"github.com/vtpl1/vrtc/pkg/recorder"
 	"github.com/vtpl1/vrtc/pkg/schedule"
@@ -31,10 +30,11 @@ const AppName = "entrypoint_live_recording"
 var (
 	errChannelFilePathRequired  = errors.New("channel_source=file requires channel_file_path")
 	errScheduleFilePathRequired = errors.New("schedule_source=file requires schedule_file_path")
+	errIndexPathRequired        = errors.New("liverecservice: recording_index_path is required")
 )
 
 // Run starts the live-recording service. It blocks until ctx is cancelled.
-func Run(_ string, cfg Config) error {
+func Run(appName string, cfg Config) error {
 	c := cfg.LiveRecordingConfig
 
 	// Default values for new fields.
@@ -42,16 +42,13 @@ func Run(_ string, cfg Config) error {
 		c.APIListen = ":8080"
 	}
 
-	// Root context: cancelled on SIGINT / SIGTERM so the service shuts down
-	// gracefully when the process receives a stop signal.
-	ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
-	if c.RecordingIndexPath == "" {
-		// Recording index is always required; wait for a signal and exit cleanly.
-		<-ctx.Done()
+	errChan := make(chan error)
 
-		return nil
+	if c.RecordingIndexPath == "" {
+		return errIndexPathRequired
 	}
 
 	// -----------------------------------------------------------------------
@@ -79,7 +76,12 @@ func Run(_ string, cfg Config) error {
 				return nil, fmt.Errorf("liverecservice: channel %q: %w", producerID, err)
 			}
 
-			d, err := avgrabber.NewDemuxer(avgrabber.Config{URL: ch.StreamURL, Audio: true})
+			d, err := avgrabber.NewDemuxer(avgrabber.Config{
+				URL:      ch.StreamURL,
+				Username: ch.Username,
+				Password: ch.Password,
+				Audio:    true,
+			})
 			if err != nil {
 				return nil, fmt.Errorf("liverecservice: open stream %q: %w", ch.StreamURL, err)
 			}
@@ -92,7 +94,8 @@ func Run(_ string, cfg Config) error {
 	if err := sm.Start(ctx); err != nil {
 		return fmt.Errorf("liverecservice: stream manager start: %w", err)
 	}
-	defer sm.Stop() //nolint:errcheck
+
+	defer func() { _ = sm.Stop() }()
 
 	// -----------------------------------------------------------------------
 	// Recording manager
@@ -101,7 +104,8 @@ func Run(_ string, cfg Config) error {
 	if err := rm.Start(ctx); err != nil {
 		return fmt.Errorf("liverecservice: recording manager start: %w", err)
 	}
-	defer rm.Stop() //nolint:errcheck
+
+	defer func() { _ = rm.Stop() }()
 
 	// -----------------------------------------------------------------------
 	// Playback router
@@ -111,53 +115,58 @@ func Run(_ string, cfg Config) error {
 	// -----------------------------------------------------------------------
 	// HTTP / WebSocket API
 	// -----------------------------------------------------------------------
-	r := chi.NewRouter()
+	mux := http.NewServeMux()
 
 	// GET /live/{channelID} — chunked fMP4 over HTTP
-	r.Get("/live/{channelID}", func(w http.ResponseWriter, req *http.Request) {
-		channelID := chi.URLParam(req, "channelID")
-		liveHTTPHandler(req.Context(), w, channelID, sm)
+	mux.HandleFunc("GET /live/{channelID}", func(w http.ResponseWriter, req *http.Request) {
+		liveHTTPHandler(req.Context(), w, req.PathValue("channelID"), sm)
 	})
 
 	// GET /recorded/{channelID}?from=RFC3339&to=RFC3339 — chunked fMP4 over HTTP
-	r.Get("/recorded/{channelID}", func(w http.ResponseWriter, req *http.Request) {
-		channelID := chi.URLParam(req, "channelID")
-		recordedHTTPHandler(req.Context(), w, req, channelID, pbRouter)
+	mux.HandleFunc("GET /recorded/{channelID}", func(w http.ResponseWriter, req *http.Request) {
+		recordedHTTPHandler(req.Context(), w, req, req.PathValue("channelID"), pbRouter)
 	})
 
 	// GET /ws/live?producerID=…&consumerID=… — MSE over WebSocket (live)
-	r.Get("/ws/live", func(w http.ResponseWriter, req *http.Request) {
+	mux.HandleFunc("GET /ws/live", func(w http.ResponseWriter, req *http.Request) {
 		httprouter.WSHandler(req.Context(), w, req, sm)
 	})
 
 	// GET /ws/recorded?producerID=…&consumerID=…&from=RFC3339&to=RFC3339
-	r.Get("/ws/recorded", func(w http.ResponseWriter, req *http.Request) {
+	mux.HandleFunc("GET /ws/recorded", func(w http.ResponseWriter, req *http.Request) {
 		wsRecordedHandler(req.Context(), w, req, pbRouter)
+	})
+
+	// GET /recordings/{channelID}?from=RFC3339&to=RFC3339 — timebar JSON
+	mux.HandleFunc("GET /recordings/{channelID}", func(w http.ResponseWriter, req *http.Request) {
+		timebarHandler(req.Context(), w, req, req.PathValue("channelID"), recIndex)
 	})
 
 	srv := &http.Server{
 		Addr:              c.APIListen,
-		Handler:           r,
+		Handler:           mux,
 		ReadHeaderTimeout: 10 * time.Second,
 	}
 
-	errCh := make(chan error, 1)
-
 	go func() {
-		if err := srv.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
-			errCh <- err
-		}
-	}()
+		<-ctx.Done()
 
-	select {
-	case <-ctx.Done():
 		shutCtx, shutCancel := context.WithTimeout(context.Background(), 10*time.Second)
 		defer shutCancel()
 
-		return srv.Shutdown(shutCtx)
-	case err := <-errCh:
-		return err
+		_ = srv.Shutdown(shutCtx) //nolint:contextcheck
+	}()
+
+	log.Info().Str("appName", appName).Str("addr", c.APIListen).Msg("liverecservice starting")
+
+	if err := srv.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
+		return fmt.Errorf("http server: %w", err)
 	}
+
+	lifecycle.WaitForTerminationRequest(errChan)
+	cancel()
+
+	return nil
 }
 
 // newChannelProvider constructs the ChannelProvider selected by cfg.ChannelSource.
@@ -409,4 +418,85 @@ func (m *notifyMuxer) Close() error {
 	}
 
 	return err
+}
+
+// ── Timebar ──────────────────────────────────────────────────────────────────
+
+// timebarSegment is one recorded segment as returned by the timebar endpoint.
+type timebarSegment struct {
+	ID        string    `json:"id"`
+	Start     time.Time `json:"start"`
+	End       time.Time `json:"end"`
+	Status    string    `json:"status"`
+	SizeBytes int64     `json:"size_bytes"` //nolint:tagliatelle
+	FilePath  string    `json:"file_path"`  //nolint:tagliatelle
+}
+
+// timebarResponse is the JSON envelope returned by GET /recordings/{channelID}.
+type timebarResponse struct {
+	ChannelID string           `json:"channel_id"` //nolint:tagliatelle
+	From      *time.Time       `json:"from,omitempty"`
+	To        *time.Time       `json:"to,omitempty"`
+	Segments  []timebarSegment `json:"segments"`
+}
+
+// timebarHandler serves GET /recordings/{channelID}?from=RFC3339&to=RFC3339.
+//
+// Returns a JSON timebar response listing all recorded segments for the given
+// channel within the requested time window. Both query parameters are optional;
+// omitting them returns all segments for the channel.
+func timebarHandler(
+	ctx context.Context,
+	w http.ResponseWriter,
+	req *http.Request,
+	channelID string,
+	index recorder.RecordingIndex,
+) {
+	from, to, err := parseTimeRange(req)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+
+		return
+	}
+
+	entries, err := index.QueryByChannel(ctx, channelID, from, to)
+	if err != nil {
+		log.Error().Err(err).Str("channel", channelID).Msg("timebar: query")
+		http.Error(w, "index query failed", http.StatusInternalServerError)
+
+		return
+	}
+
+	segments := make([]timebarSegment, len(entries))
+	for i, e := range entries {
+		segments[i] = timebarSegment{
+			ID:        e.ID,
+			Start:     e.StartTime,
+			End:       e.EndTime,
+			Status:    e.Status,
+			SizeBytes: e.SizeBytes,
+			FilePath:  e.FilePath,
+		}
+	}
+
+	resp := timebarResponse{
+		ChannelID: channelID,
+		Segments:  segments,
+	}
+
+	if !from.IsZero() {
+		resp.From = &from
+	}
+
+	if !to.IsZero() {
+		resp.To = &to
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	w.Header().Set("Cache-Control", "no-cache")
+	w.Header().Set("Access-Control-Allow-Origin", "*")
+
+	if err := json.NewEncoder(w).Encode(resp); err != nil {
+		log.Error().Err(err).Str("channel", channelID).Msg("timebar: encode response")
+	}
 }

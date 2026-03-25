@@ -38,6 +38,7 @@ type LiveRecordingConfig struct {
 	ChannelDB          string      `json:"channel_db,omitempty"           mapstructure:"channel_db"`           //nolint:tagliatelle
 	ScheduleDB         string      `json:"schedule_db,omitempty"          mapstructure:"schedule_db"`          //nolint:tagliatelle
 	MongoConfig        MongoConfig `json:"mongo_config"                   mapstructure:"mongo_config"`         //nolint:tagliatelle
+	LogLevel           string      `json:"log_level,omitempty"            mapstructure:"log_level"`            //nolint:tagliatelle
 }
 
 // MongoConfig holds connection parameters for a MongoDB deployment.

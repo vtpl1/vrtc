@@ -18,6 +18,8 @@ import (
 //	  "_id":        "cam-1",
 //	  "name":       "Front Door",
 //	  "stream_url": "rtsp://10.0.0.1/main",
+//	  "username":   "admin",
+//	  "password":   "secret",
 //	  "site_id":    1,
 //	  "extra":      { "key": "value" }
 //	}
@@ -36,6 +38,8 @@ type mongoChannel struct {
 	ID        string            `bson:"_id"`
 	Name      string            `bson:"name"`
 	StreamURL string            `bson:"stream_url"`
+	Username  string            `bson:"username"`
+	Password  string            `bson:"password"`
 	SiteID    int               `bson:"site_id"`
 	Extra     map[string]string `bson:"extra"`
 }

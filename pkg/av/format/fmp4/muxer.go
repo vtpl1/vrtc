@@ -92,6 +92,13 @@ type Muxer struct {
 	// This normalises camera wall-clock timestamps to a player-friendly origin.
 	dtsOffset    time.Duration
 	dtsOffsetSet bool
+
+	// waitingForKeyframe is true when the muxer has a video track but has not
+	// yet seen its first IDR. All packets (video and audio) are dropped until
+	// the first video keyframe arrives, guaranteeing that every fragment emitted
+	// starts on a sync sample. This covers the common late-join scenario where a
+	// new consumer attaches mid-GOP and would otherwise receive leading P-frames.
+	waitingForKeyframe bool
 }
 
 // NewMuxer returns a Muxer that writes fMP4 data to w.
@@ -136,6 +143,7 @@ func (m *Muxer) WriteHeader(_ context.Context, streams []av.Stream) error {
 	}
 
 	m.written = true
+	m.waitingForKeyframe = m.hasVideoTracks()
 
 	return nil
 }
@@ -154,6 +162,18 @@ func (m *Muxer) WritePacket(_ context.Context, pkt av.Packet) error {
 	ts := m.trackMap[pkt.Idx]
 	if ts == nil {
 		return nil // unknown stream index – skip gracefully
+	}
+
+	// Drop all packets until the first video IDR so that every emitted fragment
+	// starts on a sync sample. This handles late-joining consumers that attach
+	// mid-GOP: without this guard the first flushed fragment would begin with
+	// non-reference frames, which MSE and most players reject.
+	if m.waitingForKeyframe {
+		if !ts.hasVideo || !pkt.KeyFrame {
+			return nil
+		}
+
+		m.waitingForKeyframe = false
 	}
 
 	// Normalise timestamps to a zero-based origin on the first packet so that

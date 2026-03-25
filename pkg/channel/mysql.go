@@ -16,6 +16,8 @@ import (
 //	    id         VARCHAR(64)   NOT NULL PRIMARY KEY,
 //	    name       VARCHAR(255)  NOT NULL DEFAULT '',
 //	    stream_url VARCHAR(1024) NOT NULL,
+//	    username   VARCHAR(255)  NOT NULL DEFAULT '',
+//	    password   VARCHAR(255)  NOT NULL DEFAULT '',
 //	    site_id    INT           NOT NULL DEFAULT 0,
 //	    extra      JSON
 //	);
@@ -30,8 +32,11 @@ func NewMySQLProvider(db *sql.DB) ChannelProvider {
 }
 
 func (p *mysqlProvider) GetChannel(ctx context.Context, id string) (Channel, error) {
-	row := p.db.QueryRowContext(ctx,
-		"SELECT id, name, stream_url, site_id, extra FROM channels WHERE id = ?", id)
+	row := p.db.QueryRowContext(
+		ctx,
+		"SELECT id, name, stream_url, username, password, site_id, extra FROM channels WHERE id = ?",
+		id,
+	)
 
 	ch, err := scanChannel(row)
 	if errors.Is(err, sql.ErrNoRows) {
@@ -47,7 +52,7 @@ func (p *mysqlProvider) GetChannel(ctx context.Context, id string) (Channel, err
 
 func (p *mysqlProvider) ListChannels(ctx context.Context) ([]Channel, error) {
 	rows, err := p.db.QueryContext(ctx,
-		"SELECT id, name, stream_url, site_id, extra FROM channels ORDER BY id")
+		"SELECT id, name, stream_url, username, password, site_id, extra FROM channels ORDER BY id")
 	if err != nil {
 		return nil, fmt.Errorf("channel mysql: list: %w", err)
 	}
@@ -84,7 +89,15 @@ func scanChannel(s scanner) (Channel, error) {
 		extraJSON sql.NullString
 	)
 
-	if err := s.Scan(&ch.ID, &ch.Name, &ch.StreamURL, &ch.SiteID, &extraJSON); err != nil {
+	if err := s.Scan(
+		&ch.ID,
+		&ch.Name,
+		&ch.StreamURL,
+		&ch.Username,
+		&ch.Password,
+		&ch.SiteID,
+		&extraJSON,
+	); err != nil {
 		return Channel{}, err
 	}
 
