@@ -15,20 +15,28 @@ func GetFolder(folder string) string {
 	return folder
 }
 
+func GetConfigFolder(applicationName string) string {
+	return GetFolder(filepath.Join("config", applicationName))
+}
+
 func GetSessionFolder(applicationName string) string {
 	return GetFolder(filepath.Join("session", applicationName))
 }
 
 func GetYAMLConfigFilePath(applicationName string) string {
-	return filepath.Join(GetSessionFolder(applicationName), applicationName+".yaml")
+	return filepath.Join(GetConfigFolder(applicationName), applicationName+".yaml")
 }
 
 func GetJSONConfigFilePath(applicationName string) string {
-	return filepath.Join(GetSessionFolder(applicationName), applicationName+".json")
+	return filepath.Join(GetConfigFolder(applicationName), applicationName+".json")
 }
 
 func GetTOMLConfigFilePath(applicationName string) string {
-	return filepath.Join(GetSessionFolder(applicationName), applicationName+".toml")
+	return filepath.Join(GetConfigFolder(applicationName), applicationName+".toml")
+}
+
+func GetJSONSessionFilePath(applicationName string) string {
+	return filepath.Join(GetSessionFolder(applicationName), applicationName+".json")
 }
 
 func GetLogFilePath(applicationName string) string {

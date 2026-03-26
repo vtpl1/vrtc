@@ -12,7 +12,9 @@ func WaitForTerminationRequest(errChan <-chan error) {
 	signal.Notify(quit, syscall.SIGINT, syscall.SIGTERM)
 
 	select {
-	case <-errChan:
 	case <-quit:
+		return
+	case <-errChan:
+		return
 	}
 }
