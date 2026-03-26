@@ -22,7 +22,7 @@ PLATFORMS := \
     linux/amd64 \
 	linux/arm64
 
-.PHONY: all prerequisite fmt lint update gen build test test-edge-cgo docker-build clean
+.PHONY: all prerequisite fmt lint update build test test-edge-cgo docker-build clean
 
 all: fmt lint build
 
