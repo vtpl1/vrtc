@@ -2,8 +2,6 @@ package liverecservice
 
 import (
 	"context"
-	"encoding/json"
-	"net/http"
 	"runtime"
 	"sync/atomic"
 	"time"
@@ -128,25 +126,6 @@ func collectHealth(
 			Total:        httpLive + httpRec + wsLive + wsRec,
 		},
 		Timestamp: time.Now().UTC(),
-	}
-}
-
-// healthHandler serves GET /health as a JSON snapshot.
-func healthHandler(
-	ctx context.Context,
-	w http.ResponseWriter,
-	sm av.RelayHub,
-	rm *recorder.RecordingManager,
-	ct *connTracker,
-	startTime time.Time,
-) {
-	snap := collectHealth(ctx, sm, rm, ct, startTime)
-
-	w.Header().Set("Content-Type", "application/json")
-	w.Header().Set("Cache-Control", "no-cache")
-
-	if err := json.NewEncoder(w).Encode(snap); err != nil {
-		log.Error().Err(err).Msg("health: encode response")
 	}
 }
 

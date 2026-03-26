@@ -3,12 +3,16 @@ package liverecservice
 import (
 	"context"
 	"database/sql"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"net/http"
 	"time"
 
+	"github.com/danielgtaylor/huma/v2"
+	"github.com/danielgtaylor/huma/v2/adapters/humachi"
+	"github.com/go-chi/chi/v5"
+	"github.com/go-chi/chi/v5/middleware"
+	"github.com/go-chi/cors"
 	_ "github.com/go-sql-driver/mysql" // register mysql driver
 	"github.com/rs/zerolog/log"
 	"github.com/vtpl1/vrtc/internal/avgrabber"
@@ -121,61 +125,77 @@ func Run(appName string, cfg Config) error {
 	startHealthLogger(ctx, sm, rm, ct, startTime, 60*time.Second)
 
 	// -----------------------------------------------------------------------
-	// HTTP / WebSocket API
+	// HTTP / WebSocket API (Chi + Huma)
 	// -----------------------------------------------------------------------
-	mux := http.NewServeMux()
+	router := chi.NewRouter()
+	router.Use(middleware.RequestID)
+	router.Use(middleware.RealIP)
+	router.Use(middleware.Recoverer)
+	router.Use(middleware.Timeout(60 * time.Second))
+	router.Use(cors.Handler(cors.Options{
+		AllowedOrigins:   []string{"https://*", "http://*"},
+		AllowedMethods:   []string{"GET", "POST", "PUT", "DELETE", "OPTIONS"},
+		AllowedHeaders:   []string{"Accept", "Authorization", "Content-Type", "X-CSRF-Token"},
+		ExposedHeaders:   []string{"Link"},
+		AllowCredentials: false,
+		MaxAge:           300,
+	}))
 
-	// GET /live/{channelID} — chunked fMP4 over HTTP
-	mux.HandleFunc("GET /live/{channelID}", func(w http.ResponseWriter, req *http.Request) {
+	api := humachi.New(router, huma.DefaultConfig("LiveRecService API", "1.0.0"))
+
+	// ── Huma JSON endpoints ──────────────────────────────────────────────
+
+	huma.Get(api, "/health", func(ctx context.Context, _ *struct{}) (*healthOutput, error) {
+		snap := collectHealth(ctx, sm, rm, ct, startTime)
+
+		return &healthOutput{Body: snap}, nil
+	})
+
+	huma.Get(
+		api,
+		"/stats/producers",
+		func(ctx context.Context, _ *struct{}) (*producerStatsOutput, error) {
+			return &producerStatsOutput{Body: sm.GetRelayStats(ctx)}, nil
+		},
+	)
+
+	huma.Get(
+		api,
+		"/recordings/{channelID}",
+		func(ctx context.Context, input *timebarInput) (*timebarOutput, error) {
+			return handleTimebar(ctx, input, recIndex)
+		},
+	)
+
+	// ── Streaming / WebSocket endpoints (raw Chi) ────────────────────────
+
+	router.Get("/live/{channelID}", func(w http.ResponseWriter, req *http.Request) {
 		defer ct.trackHTTPLive()()
 
-		liveHTTPHandler(req.Context(), w, req.PathValue("channelID"), sm)
+		liveHTTPHandler(req.Context(), w, chi.URLParam(req, "channelID"), sm)
 	})
 
-	// GET /recorded/{channelID}?from=RFC3339&to=RFC3339 — chunked fMP4 over HTTP
-	mux.HandleFunc("GET /recorded/{channelID}", func(w http.ResponseWriter, req *http.Request) {
+	router.Get("/recorded/{channelID}", func(w http.ResponseWriter, req *http.Request) {
 		defer ct.trackHTTPRecorded()()
 
-		recordedHTTPHandler(req.Context(), w, req, req.PathValue("channelID"), pbRouter)
+		recordedHTTPHandler(req.Context(), w, req, chi.URLParam(req, "channelID"), pbRouter)
 	})
 
-	// GET /ws/live?sourceID=…&consumerID=… — MSE over WebSocket (live)
-	mux.HandleFunc("GET /ws/live", func(w http.ResponseWriter, req *http.Request) {
+	router.Get("/ws/live", func(w http.ResponseWriter, req *http.Request) {
 		defer ct.trackWSLive()()
 
 		httprouter.WSHandler(req.Context(), w, req, sm)
 	})
 
-	// GET /ws/recorded?sourceID=…&consumerID=…&from=RFC3339&to=RFC3339
-	mux.HandleFunc("GET /ws/recorded", func(w http.ResponseWriter, req *http.Request) {
+	router.Get("/ws/recorded", func(w http.ResponseWriter, req *http.Request) {
 		defer ct.trackWSRecorded()()
 
 		wsRecordedHandler(req.Context(), w, req, pbRouter)
 	})
 
-	// GET /recordings/{channelID}?from=RFC3339&to=RFC3339 — timebar JSON
-	mux.HandleFunc("GET /recordings/{channelID}", func(w http.ResponseWriter, req *http.Request) {
-		timebarHandler(req.Context(), w, req, req.PathValue("channelID"), recIndex)
-	})
-
-	// GET /stats/producers — per-producer packet/byte/drop counters
-	mux.HandleFunc("GET /stats/producers", func(w http.ResponseWriter, req *http.Request) {
-		w.Header().Set("Content-Type", "application/json")
-		w.Header().Set("Cache-Control", "no-cache")
-
-		if err := json.NewEncoder(w).Encode(sm.GetRelayStats(req.Context())); err != nil {
-			log.Error().Err(err).Msg("stats/producers: encode response")
-		}
-	})
-
-	// GET /health — system health snapshot
-	mux.HandleFunc("GET /health", func(w http.ResponseWriter, req *http.Request) {
-		healthHandler(req.Context(), w, sm, rm, ct, startTime)
-	})
-
 	srv := &http.Server{
 		Addr:              c.APIListen,
-		Handler:           mux,
+		Handler:           router,
 		ReadHeaderTimeout: 10 * time.Second,
 	}
 
@@ -449,7 +469,24 @@ func (m *notifyMuxer) Close() error {
 	return err
 }
 
-// ── Timebar ──────────────────────────────────────────────────────────────────
+// ── Huma I/O types ───────────────────────────────────────────────────────────
+
+// healthOutput wraps the health snapshot for Huma.
+type healthOutput struct {
+	Body healthSnapshot
+}
+
+// producerStatsOutput wraps the relay-stats slice for Huma.
+type producerStatsOutput struct {
+	Body []av.RelayStats
+}
+
+// timebarInput captures path and query parameters for the recordings endpoint.
+type timebarInput struct {
+	ChannelID string `path:"channelID"`
+	From      string `                 doc:"Start of time window (RFC 3339)" example:"2026-01-01T00:00:00Z" query:"from"`
+	To        string `                 doc:"End of time window (RFC 3339)"   example:"2026-01-02T00:00:00Z" query:"to"`
+}
 
 // timebarSegment is one recorded segment as returned by the timebar endpoint.
 type timebarSegment struct {
@@ -457,43 +494,52 @@ type timebarSegment struct {
 	Start     time.Time `json:"start"`
 	End       time.Time `json:"end"`
 	Status    string    `json:"status"`
-	SizeBytes int64     `json:"size_bytes"` //nolint:tagliatelle
-	FilePath  string    `json:"file_path"`  //nolint:tagliatelle
+	SizeBytes int64     `json:"sizeBytes"`
+	FilePath  string    `json:"filePath"`
 }
 
-// timebarResponse is the JSON envelope returned by GET /recordings/{channelID}.
-type timebarResponse struct {
-	ChannelID string           `json:"channel_id"` //nolint:tagliatelle
+// timebarBody is the JSON envelope returned by GET /recordings/{channelID}.
+type timebarBody struct {
+	ChannelID string           `json:"channelId"`
 	From      *time.Time       `json:"from,omitempty"`
 	To        *time.Time       `json:"to,omitempty"`
 	Segments  []timebarSegment `json:"segments"`
 }
 
-// timebarHandler serves GET /recordings/{channelID}?from=RFC3339&to=RFC3339.
-//
-// Returns a JSON timebar response listing all recorded segments for the given
-// channel within the requested time window. Both query parameters are optional;
-// omitting them returns all segments for the channel.
-func timebarHandler(
-	ctx context.Context,
-	w http.ResponseWriter,
-	req *http.Request,
-	channelID string,
-	index recorder.RecordingIndex,
-) {
-	from, to, err := parseTimeRange(req)
-	if err != nil {
-		http.Error(w, err.Error(), http.StatusBadRequest)
+// timebarOutput wraps the timebar body for Huma.
+type timebarOutput struct {
+	Body timebarBody
+}
 
-		return
+// handleTimebar implements the recordings endpoint logic.
+func handleTimebar(
+	ctx context.Context,
+	input *timebarInput,
+	index recorder.RecordingIndex,
+) (*timebarOutput, error) {
+	var from, to time.Time
+
+	var err error
+
+	if input.From != "" {
+		from, err = time.Parse(time.RFC3339, input.From)
+		if err != nil {
+			return nil, huma.Error422UnprocessableEntity("invalid 'from': " + err.Error())
+		}
 	}
 
-	entries, err := index.QueryByChannel(ctx, channelID, from, to)
-	if err != nil {
-		log.Error().Err(err).Str("channel", channelID).Msg("timebar: query")
-		http.Error(w, "index query failed", http.StatusInternalServerError)
+	if input.To != "" {
+		to, err = time.Parse(time.RFC3339, input.To)
+		if err != nil {
+			return nil, huma.Error422UnprocessableEntity("invalid 'to': " + err.Error())
+		}
+	}
 
-		return
+	entries, err := index.QueryByChannel(ctx, input.ChannelID, from, to)
+	if err != nil {
+		log.Error().Err(err).Str("channel", input.ChannelID).Msg("timebar: query")
+
+		return nil, huma.Error500InternalServerError("index query failed")
 	}
 
 	segments := make([]timebarSegment, len(entries))
@@ -508,8 +554,8 @@ func timebarHandler(
 		}
 	}
 
-	resp := timebarResponse{
-		ChannelID: channelID,
+	resp := timebarBody{
+		ChannelID: input.ChannelID,
 		Segments:  segments,
 	}
 
@@ -521,11 +567,5 @@ func timebarHandler(
 		resp.To = &to
 	}
 
-	w.Header().Set("Content-Type", "application/json")
-	w.Header().Set("Cache-Control", "no-cache")
-	w.Header().Set("Access-Control-Allow-Origin", "*")
-
-	if err := json.NewEncoder(w).Encode(resp); err != nil {
-		log.Error().Err(err).Str("channel", channelID).Msg("timebar: encode response")
-	}
+	return &timebarOutput{Body: resp}, nil
 }
