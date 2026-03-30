@@ -10,8 +10,9 @@ import (
 	"github.com/vtpl1/vrtc/pkg/av/format/fmp4"
 )
 
-// segmentCloseInfo is passed from fmp4FileMuxer.Close to the onClose callback.
-type segmentCloseInfo struct {
+// SegmentCloseInfo is passed to the onClose callback when a SegmentMuxer is
+// closed. It summarises the completed segment for index insertion.
+type SegmentCloseInfo struct {
 	Path       string
 	Start      time.Time
 	End        time.Time
@@ -20,34 +21,35 @@ type segmentCloseInfo struct {
 	HasObjects bool
 }
 
-// fmp4FileMuxer wraps an fmp4.Muxer writing to an AdaptiveWriter.
-// It satisfies av.MuxCloser and tracks per-segment analytics flags
-// and seek entries for the recording index.
-type fmp4FileMuxer struct {
+// SegmentMuxer wraps an fmp4.Muxer writing to an AdaptiveWriter.
+// It satisfies av.MuxCloser and tracks per-segment analytics flags.
+// Use NewSegmentMuxer to create one directly, or let RecordingManager
+// manage the full lifecycle automatically.
+type SegmentMuxer struct {
 	inner   *fmp4.Muxer
 	writer  *AdaptiveWriter
 	ring    *RingBuffer // optional; nil if ring buffer disabled
 	tee     io.Writer   // the writer passed to fmp4.Muxer (tee or adaptive)
 	path    string
 	start   time.Time
-	onClose func(segmentCloseInfo)
+	onClose func(SegmentCloseInfo)
 
 	// analytics flags — set during WritePacket
 	hasMotion  bool
 	hasObjects bool
 }
 
-// newFMP4FileMuxer creates the output file at path with storage-optimised
-// buffering and returns the muxer wrapper. If ring is non-nil, fragment bytes
+// NewSegmentMuxer creates the output file at path with storage-optimised
+// buffering and returns the muxer. If ring is non-nil, fragment bytes
 // are tee'd to both disk and the ring buffer.
-func newFMP4FileMuxer(
+func NewSegmentMuxer(
 	path string,
 	startTime time.Time,
 	profile StorageProfile,
 	preallocBytes int64,
 	ring *RingBuffer,
-	onClose func(segmentCloseInfo),
-) (av.MuxCloser, error) {
+	onClose func(SegmentCloseInfo),
+) (*SegmentMuxer, error) {
 	w, err := NewAdaptiveWriter(path, profile, preallocBytes)
 	if err != nil {
 		return nil, err
@@ -59,7 +61,7 @@ func newFMP4FileMuxer(
 		target = &teeWriter{disk: w, ring: ring}
 	}
 
-	return &fmp4FileMuxer{
+	return &SegmentMuxer{
 		inner:   fmp4.NewMuxer(target),
 		writer:  w,
 		ring:    ring,
@@ -70,11 +72,11 @@ func newFMP4FileMuxer(
 	}, nil
 }
 
-func (m *fmp4FileMuxer) WriteHeader(ctx context.Context, streams []av.Stream) error {
+func (m *SegmentMuxer) WriteHeader(ctx context.Context, streams []av.Stream) error {
 	return m.inner.WriteHeader(ctx, streams)
 }
 
-func (m *fmp4FileMuxer) WritePacket(ctx context.Context, pkt av.Packet) error {
+func (m *SegmentMuxer) WritePacket(ctx context.Context, pkt av.Packet) error {
 	if pkt.Analytics != nil {
 		m.hasMotion = true
 
@@ -86,12 +88,12 @@ func (m *fmp4FileMuxer) WritePacket(ctx context.Context, pkt av.Packet) error {
 	return m.inner.WritePacket(ctx, pkt)
 }
 
-func (m *fmp4FileMuxer) WriteTrailer(ctx context.Context, upstreamErr error) error {
+func (m *SegmentMuxer) WriteTrailer(ctx context.Context, upstreamErr error) error {
 	return m.inner.WriteTrailer(ctx, upstreamErr)
 }
 
 // Close flushes remaining data, validates the segment, and calls onClose.
-func (m *fmp4FileMuxer) Close() error {
+func (m *SegmentMuxer) Close() error {
 	endTime := time.Now().UTC()
 
 	err := m.inner.Close()
@@ -104,7 +106,7 @@ func (m *fmp4FileMuxer) Close() error {
 	}
 
 	if m.onClose != nil {
-		m.onClose(segmentCloseInfo{
+		m.onClose(SegmentCloseInfo{
 			Path:       m.path,
 			Start:      m.start,
 			End:        endTime,
@@ -118,7 +120,7 @@ func (m *fmp4FileMuxer) Close() error {
 }
 
 // BytesWritten returns the total bytes written to disk so far.
-func (m *fmp4FileMuxer) BytesWritten() int64 {
+func (m *SegmentMuxer) BytesWritten() int64 {
 	return m.writer.BytesWritten()
 }
 

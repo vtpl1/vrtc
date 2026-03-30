@@ -22,7 +22,6 @@ import (
 	"sync"
 	"time"
 
-	"github.com/coder/websocket"
 	"github.com/vtpl1/vrtc/pkg/av"
 	"github.com/vtpl1/vrtc/pkg/av/codec/pcm"
 	"github.com/vtpl1/vrtc/pkg/av/format/fmp4"
@@ -38,15 +37,24 @@ type (
 	TextWriterFactory   func() (io.WriteCloser, error)
 )
 
+// messageKind distinguishes binary (media) from text (JSON metadata) output
+// frames without importing a WebSocket library.
+type messageKind int
+
+const (
+	messageBinary messageKind = iota
+	messageText
+)
+
 // wsMessage is the JSON envelope used for all text-channel messages.
 type wsMessage struct {
 	Type  string `json:"type"`
 	Value any    `json:"value"`
 }
 
-// outFrame is a single WebSocket frame queued for delivery to a client.
+// outFrame is a single output frame queued for delivery to a client.
 type outFrame struct {
-	kind websocket.MessageType // websocket.TextMessage or websocket.BinaryMessage
+	kind messageKind
 	data []byte
 }
 
@@ -187,13 +195,13 @@ func (m *MSEWriter) WriteHeader(ctx context.Context, streams []av.Stream) error 
 	}
 
 	if meta, jerr := json.Marshal(wsMessage{Type: "mse", Value: codecStr}); jerr == nil {
-		if err := m.broadcast(outFrame{websocket.MessageText, meta}); err != nil {
+		if err := m.broadcast(outFrame{messageText, meta}); err != nil {
 			return err
 		}
 	}
 
 	if len(data) > 0 {
-		if err := m.broadcast(outFrame{websocket.MessageBinary, data}); err != nil {
+		if err := m.broadcast(outFrame{messageBinary, data}); err != nil {
 			return err
 		}
 	}
@@ -220,14 +228,14 @@ func (m *MSEWriter) WritePacket(ctx context.Context, pkt av.Packet) error {
 	m.mu.Unlock()
 
 	if len(data) > 0 {
-		if err := m.broadcast(outFrame{websocket.MessageBinary, data}); err != nil {
+		if err := m.broadcast(outFrame{messageBinary, data}); err != nil {
 			return err
 		}
 	}
 
 	if pkt.Analytics != nil {
 		if meta, jerr := json.Marshal(pkt.Analytics); jerr == nil {
-			if err := m.broadcast(outFrame{websocket.MessageText, meta}); err != nil {
+			if err := m.broadcast(outFrame{messageText, meta}); err != nil {
 				return err
 			}
 		}
@@ -245,7 +253,7 @@ func (m *MSEWriter) WriteTrailer(ctx context.Context, upstreamErr error) error {
 	m.mu.Unlock()
 
 	if len(data) > 0 {
-		if err := m.broadcast(outFrame{websocket.MessageBinary, data}); err != nil {
+		if err := m.broadcast(outFrame{messageBinary, data}); err != nil {
 			return err
 		}
 	}
@@ -318,12 +326,12 @@ func (m *MSEWriter) WriteCodecChange(ctx context.Context, changed []av.Stream) e
 	// Notify the connected client of the codec change before the new segment
 	// data arrives so the browser can call sourceBuffer.changeType() in time.
 	if meta, jerr := json.Marshal(wsMessage{Type: "mse", Value: newCodecStr}); jerr == nil {
-		if err := m.broadcast(outFrame{websocket.MessageText, meta}); err != nil {
+		if err := m.broadcast(outFrame{messageText, meta}); err != nil {
 			return err
 		}
 	}
 
-	if err := m.broadcast(outFrame{websocket.MessageBinary, data}); err != nil {
+	if err := m.broadcast(outFrame{messageBinary, data}); err != nil {
 		return err
 	}
 
@@ -387,7 +395,7 @@ func cloneStreams(ss []av.Stream) []av.Stream {
 
 func (m *MSEWriter) broadcast(frame outFrame) error {
 	switch frame.kind {
-	case websocket.MessageBinary:
+	case messageBinary:
 		if m.binaryFactory != nil {
 			w, err := m.binaryFactory()
 			if err != nil {
@@ -413,7 +421,7 @@ func (m *MSEWriter) broadcast(frame outFrame) error {
 				return err
 			}
 		}
-	case websocket.MessageText:
+	case messageText:
 		if m.jsonFactory != nil {
 			w, err := m.jsonFactory()
 			if err != nil {

@@ -13,21 +13,33 @@ import (
 	"github.com/vtpl1/vrtc/pkg/schedule"
 )
 
+// StreamConsumer is the subset of av.RelayHub that RecordingManager needs.
+// Both relayhub.RelayHub and any custom implementation satisfy this interface.
+type StreamConsumer interface {
+	Consume(ctx context.Context, sourceID string, opts av.ConsumeOptions) (av.ConsumerHandle, error)
+}
+
+// ScheduleSource is the subset of schedule.ScheduleProvider that
+// RecordingManager needs. Any provider that can list schedules satisfies it.
+type ScheduleSource interface {
+	ListSchedules(ctx context.Context) ([]schedule.Schedule, error)
+}
+
 // activeRec tracks one in-progress recording segment.
 type activeRec struct {
 	sched     schedule.Schedule
 	handle    av.ConsumerHandle
-	muxer     *fmp4FileMuxer // for BytesWritten() check
+	muxer     *SegmentMuxer // for BytesWritten() check
 	startTime time.Time
 }
 
-// RecordingManager polls a ScheduleProvider and maintains fMP4 recording
-// segments on disk. It attaches / detaches consumers on the RelayHub
+// RecordingManager polls a ScheduleSource and maintains fMP4 recording
+// segments on disk. It attaches / detaches consumers on the StreamConsumer
 // as schedules become active or inactive and rotates segments when the
 // configured SegmentMinutes or SegmentSizeMB threshold is reached.
 type RecordingManager struct {
-	sm           av.RelayHub
-	schedules    schedule.ScheduleProvider
+	sm           StreamConsumer
+	schedules    ScheduleSource
 	index        RecordingIndex
 	pollInterval time.Duration
 
@@ -43,9 +55,12 @@ type RecordingManager struct {
 }
 
 // New creates a RecordingManager. Call Start to begin the poll loop.
+//
+// sm can be a full av.RelayHub or any type with a Consume method.
+// schedProvider can be a schedule.ScheduleProvider or any type with ListSchedules.
 func New(
-	sm av.RelayHub,
-	schedProvider schedule.ScheduleProvider,
+	sm StreamConsumer,
+	schedProvider ScheduleSource,
 	index RecordingIndex,
 	pollInterval time.Duration,
 ) *RecordingManager {
@@ -317,10 +332,10 @@ func (rm *RecordingManager) startSegment(ctx context.Context, s schedule.Schedul
 	// Get or create ring buffer for this channel.
 	ring := rm.getOrCreateRingBuffer(s)
 
-	var muxerRef *fmp4FileMuxer
+	var muxerRef *SegmentMuxer
 
 	muxerFactory := av.MuxerFactory(func(_ context.Context, _ string) (av.MuxCloser, error) {
-		onClose := func(info segmentCloseInfo) { //nolint:contextcheck // onClose runs after stream ctx cancelled
+		onClose := func(info SegmentCloseInfo) { //nolint:contextcheck // onClose runs after stream ctx cancelled
 			entry := RecordingEntry{
 				ID:         consumerID,
 				ChannelID:  s.ChannelID,
@@ -345,14 +360,12 @@ func (rm *RecordingManager) startSegment(ctx context.Context, s schedule.Schedul
 			}
 		}
 
-		mux, err := newFMP4FileMuxer(path, now, profile, preallocBytes, ring, onClose)
+		mux, err := NewSegmentMuxer(path, now, profile, preallocBytes, ring, onClose)
 		if err != nil {
 			return nil, err
 		}
 
-		if m, ok := mux.(*fmp4FileMuxer); ok {
-			muxerRef = m
-		}
+		muxerRef = mux
 
 		return mux, nil
 	})
