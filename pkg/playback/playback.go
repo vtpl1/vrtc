@@ -126,6 +126,10 @@ func (s *indexSource) waitForNext(ctx context.Context) (av.DemuxCloser, error) {
 
 		newEntries, err := s.index.QueryByChannel(ctx, s.channelID, afterTime, time.Time{})
 		if err != nil {
+			if ctx.Err() != nil {
+				return nil, ctx.Err()
+			}
+
 			log.Warn().Err(err).Str("channel", s.channelID).Msg("playback: poll index")
 
 			continue
