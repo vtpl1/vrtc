@@ -6,12 +6,12 @@ import (
 	"context"
 	"time"
 
-	"github.com/vtpl1/vrtc/pkg/av"
-	"github.com/vtpl1/vrtc/pkg/av/codec"
-	"github.com/vtpl1/vrtc/pkg/av/codec/aacparser"
-	"github.com/vtpl1/vrtc/pkg/av/codec/h264parser"
-	"github.com/vtpl1/vrtc/pkg/av/codec/h265parser"
-	"github.com/vtpl1/vrtc/pkg/av/codec/pcm"
+	"github.com/vtpl1/vrtc-sdk/av"
+	"github.com/vtpl1/vrtc-sdk/av/codec"
+	"github.com/vtpl1/vrtc-sdk/av/codec/aacparser"
+	"github.com/vtpl1/vrtc-sdk/av/codec/h264parser"
+	"github.com/vtpl1/vrtc-sdk/av/codec/h265parser"
+	"github.com/vtpl1/vrtc-sdk/av/codec/pcm"
 )
 
 const (

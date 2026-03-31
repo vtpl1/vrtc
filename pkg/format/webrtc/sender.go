@@ -25,7 +25,7 @@ import (
 	"context"
 	"errors"
 
-	"github.com/vtpl1/vrtc/pkg/av"
+	"github.com/vtpl1/vrtc-sdk/av"
 )
 
 // ErrNotImplemented is returned by all Sender methods until the full

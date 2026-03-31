@@ -7,7 +7,7 @@ import (
 	"time"
 
 	"github.com/rs/zerolog/log"
-	"github.com/vtpl1/vrtc/pkg/av"
+	"github.com/vtpl1/vrtc-sdk/av"
 	"github.com/vtpl1/vrtc/pkg/recorder"
 )
 

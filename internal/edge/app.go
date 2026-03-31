@@ -10,11 +10,11 @@ import (
 	"time"
 
 	"github.com/rs/zerolog/log"
+	"github.com/vtpl1/vrtc-sdk/av"
+	"github.com/vtpl1/vrtc-sdk/av/format/llhls"
+	"github.com/vtpl1/vrtc-sdk/av/relayhub"
 	"github.com/vtpl1/vrtc/internal/avgrabber"
 	"github.com/vtpl1/vrtc/internal/httprouter"
-	"github.com/vtpl1/vrtc/pkg/av"
-	"github.com/vtpl1/vrtc/pkg/av/format/llhls"
-	"github.com/vtpl1/vrtc/pkg/av/relayhub"
 	"github.com/vtpl1/vrtc/pkg/lifecycle"
 	"github.com/vtpl1/vrtc/pkg/pva"
 )
@@ -141,7 +141,7 @@ func (e *consumerEntry) idleSince() time.Duration {
 
 // Run starts the edge node and blocks until ctx is cancelled.
 //
-//nolint:maintidx
+//nolint:maintidx,funlen // server-lifecycle wiring cannot be split cleanly
 func Run(appName, appMode string, cfg Config) error {
 	log.Info().Msgf("%+v", cfg)
 

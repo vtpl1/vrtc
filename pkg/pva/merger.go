@@ -3,7 +3,7 @@ package pva
 import (
 	"context"
 
-	"github.com/vtpl1/vrtc/pkg/av"
+	"github.com/vtpl1/vrtc-sdk/av"
 )
 
 // MetadataMerger is a decorator around av.DemuxCloser that attaches *FrameAnalytics

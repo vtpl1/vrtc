@@ -9,7 +9,7 @@ import (
 	"time"
 
 	"github.com/rs/zerolog/log"
-	"github.com/vtpl1/vrtc/pkg/av"
+	"github.com/vtpl1/vrtc-sdk/av"
 	"github.com/vtpl1/vrtc/pkg/schedule"
 )
 
@@ -144,28 +144,7 @@ func (rm *RecordingManager) Metrics(ctx context.Context) Metrics {
 	// Query index for all channels' stats.
 	allEntries, _ := rm.index.QueryByChannel(ctx, "", time.Time{}, time.Time{})
 
-	perChannel := make(map[string]ChannelStats)
-
-	var totalSize int64
-
-	for _, e := range allEntries {
-		cs := perChannel[e.ChannelID]
-		cs.Segments++
-		cs.TotalBytes += e.SizeBytes
-		totalSize += e.SizeBytes
-
-		if cs.OldestSegment.IsZero() || e.StartTime.Before(cs.OldestSegment) {
-			cs.OldestSegment = e.StartTime
-		}
-
-		if e.StartTime.After(cs.NewestSegment) {
-			cs.NewestSegment = e.StartTime
-		}
-
-		cs.Recording = activeChannels[e.ChannelID]
-		cs.RingBufBytes = ringBufSizes[e.ChannelID]
-		perChannel[e.ChannelID] = cs
-	}
+	perChannel, totalSize := buildPerChannelStats(allEntries, activeChannels, ringBufSizes)
 
 	var diskFree, diskTotal int64
 
@@ -187,6 +166,37 @@ func (rm *RecordingManager) Metrics(ctx context.Context) Metrics {
 		PerChannel:     perChannel,
 		LastRetention:  lastRet,
 	}
+}
+
+func buildPerChannelStats(
+	entries []RecordingEntry,
+	activeChannels map[string]bool,
+	ringBufSizes map[string]int64,
+) (map[string]ChannelStats, int64) {
+	perChannel := make(map[string]ChannelStats)
+
+	var totalSize int64
+
+	for _, e := range entries {
+		cs := perChannel[e.ChannelID]
+		cs.Segments++
+		cs.TotalBytes += e.SizeBytes
+		totalSize += e.SizeBytes
+
+		if cs.OldestSegment.IsZero() || e.StartTime.Before(cs.OldestSegment) {
+			cs.OldestSegment = e.StartTime
+		}
+
+		if e.StartTime.After(cs.NewestSegment) {
+			cs.NewestSegment = e.StartTime
+		}
+
+		cs.Recording = activeChannels[e.ChannelID]
+		cs.RingBufBytes = ringBufSizes[e.ChannelID]
+		perChannel[e.ChannelID] = cs
+	}
+
+	return perChannel, totalSize
 }
 
 func (rm *RecordingManager) loop(ctx context.Context) {
@@ -221,55 +231,9 @@ func (rm *RecordingManager) tick(ctx context.Context) {
 	activeIDs := make(map[string]struct{}, len(schedules))
 
 	for _, s := range schedules {
-		if !schedule.IsActive(s, now) {
-			continue
-		}
-
-		activeIDs[s.ID] = struct{}{}
-
-		// Disk-full check before starting or continuing.
-		if s.MinFreeGB > 0 || s.LowFreeGB > 0 {
-			rm.checkDiskSpace(ctx, s, now)
-		}
-
-		rm.mu.Lock()
-		ar, exists := rm.active[s.ID]
-		rm.mu.Unlock()
-
-		if !exists {
-			// Check emergency disk-full: skip starting if below MinFreeGB.
-			if s.MinFreeGB > 0 {
-				avail, _, diskErr := CheckDiskSpace(s.StoragePath)
-				if diskErr == nil && avail < int64(s.MinFreeGB*1024*1024*1024) {
-					log.Warn().
-						Str("schedule", s.ID).
-						Float64("minFreeGb", s.MinFreeGB).
-						Int64("availBytes", avail).
-						Msg("recorder: disk below MinFreeGB, skipping new segment")
-
-					continue
-				}
-			}
-
-			rm.startSegment(ctx, s, now)
-
-			continue
-		}
-
-		// Time-based rotation.
-		if s.SegmentMinutes > 0 {
-			if now.Sub(ar.startTime) >= time.Duration(s.SegmentMinutes)*time.Minute {
-				rm.rotateSegment(ctx, ar, s, now)
-
-				continue
-			}
-		}
-
-		// Size-based rotation.
-		if s.SegmentSizeMB > 0 && ar.muxer != nil {
-			if ar.muxer.BytesWritten() >= int64(s.SegmentSizeMB)*1024*1024 {
-				rm.rotateSegment(ctx, ar, s, now)
-			}
+		if schedule.IsActive(s, now) {
+			activeIDs[s.ID] = struct{}{}
+			rm.processSchedule(ctx, s, now)
 		}
 	}
 
@@ -299,9 +263,140 @@ func (rm *RecordingManager) tick(ctx context.Context) {
 	}
 }
 
+func (rm *RecordingManager) processSchedule(
+	ctx context.Context,
+	s schedule.Schedule,
+	now time.Time,
+) {
+	// Disk-full check before starting or continuing.
+	if s.MinFreeGB > 0 || s.LowFreeGB > 0 {
+		rm.checkDiskSpace(ctx, s, now)
+	}
+
+	rm.mu.Lock()
+	ar, exists := rm.active[s.ID]
+	rm.mu.Unlock()
+
+	if !exists {
+		// Check emergency disk-full: skip starting if below MinFreeGB.
+		if s.MinFreeGB > 0 {
+			avail, _, diskErr := CheckDiskSpace(s.StoragePath)
+			if diskErr == nil && avail < int64(s.MinFreeGB*1024*1024*1024) {
+				log.Warn().
+					Str("schedule", s.ID).
+					Float64("minFreeGb", s.MinFreeGB).
+					Int64("availBytes", avail).
+					Msg("recorder: disk below MinFreeGB, skipping new segment")
+
+				return
+			}
+		}
+
+		rm.startSegment(ctx, s, now)
+
+		return
+	}
+
+	// Time-based rotation.
+	if s.SegmentMinutes > 0 {
+		if now.Sub(ar.startTime) >= time.Duration(s.SegmentMinutes)*time.Minute {
+			rm.rotateSegment(ctx, ar, s, now)
+
+			return
+		}
+	}
+
+	// Size-based rotation.
+	if s.SegmentSizeMB > 0 && ar.muxer != nil {
+		if ar.muxer.BytesWritten() >= int64(s.SegmentSizeMB)*1024*1024 {
+			rm.rotateSegment(ctx, ar, s, now)
+		}
+	}
+}
+
 func (rm *RecordingManager) hasRetentionPolicy(s schedule.Schedule) bool {
 	return s.MaxAgeDays > 0 || s.MaxStorageGB > 0 || s.ContinuousDays > 0 ||
 		s.MotionDays > 0 || s.ObjectDays > 0 || s.MinFreeGB > 0
+}
+
+// makeOnCloseCallback returns a SegmentCloseInfo handler that validates the
+// completed segment, updates its status in the index, and logs any corruption.
+//
+
+func (rm *RecordingManager) makeOnCloseCallback(
+	consumerID string,
+	s schedule.Schedule,
+) func(SegmentCloseInfo) {
+	return func(info SegmentCloseInfo) {
+		entry := RecordingEntry{
+			ID:         consumerID,
+			ChannelID:  s.ChannelID,
+			StartTime:  info.Start,
+			EndTime:    info.End,
+			FilePath:   info.Path,
+			SizeBytes:  info.SizeBytes,
+			Status:     StatusComplete,
+			HasMotion:  info.HasMotion,
+			HasObjects: info.HasObjects,
+		}
+
+		// Validate segment — downgrade to corrupted if invalid.
+		if valErr := ValidateSegment(info.Path); valErr != nil {
+			entry.Status = StatusCorrupted
+
+			log.Warn().Err(valErr).Str("path", info.Path).Msg("recorder: segment corrupted")
+		}
+
+		if iErr := rm.index.Insert(context.Background(), entry); iErr != nil {
+			log.Error().Err(iErr).Msg("recorder: index insert complete")
+		}
+	}
+}
+
+// segmentPreallocBytes returns the number of bytes to pre-allocate for a
+// segment file, based on the schedule's size or duration hint.
+func segmentPreallocBytes(s schedule.Schedule) int64 {
+	if s.SegmentSizeMB > 0 {
+		return int64(s.SegmentSizeMB) * 1024 * 1024
+	}
+
+	if s.SegmentMinutes > 0 {
+		return int64(s.SegmentMinutes) * 60 * 1_200_000 // ~1.2 MB/s estimate
+	}
+
+	return 0
+}
+
+// registerActiveSegment inserts the "recording" status entry into the index
+// and adds the segment to the active map.
+func (rm *RecordingManager) registerActiveSegment(
+	ctx context.Context,
+	s schedule.Schedule,
+	consumerID, path string,
+	now time.Time,
+	handle av.ConsumerHandle,
+	muxerRef *SegmentMuxer,
+) {
+	startEntry := RecordingEntry{
+		ID:        consumerID,
+		ChannelID: s.ChannelID,
+		StartTime: now,
+		FilePath:  path,
+		Status:    StatusRecording,
+	}
+
+	if iErr := rm.index.Insert(ctx, startEntry); iErr != nil {
+		log.Error().Err(iErr).Msg("recorder: index insert recording")
+	}
+
+	rm.mu.Lock()
+	rm.active[s.ID] = &activeRec{
+		sched:     s,
+		handle:    handle,
+		muxer:     muxerRef,
+		startTime: now,
+	}
+	rm.mu.Unlock()
 }
 
 func (rm *RecordingManager) startSegment(ctx context.Context, s schedule.Schedule, now time.Time) {
@@ -315,51 +410,19 @@ func (rm *RecordingManager) startSegment(ctx context.Context, s schedule.Schedul
 
 	consumerID := fmt.Sprintf("recorder-%s-%s", s.ID, now.Format("20060102T150405Z"))
 
-	// Resolve storage profile.
 	profile := StorageProfile(s.StorageProfile)
 	if profile == "" {
 		profile = ProfileAuto
 	}
 
-	// Compute prealloc size.
-	var preallocBytes int64
-	if s.SegmentSizeMB > 0 {
-		preallocBytes = int64(s.SegmentSizeMB) * 1024 * 1024
-	} else if s.SegmentMinutes > 0 {
-		preallocBytes = int64(s.SegmentMinutes) * 60 * 1_200_000 // ~1.2 MB/s estimate
-	}
-
-	// Get or create ring buffer for this channel.
 	ring := rm.getOrCreateRingBuffer(s)
 
 	var muxerRef *SegmentMuxer
 
+	onClose := rm.makeOnCloseCallback(consumerID, s)
+	preallocBytes := segmentPreallocBytes(s)
+
 	muxerFactory := av.MuxerFactory(func(_ context.Context, _ string) (av.MuxCloser, error) {
-		onClose := func(info SegmentCloseInfo) { //nolint:contextcheck // onClose runs after stream ctx cancelled
-			entry := RecordingEntry{
-				ID:         consumerID,
-				ChannelID:  s.ChannelID,
-				StartTime:  info.Start,
-				EndTime:    info.End,
-				FilePath:   info.Path,
-				SizeBytes:  info.SizeBytes,
-				Status:     StatusComplete,
-				HasMotion:  info.HasMotion,
-				HasObjects: info.HasObjects,
-			}
-
-			// Validate segment — downgrade to corrupted if invalid.
-			if valErr := ValidateSegment(info.Path); valErr != nil {
-				entry.Status = StatusCorrupted
-
-				log.Warn().Err(valErr).Str("path", info.Path).Msg("recorder: segment corrupted")
-			}
-
-			if iErr := rm.index.Insert(context.Background(), entry); iErr != nil {
-				log.Error().Err(iErr).Msg("recorder: index insert complete")
-			}
-		}
-
 		mux, err := NewSegmentMuxer(path, now, profile, preallocBytes, ring, onClose)
 		if err != nil {
 			return nil, err
@@ -384,25 +447,7 @@ func (rm *RecordingManager) startSegment(ctx context.Context, s schedule.Schedul
 		return
 	}
 
-	startEntry := RecordingEntry{
-		ID:        consumerID,
-		ChannelID: s.ChannelID,
-		StartTime: now,
-		FilePath:  path,
-		Status:    StatusRecording,
-	}
-	if iErr := rm.index.Insert(ctx, startEntry); iErr != nil {
-		log.Error().Err(iErr).Msg("recorder: index insert recording")
-	}
-
-	rm.mu.Lock()
-	rm.active[s.ID] = &activeRec{
-		sched:     s,
-		handle:    handle,
-		muxer:     muxerRef,
-		startTime: now,
-	}
-	rm.mu.Unlock()
+	rm.registerActiveSegment(ctx, s, consumerID, path, now, handle, muxerRef)
 }
 
 func (rm *RecordingManager) rotateSegment(

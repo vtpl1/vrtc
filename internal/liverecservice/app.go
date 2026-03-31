@@ -15,11 +15,11 @@ import (
 	"github.com/go-chi/cors"
 	_ "github.com/go-sql-driver/mysql" // register mysql driver
 	"github.com/rs/zerolog/log"
+	"github.com/vtpl1/vrtc-sdk/av"
+	"github.com/vtpl1/vrtc-sdk/av/format/fmp4"
+	"github.com/vtpl1/vrtc-sdk/av/relayhub"
 	"github.com/vtpl1/vrtc/internal/avgrabber"
 	"github.com/vtpl1/vrtc/internal/httprouter"
-	"github.com/vtpl1/vrtc/pkg/av"
-	"github.com/vtpl1/vrtc/pkg/av/format/fmp4"
-	"github.com/vtpl1/vrtc/pkg/av/relayhub"
 	"github.com/vtpl1/vrtc/pkg/channel"
 	"github.com/vtpl1/vrtc/pkg/lifecycle"
 	"github.com/vtpl1/vrtc/pkg/playback"
@@ -38,6 +38,8 @@ var (
 )
 
 // Run starts the live-recording service. It blocks until ctx is cancelled.
+//
+//nolint:funlen // server-lifecycle wiring cannot be split cleanly
 func Run(appName string, cfg Config) error {
 	c := cfg.LiveRecordingConfig
 

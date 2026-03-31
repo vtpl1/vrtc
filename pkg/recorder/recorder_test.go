@@ -7,7 +7,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/vtpl1/vrtc/pkg/av"
+	"github.com/vtpl1/vrtc-sdk/av"
 	"github.com/vtpl1/vrtc/pkg/recorder"
 	"github.com/vtpl1/vrtc/pkg/schedule"
 )

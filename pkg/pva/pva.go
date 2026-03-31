@@ -5,7 +5,7 @@ package pva
 import (
 	"time"
 
-	"github.com/vtpl1/vrtc/pkg/av"
+	"github.com/vtpl1/vrtc-sdk/av"
 )
 
 // Detection is an alias for av.Detection.

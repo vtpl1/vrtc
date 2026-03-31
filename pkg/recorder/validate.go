@@ -50,9 +50,15 @@ func ValidateSegment(path string) error {
 		return fmt.Errorf("%w: %d", ErrSegmentBadFtyp, ftypSize)
 	}
 
-	pos := ftypSize
+	return findMoofBox(f, ftypSize, info.Size())
+}
 
-	for pos < info.Size() {
+// findMoofBox scans MP4 boxes starting at ftypSize until it finds a "moof"
+// box or reaches the end of the file.
+func findMoofBox(f *os.File, ftypSize, fileSize int64) error {
+	var buf [8]byte
+
+	for pos := ftypSize; pos < fileSize; {
 		if _, err := f.Seek(pos, io.SeekStart); err != nil {
 			return fmt.Errorf("seek to offset %d: %w", pos, err)
 		}

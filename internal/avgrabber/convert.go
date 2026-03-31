@@ -3,7 +3,7 @@ package avgrabber
 import (
 	"encoding/binary"
 
-	"github.com/vtpl1/vrtc/pkg/av"
+	"github.com/vtpl1/vrtc-sdk/av"
 )
 
 // avCodecType maps avgrabber codec constants to av.CodecType.

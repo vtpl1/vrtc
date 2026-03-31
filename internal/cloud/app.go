@@ -11,9 +11,9 @@ import (
 
 	"github.com/rs/zerolog/log"
 	"github.com/soheilhy/cmux"
+	"github.com/vtpl1/vrtc-sdk/av"
+	"github.com/vtpl1/vrtc-sdk/av/relayhub"
 	"github.com/vtpl1/vrtc/internal/httprouter"
-	"github.com/vtpl1/vrtc/pkg/av"
-	"github.com/vtpl1/vrtc/pkg/av/relayhub"
 	"github.com/vtpl1/vrtc/pkg/lifecycle"
 )
 
@@ -21,6 +21,7 @@ import (
 // source layer is rewritten.
 var errNotImplemented = errors.New("cloud demuxer: not implemented")
 
+//nolint:funlen // server-lifecycle wiring cannot be split cleanly
 func Run(appName, appMode string, cfg Config) error {
 	log.Info().Msgf("%+v", cfg)
 

@@ -9,8 +9,8 @@ func CheckDiskSpace(path string) (availableBytes, totalBytes int64, err error) {
 		return 0, 0, err
 	}
 
-	availableBytes = int64(stat.Bavail) * int64(stat.Bsize)
-	totalBytes = int64(stat.Blocks) * int64(stat.Bsize)
+	availableBytes = int64(stat.Bavail) * stat.Bsize
+	totalBytes = int64(stat.Blocks) * stat.Bsize
 
 	return availableBytes, totalBytes, nil
 }

@@ -14,8 +14,8 @@ import (
 	"github.com/go-chi/chi/v5"
 	"github.com/go-chi/cors"
 	"github.com/rs/zerolog/log"
-	"github.com/vtpl1/vrtc/pkg/av"
-	"github.com/vtpl1/vrtc/pkg/mse"
+	"github.com/vtpl1/vrtc-sdk/av"
+	"github.com/vtpl1/vrtc-sdk/av/format/mse"
 )
 
 type Command struct {
@@ -62,7 +62,7 @@ func (l *Lazy) Do(f func() error) error {
 	return l.err
 }
 
-//nolint:gocognit // WebSocket handler — lifecycle complexity is inherent, not incidental.
+//nolint:gocognit,funlen // WebSocket handler — lifecycle complexity is inherent, not incidental.
 func WSHandler(
 	ctx context.Context,
 	w http.ResponseWriter,
@@ -162,7 +162,7 @@ func WSHandler(
 								return localMs, nil
 							},
 							MuxerRemover: func(_ context.Context, _ string) error {
-								localMs.Close() //nolint:contextcheck
+								localMs.Close()
 
 								return nil
 							},
@@ -223,7 +223,7 @@ func WSHandler(
 	msMu.Unlock()
 
 	if msCopy != nil {
-		msCopy.Close() //nolint:contextcheck
+		msCopy.Close()
 	}
 
 	consumerMu.Lock()

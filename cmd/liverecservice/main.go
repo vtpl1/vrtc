@@ -13,14 +13,10 @@ import (
 	"github.com/vtpl1/vrtc/pkg/logger"
 )
 
-func main() {
-	// Load .env into the process environment before Viper reads it.
-	// Non-fatal: silently ignored when the file does not exist.
-	_ = godotenv.Load()
-
+func newRootCmd() *cobra.Command {
 	var cfgGlobal liverecservice.Config
 
-	root := &cobra.Command{
+	return &cobra.Command{
 		Use:     liverecservice.AppName,
 		Short:   liverecservice.AppName,
 		Version: appinfo.GetVersion(),
@@ -71,9 +67,14 @@ func main() {
 			return liverecservice.Run(liverecservice.AppName, cfgGlobal)
 		},
 	}
+}
 
-	err := root.Execute()
-	if err != nil {
+func main() {
+	// Load .env into the process environment before Viper reads it.
+	// Non-fatal: silently ignored when the file does not exist.
+	_ = godotenv.Load()
+
+	if err := newRootCmd().Execute(); err != nil {
 		log.Error().Err(err).Msg("command failed")
 		os.Exit(1)
 	}

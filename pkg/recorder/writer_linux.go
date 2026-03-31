@@ -76,7 +76,7 @@ func isRotational(path string) bool {
 			continue
 		}
 
-		if parts[0] != strconv.FormatUint(uint64(major), 10) {
+		if parts[0] != strconv.FormatUint(major, 10) {
 			continue
 		}
 

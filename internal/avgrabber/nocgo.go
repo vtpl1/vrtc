@@ -9,7 +9,7 @@ import (
 	"context"
 	"errors"
 
-	"github.com/vtpl1/vrtc/pkg/av"
+	"github.com/vtpl1/vrtc-sdk/av"
 )
 
 // ErrCGORequired is returned by all avgrabber operations when the binary was

@@ -94,24 +94,11 @@ func (idx *sqliteIndex) QueryByChannel(
 	var results []RecordingEntry
 
 	for rows.Next() {
-		var (
-			e                       RecordingEntry
-			startStr, endStr        string
-			hasMotionInt, hasObjInt int
-		)
-
-		if err = rows.Scan(
-			&e.ID, &startStr, &endStr, &e.FilePath, &e.SizeBytes, &e.Status,
-			&hasMotionInt, &hasObjInt,
-		); err != nil {
-			return nil, fmt.Errorf("recorder sqlite: scan row: %w", err)
+		e, scanErr := scanRecordingRow(rows, channelID)
+		if scanErr != nil {
+			return nil, scanErr
 		}
 
-		e.ChannelID = channelID
-		e.StartTime, _ = time.Parse(time.RFC3339Nano, startStr)
-		e.EndTime, _ = time.Parse(time.RFC3339Nano, endStr)
-		e.HasMotion = hasMotionInt != 0
-		e.HasObjects = hasObjInt != 0
 		results = append(results, e)
 	}
 
@@ -120,6 +107,29 @@ func (idx *sqliteIndex) QueryByChannel(
 	}
 
 	return results, nil
+}
+
+func scanRecordingRow(rows *sql.Rows, channelID string) (RecordingEntry, error) {
+	var (
+		e                       RecordingEntry
+		startStr, endStr        string
+		hasMotionInt, hasObjInt int
+	)
+
+	if err := rows.Scan(
+		&e.ID, &startStr, &endStr, &e.FilePath, &e.SizeBytes, &e.Status,
+		&hasMotionInt, &hasObjInt,
+	); err != nil {
+		return RecordingEntry{}, fmt.Errorf("recorder sqlite: scan row: %w", err)
+	}
+
+	e.ChannelID = channelID
+	e.StartTime, _ = time.Parse(time.RFC3339Nano, startStr)
+	e.EndTime, _ = time.Parse(time.RFC3339Nano, endStr)
+	e.HasMotion = hasMotionInt != 0
+	e.HasObjects = hasObjInt != 0
+
+	return e, nil
 }
 
 func (idx *sqliteIndex) Delete(ctx context.Context, id string) error {

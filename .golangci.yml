@@ -94,6 +94,10 @@ linters:
       - linters:
           - nlreturn
         path: 'internal/avgrabber'  # CGO assignment + return is a single logical unit
+      - linters:
+          - contextcheck
+        path: 'pkg/recorder/recorder\.go'
+        text: 'makeOnCloseCallback'  # SegmentCloseInfo callback runs after ctx cancelled; context.Background() is intentional
 
 formatters:
   enable:
