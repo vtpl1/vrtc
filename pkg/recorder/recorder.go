@@ -10,6 +10,7 @@ import (
 
 	"github.com/rs/zerolog/log"
 	"github.com/vtpl1/vrtc-sdk/av"
+	"github.com/vtpl1/vrtc-sdk/av/segment"
 	"github.com/vtpl1/vrtc/pkg/schedule"
 )
 
@@ -29,7 +30,7 @@ type ScheduleSource interface {
 type activeRec struct {
 	sched     schedule.Schedule
 	handle    av.ConsumerHandle
-	muxer     *SegmentMuxer // for BytesWritten() check
+	muxer     *segment.SegmentMuxer // for BytesWritten() check
 	startTime time.Time
 }
 
@@ -45,7 +46,7 @@ type RecordingManager struct {
 
 	mu          sync.Mutex
 	active      map[string]*activeRec  // key = scheduleID
-	ringBuffers map[string]*RingBuffer // key = channelID
+	ringBuffers map[string]*segment.RingBuffer // key = channelID
 
 	lastRetention time.Time
 
@@ -74,7 +75,7 @@ func New(
 		index:        index,
 		pollInterval: pollInterval,
 		active:       make(map[string]*activeRec),
-		ringBuffers:  make(map[string]*RingBuffer),
+		ringBuffers:  make(map[string]*segment.RingBuffer),
 		done:         make(chan struct{}),
 	}
 }
@@ -115,7 +116,7 @@ func (rm *RecordingManager) ActiveCount() int {
 }
 
 // RingBuffer returns the ring buffer for a channel, or nil if not enabled.
-func (rm *RecordingManager) RingBuffer(channelID string) *RingBuffer {
+func (rm *RecordingManager) RingBuffer(channelID string) *segment.RingBuffer {
 	rm.mu.Lock()
 	defer rm.mu.Unlock()
 
@@ -326,8 +327,8 @@ func (rm *RecordingManager) hasRetentionPolicy(s schedule.Schedule) bool {
 func (rm *RecordingManager) makeOnCloseCallback(
 	consumerID string,
 	s schedule.Schedule,
-) func(SegmentCloseInfo) {
-	return func(info SegmentCloseInfo) {
+) func(segment.SegmentCloseInfo) {
+	return func(info segment.SegmentCloseInfo) {
 		entry := RecordingEntry{
 			ID:         consumerID,
 			ChannelID:  s.ChannelID,
@@ -340,11 +341,11 @@ func (rm *RecordingManager) makeOnCloseCallback(
 			HasObjects: info.HasObjects,
 		}
 
-		// Validate segment — downgrade to corrupted if invalid.
-		if valErr := ValidateSegment(info.Path); valErr != nil {
+		// Downgrade to corrupted if validation failed.
+		if info.ValidationError != nil {
 			entry.Status = StatusCorrupted
 
-			log.Warn().Err(valErr).Str("path", info.Path).Msg("recorder: segment corrupted")
+			log.Warn().Err(info.ValidationError).Str("path", info.Path).Msg("recorder: segment corrupted")
 		}
 
 		if iErr := rm.index.Insert(context.Background(), entry); iErr != nil {
@@ -375,7 +376,7 @@ func (rm *RecordingManager) registerActiveSegment(
 	consumerID, path string,
 	now time.Time,
 	handle av.ConsumerHandle,
-	muxerRef *SegmentMuxer,
+	muxerRef *segment.SegmentMuxer,
 ) {
 	startEntry := RecordingEntry{
 		ID:        consumerID,
@@ -410,20 +411,20 @@ func (rm *RecordingManager) startSegment(ctx context.Context, s schedule.Schedul
 
 	consumerID := fmt.Sprintf("recorder-%s-%s", s.ID, now.Format("20060102T150405Z"))
 
-	profile := StorageProfile(s.StorageProfile)
+	profile := segment.StorageProfile(s.StorageProfile)
 	if profile == "" {
-		profile = ProfileAuto
+		profile = segment.ProfileAuto
 	}
 
 	ring := rm.getOrCreateRingBuffer(s)
 
-	var muxerRef *SegmentMuxer
+	var muxerRef *segment.SegmentMuxer
 
 	onClose := rm.makeOnCloseCallback(consumerID, s)
 	preallocBytes := segmentPreallocBytes(s)
 
 	muxerFactory := av.MuxerFactory(func(_ context.Context, _ string) (av.MuxCloser, error) {
-		mux, err := NewSegmentMuxer(path, now, profile, preallocBytes, ring, onClose)
+		mux, err := segment.NewSegmentMuxer(path, now, profile, preallocBytes, ring, onClose)
 		if err != nil {
 			return nil, err
 		}
@@ -582,7 +583,7 @@ func (rm *RecordingManager) checkDiskSpace(
 	}
 }
 
-func (rm *RecordingManager) getOrCreateRingBuffer(s schedule.Schedule) *RingBuffer {
+func (rm *RecordingManager) getOrCreateRingBuffer(s schedule.Schedule) *segment.RingBuffer {
 	if s.RingBufferSeconds <= 0 {
 		return nil
 	}
@@ -592,7 +593,7 @@ func (rm *RecordingManager) getOrCreateRingBuffer(s schedule.Schedule) *RingBuff
 
 	rb, ok := rm.ringBuffers[s.ChannelID]
 	if !ok {
-		rb = NewRingBuffer(time.Duration(s.RingBufferSeconds) * time.Second)
+		rb = segment.NewRingBuffer(time.Duration(s.RingBufferSeconds) * time.Second)
 		rm.ringBuffers[s.ChannelID] = rb
 	}
 
