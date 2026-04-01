@@ -14,7 +14,7 @@ require (
 	github.com/soheilhy/cmux v0.1.5
 	github.com/spf13/cobra v1.10.2
 	github.com/spf13/viper v1.21.0
-	github.com/vtpl1/vrtc-sdk v0.1.1
+	github.com/vtpl1/vrtc-sdk v0.2.0
 	go.mongodb.org/mongo-driver/v2 v2.5.0
 	golang.org/x/sys v0.42.0
 	gopkg.in/natefinch/lumberjack.v2 v2.2.1
