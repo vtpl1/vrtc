@@ -67,28 +67,11 @@ linters:
       - legacy
     rules:
       - linters:
-          - revive
-        text: 'avoid package names that conflict with Go standard library package names'
-      - linters:
-          - gochecknoglobals
-        path: 'pkg/av/av\.go'  # codec-type constants are intentionally package-level vars
-      - linters:
           - gosec
         text: 'G115'  # integer overflow conversions are intentional in codec/protocol code
       - linters:
           - revive
-        text: 'var-naming: don''t use ALL_CAPS'  # C-header constant names kept verbatim
-      - linters:
-          - revive
         text: 'exported:.*stutters'  # pcm.PCM* type names match the established API
-      - linters:
-          - gocognit
-          - nestif
-          - funlen
-        path: 'pkg/av/codec/(h264|h265)parser'  # SPS/PPS parsing is inherently complex
-      - linters:
-          - funcorder
-        path: 'pkg/av'  # constructor placement follows original file organisation
       - linters:
           - gocritic
         text: 'dupSubExpr'
