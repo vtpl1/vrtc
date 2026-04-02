@@ -19,6 +19,8 @@ linters:
   settings:
     cyclop:
       max-complexity: 30
+    gomoddirectives:
+      replace-local: true
     lll:
       line-length: 180
     varnamelen:

@@ -15,6 +15,7 @@ import (
 	"github.com/vtpl1/vrtc-sdk/av/relayhub"
 	"github.com/vtpl1/vrtc/internal/avgrabber"
 	"github.com/vtpl1/vrtc/internal/httprouter"
+	"github.com/vtpl1/vrtc/pkg/edgeview"
 	"github.com/vtpl1/vrtc/pkg/lifecycle"
 	"github.com/vtpl1/vrtc/pkg/pva"
 )
@@ -417,6 +418,24 @@ func Run(appName, appMode string, cfg Config) error {
 		}
 	})
 
+	// ── edgeview (live/playback/health endpoints) ────────────────────────
+
+	viewSvc := edgeview.NewService(log.Logger, sm, nil, nil)
+	viewHandler := edgeview.NewHTTPHandler(viewSvc, log.Logger, "")
+	chiRouter := viewHandler.Router()
+
+	// Compose: ServeMux handles /v3/api/ws and /hls/; edgeview chi router
+	// handles /live/, /ws/live, /health, /api/cameras, etc. ServeMux returns
+	// 404 for unmatched patterns, so we wrap with a fallback.
+	httpHandler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		rec := &statusRecorder{ResponseWriter: w, status: http.StatusOK}
+		mux.ServeHTTP(rec, r)
+
+		if rec.status == http.StatusNotFound && !rec.written {
+			chiRouter.ServeHTTP(w, r)
+		}
+	})
+
 	addr := fmt.Sprintf(":%d", cfg.API.Listen)
 	log.Info().
 		Str("appName", appName).
@@ -427,7 +446,7 @@ func Run(appName, appMode string, cfg Config) error {
 
 	srv := &http.Server{
 		Addr:              addr,
-		Handler:           corsMiddleware(mux),
+		Handler:           corsMiddleware(httpHandler),
 		ReadHeaderTimeout: 10 * time.Second,
 	}
 
@@ -448,4 +467,32 @@ func Run(appName, appMode string, cfg Config) error {
 	cancel()
 
 	return nil
+}
+
+// statusRecorder wraps http.ResponseWriter to capture the status code
+// without writing to the underlying writer when the status is 404.
+// This enables fallback routing from ServeMux to chi.
+type statusRecorder struct {
+	http.ResponseWriter
+
+	status  int
+	written bool
+}
+
+func (r *statusRecorder) WriteHeader(code int) {
+	r.status = code
+	if code != http.StatusNotFound {
+		r.written = true
+		r.ResponseWriter.WriteHeader(code)
+	}
+}
+
+func (r *statusRecorder) Write(b []byte) (int, error) {
+	if r.status == http.StatusNotFound && !r.written {
+		return len(b), nil // swallow 404 body from ServeMux
+	}
+
+	r.written = true
+
+	return r.ResponseWriter.Write(b)
 }

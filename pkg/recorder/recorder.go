@@ -45,7 +45,7 @@ type RecordingManager struct {
 	pollInterval time.Duration
 
 	mu          sync.Mutex
-	active      map[string]*activeRec  // key = scheduleID
+	active      map[string]*activeRec          // key = scheduleID
 	ringBuffers map[string]*segment.RingBuffer // key = channelID
 
 	lastRetention time.Time
@@ -345,7 +345,10 @@ func (rm *RecordingManager) makeOnCloseCallback(
 		if info.ValidationError != nil {
 			entry.Status = StatusCorrupted
 
-			log.Warn().Err(info.ValidationError).Str("path", info.Path).Msg("recorder: segment corrupted")
+			log.Warn().
+				Err(info.ValidationError).
+				Str("path", info.Path).
+				Msg("recorder: segment corrupted")
 		}
 
 		if iErr := rm.index.Insert(context.Background(), entry); iErr != nil {
@@ -400,6 +403,7 @@ func (rm *RecordingManager) registerActiveSegment(
 	rm.mu.Unlock()
 }
 
+//nolint:funlen // segment start wiring cannot be split cleanly
 func (rm *RecordingManager) startSegment(ctx context.Context, s schedule.Schedule, now time.Time) {
 	path := SegmentPath(s.StoragePath, s.ChannelID, now)
 
@@ -423,8 +427,21 @@ func (rm *RecordingManager) startSegment(ctx context.Context, s schedule.Schedul
 	onClose := rm.makeOnCloseCallback(consumerID, s)
 	preallocBytes := segmentPreallocBytes(s)
 
+	maxBytes := int64(0)
+	if s.SegmentSizeMB > 0 {
+		maxBytes = int64(s.SegmentSizeMB) * 1024 * 1024
+	}
+
 	muxerFactory := av.MuxerFactory(func(_ context.Context, _ string) (av.MuxCloser, error) {
-		mux, err := segment.NewSegmentMuxer(path, now, profile, preallocBytes, ring, onClose)
+		mux, err := segment.NewSegmentMuxer(
+			path,
+			now,
+			profile,
+			maxBytes,
+			preallocBytes,
+			ring,
+			onClose,
+		)
 		if err != nil {
 			return nil, err
 		}
