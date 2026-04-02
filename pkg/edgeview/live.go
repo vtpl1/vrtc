@@ -14,6 +14,7 @@ import (
 	"github.com/vtpl1/vrtc-sdk/av/format/fmp4"
 	"github.com/vtpl1/vrtc-sdk/av/packetbuf"
 	"github.com/vtpl1/vrtc-sdk/av/relayhub"
+	"github.com/vtpl1/vrtc/pkg/channel"
 	"github.com/vtpl1/vrtc/pkg/recorder"
 )
 
@@ -37,6 +38,7 @@ type Service struct {
 	hub      av.RelayHub
 	recIndex recorder.RecordingIndex // nil if no recording available
 	bufProv  PacketBufferProvider    // nil if no recording available
+	chanW    channel.ChannelWriter   // nil if no channel CRUD available
 	cameras  map[string]*CameraInfo
 
 	mu sync.RWMutex
@@ -48,31 +50,45 @@ type Service struct {
 
 // CameraInfo describes a camera available on this relay.
 type CameraInfo struct {
-	CameraID   string `json:"cameraId"`
+	CameraID   string `json:"camera_id"` //nolint:tagliatelle
 	Name       string `json:"name"`
-	Codec      string `json:"codec,omitempty"`
-	Resolution string `json:"resolution,omitempty"`
-	FPS        int    `json:"fps,omitempty"`
+	Codec      string `json:"codec"`
+	Resolution string `json:"resolution"`
+	FPS        int    `json:"fps"`
 	Recording  bool   `json:"recording"`
 	Analytics  bool   `json:"analytics"`
 	State      string `json:"state"`
 }
 
 // NewService creates a view service attached to a media relay hub.
-// recIndex and bufProv may be nil if this relay has no local recording.
+// recIndex, bufProv, and chanW may be nil if not available.
 func NewService(
 	log zerolog.Logger,
 	hub av.RelayHub,
 	recIndex recorder.RecordingIndex,
 	bufProv PacketBufferProvider,
+	opts ...ServiceOption,
 ) *Service {
-	return &Service{
+	s := &Service{
 		log:      log,
 		hub:      hub,
 		recIndex: recIndex,
 		bufProv:  bufProv,
 		cameras:  make(map[string]*CameraInfo),
 	}
+	for _, opt := range opts {
+		opt(s)
+	}
+
+	return s
+}
+
+// ServiceOption configures optional Service dependencies.
+type ServiceOption func(*Service)
+
+// WithChannelWriter enables channel CRUD endpoints.
+func WithChannelWriter(cw channel.ChannelWriter) ServiceOption {
+	return func(s *Service) { s.chanW = cw }
 }
 
 // Hub returns the underlying relay hub for direct consumer attachment.
@@ -85,10 +101,22 @@ func (s *Service) RecIndex() recorder.RecordingIndex {
 	return s.recIndex
 }
 
+// ChannelWriter returns the channel writer, or nil if CRUD is not available.
+func (s *Service) ChannelWriter() channel.ChannelWriter {
+	return s.chanW
+}
+
 // RegisterCamera makes a camera available for live view / playback.
 func (s *Service) RegisterCamera(info *CameraInfo) {
 	s.mu.Lock()
 	s.cameras[info.CameraID] = info
+	s.mu.Unlock()
+}
+
+// UnregisterCamera removes a camera from the in-memory list.
+func (s *Service) UnregisterCamera(cameraID string) {
+	s.mu.Lock()
+	delete(s.cameras, cameraID)
 	s.mu.Unlock()
 }
 

@@ -40,6 +40,7 @@ type RecordingEntry struct {
 	Status     string    `json:"status"`
 	HasMotion  bool      `json:"has_motion"`  //nolint:tagliatelle
 	HasObjects bool      `json:"has_objects"` //nolint:tagliatelle
+	HasEvents  bool      `json:"has_events"`  //nolint:tagliatelle
 }
 
 // SeekEntry represents a keyframe position within a recording segment,

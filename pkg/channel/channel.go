@@ -35,3 +35,17 @@ type ChannelProvider interface {
 	// Close releases any held resources (DB connections, file handles, etc.).
 	Close() error
 }
+
+// ChannelWriter extends ChannelProvider with create/update/delete operations.
+// Not all providers need to implement this — file, MySQL, and MongoDB do.
+type ChannelWriter interface {
+	ChannelProvider
+
+	// SaveChannel creates or updates a channel. If a channel with the same ID
+	// already exists it is overwritten.
+	SaveChannel(ctx context.Context, ch Channel) error
+
+	// DeleteChannel removes the channel with the given id.
+	// Returns ErrChannelNotFound if the id does not exist.
+	DeleteChannel(ctx context.Context, id string) error
+}

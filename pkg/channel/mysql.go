@@ -8,7 +8,7 @@ import (
 	"fmt"
 )
 
-// mysqlProvider implements ChannelProvider using a MySQL database.
+// mysqlProvider implements ChannelWriter using a MySQL database.
 //
 // Expected table DDL:
 //
@@ -25,9 +25,9 @@ type mysqlProvider struct {
 	db *sql.DB
 }
 
-// NewMySQLProvider returns a ChannelProvider backed by the given *sql.DB.
+// NewMySQLProvider returns a ChannelWriter backed by the given *sql.DB.
 // The caller owns the DB connection and is responsible for closing it.
-func NewMySQLProvider(db *sql.DB) ChannelProvider {
+func NewMySQLProvider(db *sql.DB) ChannelWriter {
 	return &mysqlProvider{db: db}
 }
 
@@ -74,6 +74,42 @@ func (p *mysqlProvider) ListChannels(ctx context.Context) ([]Channel, error) {
 	}
 
 	return out, nil
+}
+
+func (p *mysqlProvider) SaveChannel(ctx context.Context, ch Channel) error {
+	extraJSON, err := json.Marshal(ch.Extra)
+	if err != nil {
+		return fmt.Errorf("channel mysql: marshal extra: %w", err)
+	}
+
+	_, err = p.db.ExecContext(ctx,
+		`INSERT INTO channels (id, name, stream_url, username, password, site_id, extra)
+		 VALUES (?, ?, ?, ?, ?, ?, ?)
+		 ON DUPLICATE KEY UPDATE
+		   name=VALUES(name), stream_url=VALUES(stream_url),
+		   username=VALUES(username), password=VALUES(password),
+		   site_id=VALUES(site_id), extra=VALUES(extra)`,
+		ch.ID, ch.Name, ch.StreamURL, ch.Username, ch.Password, ch.SiteID, string(extraJSON),
+	)
+	if err != nil {
+		return fmt.Errorf("channel mysql: save %q: %w", ch.ID, err)
+	}
+
+	return nil
+}
+
+func (p *mysqlProvider) DeleteChannel(ctx context.Context, id string) error {
+	res, err := p.db.ExecContext(ctx, "DELETE FROM channels WHERE id = ?", id)
+	if err != nil {
+		return fmt.Errorf("channel mysql: delete %q: %w", id, err)
+	}
+
+	n, _ := res.RowsAffected()
+	if n == 0 {
+		return fmt.Errorf("%w: %s", ErrChannelNotFound, id)
+	}
+
+	return nil
 }
 
 func (p *mysqlProvider) Close() error { return nil }

@@ -3,51 +3,47 @@ package edgeview
 import (
 	"context"
 	"errors"
+	"fmt"
 	"io"
 	"net/http"
 	"sync"
 	"time"
 
 	"github.com/coder/websocket"
+	"github.com/coder/websocket/wsjson"
 	"github.com/vtpl1/vrtc-sdk/av"
 	"github.com/vtpl1/vrtc-sdk/av/format/mse"
 	"github.com/vtpl1/vrtc-sdk/av/relayhub"
 )
 
+var errNoPlaybackSession = errors.New("no playback session")
+
 // wsRecorded handles the /ws/recorded WebSocket endpoint.
 //
 // Protocol:
-//   - Client connects with query params: sourceID, from (RFC3339), to (RFC3339, optional)
+//   - Client connects with query params: camera_id, start (RFC3339), end (RFC3339, optional)
 //   - Client sends JSON: {"type":"mse"} to start playback
 //   - Server sends text: {"type":"mse","value":"video/mp4; codecs=\"...\""}
 //   - Server sends binary: fMP4 init segment, then continuous moof+mdat fragments
-//   - When "to" is empty, server enters follow mode and polls for new segments
+//   - When "end" is empty, server enters follow mode and polls for new segments
 //   - Client may send {"type":"mse","value":"pause"} or {"type":"mse","value":"resume"}
+//   - Client may send {"type":"mse","value":"seek","time":"2026-04-02T13:15:00Z"} to seek
 //
-//nolint:funlen,gocognit // WebSocket handler -- lifecycle complexity is inherent.
+//nolint:funlen // WebSocket handler -- lifecycle complexity is inherent.
 func (h *HTTPHandler) wsRecorded(w http.ResponseWriter, r *http.Request) {
-	channelID := r.URL.Query().Get("sourceID")
-	if channelID == "" {
-		channelID = r.URL.Query().Get("channel_id")
-	}
-
-	from, to, err := parseWSTimeRange(r)
+	cameraID, err := parseWSCameraID(r)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusBadRequest)
 
 		return
 	}
 
-	factory := h.svc.RecordedDemuxerFactory(channelID, from, to)
-
-	playSM := relayhub.New(factory, nil)
-	if err := playSM.Start(r.Context()); err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
+	start, end, err := parseWSTimeRange(r)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
 
 		return
 	}
-
-	defer func() { _ = playSM.Stop() }()
 
 	wsConn, err := websocket.Accept(w, r, &websocket.AcceptOptions{
 		OriginPatterns:  []string{"*"},
@@ -59,34 +55,35 @@ func (h *HTTPHandler) wsRecorded(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	defer func() {
-		if err := wsConn.CloseNow(); err != nil {
-			h.log.Error().Err(err).Msg("ws recorded: close")
-		}
-	}()
+	defer func() { _ = wsConn.CloseNow() }()
 
 	ctx := r.Context()
-	errWriteChan := make(chan error, 1)
-	errReadChan := make(chan error, 1)
+
+	// Playback session — can be replaced on seek.
+	session := &recordedSession{
+		handler:  h,
+		wsConn:   wsConn,
+		cameraID: cameraID,
+		end:      end,
+	}
+
+	if err := session.start(ctx, start); err != nil {
+		writeWSErrorResponse(ctx, wsConn, err, "playback start failed")
+
+		return
+	}
+
+	defer session.stop(ctx)
+
+	errChan := make(chan error, 1)
 
 	rCtx, rCancel := context.WithCancel(ctx)
 	defer rCancel()
 
-	var (
-		msMu sync.Mutex
-		ms   *mse.MSEWriter
-
-		consumerMu sync.Mutex
-		consumer   av.ConsumerHandle
-	)
-
-	muxerOnce := &lazyOnce{}
-
-	wg := sync.WaitGroup{}
+	// Read loop — handles mse commands including seek.
+	var wg sync.WaitGroup
 
 	wg.Go(func() {
-		defer close(errReadChan)
-
 		for {
 			select {
 			case <-rCtx.Done():
@@ -96,73 +93,56 @@ func (h *HTTPHandler) wsRecorded(w http.ResponseWriter, r *http.Request) {
 				if rerr != nil {
 					if !errors.Is(rerr, context.Canceled) &&
 						!errors.Is(rerr, context.DeadlineExceeded) {
-						errReadChan <- rerr
+						errChan <- rerr
 					}
 
 					return
 				}
 
-				if cmd.Type == "mse" {
-					if err := muxerOnce.Do(func() error {
-						binaryWriterFactory := func() (io.WriteCloser, error) {
-							return wsConn.Writer(ctx, websocket.MessageBinary)
-						}
-						textWriterFactory := func() (io.WriteCloser, error) {
-							return wsConn.Writer(ctx, websocket.MessageText)
-						}
+				if cmd.Type != "mse" {
+					continue
+				}
 
-						localMs, merr := mse.NewFromFactories(
-							binaryWriterFactory,
-							textWriterFactory,
-						)
-						if merr != nil {
-							writeWSErrorResponse(ctx, wsConn, merr)
+				switch cmd.Value {
+				case "": // initial play
+					if serr := session.attachConsumer(ctx, errChan); serr != nil {
+						writeWSErrorResponse(ctx, wsConn, serr, "consume failed")
 
-							return merr
-						}
+						errChan <- serr
 
-						msMu.Lock()
-						ms = localMs
-						msMu.Unlock()
-
-						handle, cerr := playSM.Consume(ctx, channelID, av.ConsumeOptions{
-							MuxerFactory: func(_ context.Context, _ string) (av.MuxCloser, error) {
-								return localMs, nil
-							},
-							MuxerRemover: func(_ context.Context, _ string) error {
-								return localMs.Close()
-							},
-							ErrChan: errWriteChan,
+						return
+					}
+				case "pause":
+					session.pause(ctx)
+				case "resume":
+					session.resume(ctx)
+				case "seek":
+					seekTime, perr := time.Parse(time.RFC3339, cmd.Time)
+					if perr != nil {
+						_ = wsjson.Write(ctx, wsConn, map[string]string{
+							"type":  "error",
+							"error": "invalid seek time, expected RFC3339",
 						})
-						if cerr != nil {
-							writeWSErrorResponse(ctx, wsConn, cerr)
 
-							return cerr
-						}
+						continue
+					}
 
-						consumerMu.Lock()
-						consumer = handle
-						consumerMu.Unlock()
+					session.stop(ctx)
 
-						return nil
-					}); err != nil {
+					if serr := session.start(ctx, seekTime); serr != nil {
+						writeWSErrorResponse(ctx, wsConn, serr, "seek failed")
+
+						errChan <- serr
+
 						return
 					}
 
-					switch cmd.Value {
-					case "": // initial play -- no action needed
-					case "pause":
-						if perr := playSM.PauseRelay(ctx, channelID); perr != nil {
-							errReadChan <- perr
+					if serr := session.attachConsumer(ctx, errChan); serr != nil {
+						writeWSErrorResponse(ctx, wsConn, serr, "consume after seek failed")
 
-							return
-						}
-					case "resume":
-						if rerr := playSM.ResumeRelay(ctx, channelID); rerr != nil {
-							errReadChan <- rerr
+						errChan <- serr
 
-							return
-						}
+						return
 					}
 				}
 			}
@@ -171,48 +151,149 @@ func (h *HTTPHandler) wsRecorded(w http.ResponseWriter, r *http.Request) {
 
 	select {
 	case <-ctx.Done():
-	case <-errWriteChan:
-	case <-errReadChan:
+	case <-errChan:
 	}
 
 	rCancel()
-
-	msMu.Lock()
-	msCopy := ms
-	msMu.Unlock()
-
-	if msCopy != nil {
-		_ = msCopy.Close()
-	}
-
-	consumerMu.Lock()
-	consumerCopy := consumer
-	consumerMu.Unlock()
-
-	if consumerCopy != nil {
-		if err := consumerCopy.Close(ctx); err != nil {
-			h.log.Error().Err(err).Msg("ws recorded: consumer close")
-		}
-	}
-
-	wg.Wait()
 }
 
-// parseWSTimeRange extracts from/to RFC3339 query parameters for WebSocket playback.
-func parseWSTimeRange(r *http.Request) (from, to time.Time, err error) {
-	if s := r.URL.Query().Get("from"); s != "" {
-		from, err = time.Parse(time.RFC3339, s)
+// recordedSession manages a single playback pipeline (relay hub + consumer).
+// On seek, the session is stopped and restarted with a new start time.
+type recordedSession struct {
+	handler  *HTTPHandler
+	wsConn   *websocket.Conn
+	cameraID string
+	end      time.Time
+
+	mu       sync.Mutex
+	playSM   *relayhub.RelayHub
+	ms       *mse.MSEWriter
+	consumer av.ConsumerHandle
+}
+
+func (s *recordedSession) start(ctx context.Context, from time.Time) error {
+	factory := s.handler.svc.RecordedDemuxerFactory(s.cameraID, from, s.end)
+	sm := relayhub.New(factory, nil)
+
+	if err := sm.Start(ctx); err != nil {
+		return fmt.Errorf("start playback: %w", err)
+	}
+
+	s.mu.Lock()
+	s.playSM = sm
+	s.ms = nil
+	s.consumer = nil
+	s.mu.Unlock()
+
+	return nil
+}
+
+func (s *recordedSession) attachConsumer(ctx context.Context, errChan chan<- error) error {
+	s.mu.Lock()
+	sm := s.playSM
+	s.mu.Unlock()
+
+	if sm == nil {
+		return errNoPlaybackSession
+	}
+
+	binaryFactory := func() (io.WriteCloser, error) {
+		return s.wsConn.Writer(ctx, websocket.MessageBinary)
+	}
+	textFactory := func() (io.WriteCloser, error) {
+		return s.wsConn.Writer(ctx, websocket.MessageText)
+	}
+
+	localMs, err := mse.NewFromFactories(binaryFactory, textFactory)
+	if err != nil {
+		return err
+	}
+
+	handle, cerr := sm.Consume(ctx, s.cameraID, av.ConsumeOptions{
+		MuxerFactory: func(_ context.Context, _ string) (av.MuxCloser, error) {
+			return localMs, nil
+		},
+		MuxerRemover: func(_ context.Context, _ string) error {
+			return localMs.Close()
+		},
+		ErrChan: errChan,
+	})
+	if cerr != nil {
+		_ = localMs.Close()
+
+		return cerr
+	}
+
+	s.mu.Lock()
+	s.ms = localMs
+	s.consumer = handle
+	s.mu.Unlock()
+
+	return nil
+}
+
+func (s *recordedSession) pause(ctx context.Context) {
+	s.mu.Lock()
+	sm := s.playSM
+	s.mu.Unlock()
+
+	if sm != nil {
+		_ = sm.PauseRelay(ctx, s.cameraID)
+	}
+}
+
+func (s *recordedSession) resume(ctx context.Context) {
+	s.mu.Lock()
+	sm := s.playSM
+	s.mu.Unlock()
+
+	if sm != nil {
+		_ = sm.ResumeRelay(ctx, s.cameraID)
+	}
+}
+
+func (s *recordedSession) stop(ctx context.Context) {
+	s.mu.Lock()
+	consumer := s.consumer
+	ms := s.ms
+	sm := s.playSM
+	s.consumer = nil
+	s.ms = nil
+	s.playSM = nil
+	s.mu.Unlock()
+
+	if consumer != nil {
+		_ = consumer.Close(ctx)
+	}
+
+	if ms != nil {
+		_ = ms.Close()
+	}
+
+	if sm != nil {
+		_ = sm.Stop()
+	}
+}
+
+// parseWSTimeRange extracts start/end RFC3339 query parameters for WebSocket playback.
+func parseWSTimeRange(r *http.Request) (start, end time.Time, err error) {
+	if s := r.URL.Query().Get("start"); s != "" {
+		start, err = time.Parse(time.RFC3339, s)
 		if err != nil {
-			return from, to, err
+			return start, end, errInvalidStartRFC3339
 		}
 	}
 
-	if s := r.URL.Query().Get("to"); s != "" {
-		to, err = time.Parse(time.RFC3339, s)
+	if s := r.URL.Query().Get("end"); s != "" {
+		end, err = time.Parse(time.RFC3339, s)
 		if err != nil {
-			return from, to, err
+			return start, end, errInvalidEndRFC3339
 		}
 	}
 
-	return from, to, nil
+	if !end.IsZero() && end.Before(start) {
+		return start, end, errInvalidTimeRange
+	}
+
+	return start, end, nil
 }

@@ -112,7 +112,9 @@ func Run(appName string, cfg Config) error {
 	// -----------------------------------------------------------------------
 	// Edge view service
 	// -----------------------------------------------------------------------
-	viewSvc := edgeview.NewService(log.Logger, sm, recIndex, nil)
+	viewSvc := edgeview.NewService(log.Logger, sm, recIndex, nil,
+		edgeview.WithChannelWriter(chanProvider),
+	)
 
 	// Register channels as cameras for the camera listing endpoint.
 	if channels, chErr := chanProvider.ListChannels(ctx); chErr == nil {
@@ -183,13 +185,13 @@ func Run(appName string, cfg Config) error {
 	return nil
 }
 
-// newChannelProvider constructs the ChannelProvider selected by cfg.ChannelSource.
+// newChannelProvider constructs the ChannelWriter selected by cfg.ChannelSource.
 //
 //nolint:dupl // symmetric with newScheduleProvider by design
 func newChannelProvider(
 	ctx context.Context,
 	c LiveRecordingConfig,
-) (channel.ChannelProvider, error) {
+) (channel.ChannelWriter, error) {
 	switch c.ChannelSource {
 	case "mysql":
 		db, err := sql.Open("mysql", c.MySQLConfig.DSN(c.ChannelDB))

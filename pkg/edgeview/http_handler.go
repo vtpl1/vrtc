@@ -2,6 +2,7 @@ package edgeview
 
 import (
 	"context"
+	"errors"
 	"io"
 	"net/http"
 	"runtime"
@@ -17,24 +18,30 @@ import (
 	"github.com/vtpl1/vrtc-sdk/av/relayhub"
 )
 
+var (
+	errInvalidTimeRange    = errors.New("end must be greater than or equal to start")
+	errInvalidStartRFC3339 = errors.New("invalid start, expected RFC3339")
+	errInvalidEndRFC3339   = errors.New("invalid end, expected RFC3339")
+)
+
 // HealthSnapshot is the typed health response returned by /health.
 type HealthSnapshot struct {
 	Status         string       `example:"ok" json:"status"`
-	UptimeSeconds  int64        `             json:"uptimeSeconds"`
+	UptimeSeconds  int64        `             json:"uptime_seconds"` //nolint:tagliatelle
 	Goroutines     int          `             json:"goroutines"`
 	Memory         HealthMemory `             json:"memory"`
-	ActiveRelays   int          `             json:"activeRelays"`
-	ActiveViewers  int          `             json:"activeViewers"`
-	ActiveSegments int          `             json:"activeSegments"`
+	ActiveRelays   int          `             json:"active_relays"`   //nolint:tagliatelle
+	ActiveViewers  int          `             json:"active_viewers"`  //nolint:tagliatelle
+	ActiveSegments int          `             json:"active_segments"` //nolint:tagliatelle
 	Timestamp      time.Time    `             json:"timestamp"`
 }
 
 // HealthMemory contains Go runtime memory counters.
 type HealthMemory struct {
-	AllocMB   float64 `json:"allocMb"`
-	SysMB     float64 `json:"sysMb"`
-	HeapInuse float64 `json:"heapInuseMb"`
-	GCRuns    uint32  `json:"gcRuns"`
+	AllocMB   float64 `json:"alloc_mb"`      //nolint:tagliatelle
+	SysMB     float64 `json:"sys_mb"`        //nolint:tagliatelle
+	HeapInuse float64 `json:"heap_inuse_mb"` //nolint:tagliatelle
+	GCRuns    uint32  `json:"gc_runs"`       //nolint:tagliatelle
 }
 
 // ActiveSegmentCounter returns the number of recording segments currently in
@@ -98,22 +105,170 @@ func (h *HTTPHandler) Router() http.Handler {
 	cfg.Info.Description = "LAN-accessible API for live view, recorded playback, and camera management."
 	api := humachi.New(r, cfg)
 
-	// JSON endpoints — fully auto-documented via Huma type introspection.
-	huma.Get(api, "/api/cameras", h.humaListCameras)
-	huma.Get(api, "/api/timeline/{cameraID}", h.humaGetTimeline)
-	huma.Get(api, "/recordings/{channelID}", h.humaRecordingTimeline)
-	huma.Get(api, "/healthz", h.humaHealthz)
-	huma.Get(api, "/health", h.humaHealth)
-	huma.Get(api, "/stats/producers", h.humaProducerStats)
+	// JSON endpoints — registered with explicit operation metadata.
+	h.registerJSONOps(api)
+	h.registerCameraOps(api)
+
+	// Document streaming endpoints in OpenAPI (handled by raw chi handlers below).
+	h.registerStreamingDocs(api)
 
 	// ── Streaming endpoints (raw chi — not auto-documentable) ───────────
-	r.Get("/live/{cameraID}", h.liveStream)
-	r.Get("/playback/{cameraID}", h.playback)
-	r.Get("/recorded/{channelID}", h.playback)
+	r.Get("/live/{camera_id}", h.liveStream)
+	r.Get("/playback/{camera_id}", h.playback)
+	r.Get("/recorded/{camera_id}", h.playback)
 	r.HandleFunc("/ws/live", h.wsLive)
 	r.HandleFunc("/ws/recorded", h.wsRecorded)
 
 	return r
+}
+
+func (h *HTTPHandler) registerJSONOps(api huma.API) {
+	huma.Register(api, huma.Operation{
+		OperationID: "list-view-cameras",
+		Method:      "GET",
+		Path:        "/api/cameras",
+		Summary:     "List all cameras on this edge device",
+		Tags:        []string{"View"},
+	}, h.humaListCameras)
+
+	huma.Register(api, huma.Operation{
+		OperationID: "get-view-timeline",
+		Method:      "GET",
+		Path:        "/api/timeline/{camera_id}",
+		Summary:     "Get recording timeline for a camera",
+		Tags:        []string{"View"},
+	}, h.humaGetTimeline)
+
+	huma.Register(api, huma.Operation{
+		OperationID: "get-recording-timeline-view",
+		Method:      "GET",
+		Path:        "/recordings/{camera_id}",
+		Summary:     "Get recording segments for timebar display",
+		Tags:        []string{"View"},
+	}, h.humaRecordingTimeline)
+
+	huma.Register(api, huma.Operation{
+		OperationID: "get-healthz",
+		Method:      "GET",
+		Path:        "/healthz",
+		Summary:     "Basic health check",
+		Tags:        []string{"View"},
+	}, h.humaHealthz)
+
+	huma.Register(api, huma.Operation{
+		OperationID: "get-health",
+		Method:      "GET",
+		Path:        "/health",
+		Summary:     "System health stats",
+		Tags:        []string{"View"},
+	}, h.humaHealth)
+
+	huma.Register(api, huma.Operation{
+		OperationID: "get-producer-stats",
+		Method:      "GET",
+		Path:        "/stats/producers",
+		Summary:     "Per-stream ingestion metrics",
+		Tags:        []string{"View"},
+	}, h.humaProducerStats)
+}
+
+// registerStreamingDocs adds streaming/WebSocket endpoints to the OpenAPI spec
+// as documentation-only entries. The actual handlers are on the chi router.
+//
+//nolint:funlen // OpenAPI operation definitions are inherently verbose.
+func (h *HTTPHandler) registerStreamingDocs(api huma.API) {
+	streamResp := map[string]*huma.Response{
+		"200": {
+			Description: "fMP4 video stream (video/mp4)",
+			Content: map[string]*huma.MediaType{
+				"video/mp4": {},
+			},
+		},
+	}
+	wsResp := map[string]*huma.Response{
+		"101": {Description: "WebSocket upgrade for MSE streaming"},
+	}
+
+	api.OpenAPI().AddOperation(&huma.Operation{
+		OperationID: "live-stream",
+		Method:      "GET",
+		Path:        "/live/{camera_id}",
+		Summary:     "Live fMP4 video stream",
+		Description: "HTTP chunked fMP4 stream for browser playback. Blocks until client disconnects.",
+		Tags:        []string{"Streaming"},
+		Parameters: []*huma.Param{
+			{Name: "camera_id", In: "path", Required: true, Schema: &huma.Schema{Type: "string"}},
+		},
+		Responses: streamResp,
+	})
+
+	api.OpenAPI().AddOperation(&huma.Operation{
+		OperationID: "playback-stream",
+		Method:      "GET",
+		Path:        "/playback/{camera_id}",
+		Summary:     "Recorded playback fMP4 stream",
+		Description: "HTTP chunked fMP4 playback for a time range. Query params: start, end (RFC3339). Omit end for follow mode.",
+		Tags:        []string{"Streaming"},
+		Parameters: []*huma.Param{
+			{Name: "camera_id", In: "path", Required: true, Schema: &huma.Schema{Type: "string"}},
+			{Name: "start", In: "query", Schema: &huma.Schema{Type: "string", Format: "date-time"}},
+			{Name: "end", In: "query", Schema: &huma.Schema{Type: "string", Format: "date-time"}},
+		},
+		Responses: streamResp,
+	})
+
+	api.OpenAPI().AddOperation(&huma.Operation{
+		OperationID: "recorded-stream",
+		Method:      "GET",
+		Path:        "/recorded/{camera_id}",
+		Summary:     "Recorded playback fMP4 stream (by channel)",
+		Description: "HTTP chunked fMP4 playback by channel ID. Query params: start, end (RFC3339).",
+		Tags:        []string{"Streaming"},
+		Parameters: []*huma.Param{
+			{Name: "camera_id", In: "path", Required: true, Schema: &huma.Schema{Type: "string"}},
+			{Name: "start", In: "query", Schema: &huma.Schema{Type: "string", Format: "date-time"}},
+			{Name: "end", In: "query", Schema: &huma.Schema{Type: "string", Format: "date-time"}},
+		},
+		Responses: streamResp,
+	})
+
+	api.OpenAPI().AddOperation(&huma.Operation{
+		OperationID: "ws-live",
+		Method:      "GET",
+		Path:        "/ws/live",
+		Summary:     "WebSocket MSE live stream",
+		Description: "WebSocket upgrade. Send {\"type\":\"mse\"} to start. Server sends binary fMP4 fragments. Query: camera_id.",
+		Tags:        []string{"Streaming"},
+		Parameters: []*huma.Param{
+			{Name: "camera_id", In: "query", Schema: &huma.Schema{Type: "string"}},
+		},
+		Responses: wsResp,
+	})
+
+	api.OpenAPI().AddOperation(&huma.Operation{
+		OperationID: "ws-recorded",
+		Method:      "GET",
+		Path:        "/ws/recorded",
+		Summary:     "WebSocket MSE recorded playback",
+		Description: "WebSocket upgrade for recorded MSE playback. Query: camera_id, start, end (RFC3339). Omit end for follow mode.",
+		Tags:        []string{"Streaming"},
+		Parameters: []*huma.Param{
+			{Name: "camera_id", In: "query", Schema: &huma.Schema{Type: "string"}},
+			{
+				Name:        "start",
+				In:          "query",
+				Description: "Start time (RFC3339)",
+				Schema:      &huma.Schema{Type: "string", Format: "date-time"},
+			},
+			{
+				Name:        "end",
+				In:          "query",
+				Description: "End time (RFC3339, omit for follow mode)",
+				Schema:      &huma.Schema{Type: "string", Format: "date-time"},
+			},
+		},
+		Responses: wsResp,
+	})
 }
 
 // authMiddleware validates the auth token for LAN access.
@@ -158,32 +313,33 @@ type camerasOutput struct {
 
 // timelineInput captures path and query parameters for the timeline endpoint.
 type timelineInput struct {
-	CameraID string `doc:"Camera identifier"               path:"cameraID"`
-	Start    string `doc:"Start of time window (RFC 3339)"                 example:"2026-01-01T00:00:00Z" query:"start"`
-	End      string `doc:"End of time window (RFC 3339)"                   example:"2026-01-02T00:00:00Z" query:"end"`
+	CameraID string `doc:"Camera identifier"                      path:"camera_id"`
+	Start    string `doc:"Start time (RFC3339, default: 24h ago)"                  query:"start"`
+	End      string `doc:"End time (RFC3339, default: now)"                        query:"end"`
 }
 
-// timelineEntryDTO is a simplified timeline entry for the /api/timeline response.
-type timelineEntryDTO struct {
+// timelineEntry is a simplified timeline entry for the /api/timeline response.
+type timelineEntry struct {
 	Start      time.Time `json:"start"`
 	End        time.Time `json:"end"`
-	DurationMs int64     `json:"durationMs"`
+	DurationMs int64     `json:"duration_ms"` //nolint:tagliatelle
+	HasEvents  bool      `json:"has_events"`  //nolint:tagliatelle
 }
 
 // timelineOutput wraps the timeline entries for Huma.
 type timelineOutput struct {
-	Body []timelineEntryDTO
+	Body []timelineEntry
 }
 
-// timebarInput captures path and query parameters for the recordings endpoint.
-type timebarInput struct {
-	ChannelID string `doc:"Channel identifier"              path:"channelID"`
-	Start     string `doc:"Start of time window (RFC 3339)"                  example:"2026-01-01T00:00:00Z" query:"start"`
-	End       string `doc:"End of time window (RFC 3339)"                    example:"2026-01-02T00:00:00Z" query:"end"`
+// recordingTimelineInput captures path and query parameters for the recordings endpoint.
+type recordingTimelineInput struct {
+	CameraID string `doc:"Camera identifier"                      path:"camera_id"`
+	Start    string `doc:"Start time (RFC3339, default: 24h ago)"                  query:"start"`
+	End      string `doc:"End time (RFC3339, default: now)"                        query:"end"`
 }
 
-// timebarOutput wraps the timeline entries for Huma.
-type timebarOutput struct {
+// recordingTimelineOutput wraps the recording timeline entries for Huma.
+type recordingTimelineOutput struct {
 	Body []TimelineEntry
 }
 
@@ -214,19 +370,23 @@ func (h *HTTPHandler) humaGetTimeline(
 	ctx context.Context,
 	input *timelineInput,
 ) (*timelineOutput, error) {
-	start, end := parseTimeRangeStrings(input.Start, input.End)
-
-	entries, err := h.svc.Timeline(ctx, input.CameraID, start, end)
+	start, end, err := parseOptionalTimeRange(input.Start, input.End)
 	if err != nil {
-		return nil, huma.Error500InternalServerError(err.Error())
+		return nil, huma.Error400BadRequest(err.Error())
 	}
 
-	result := make([]timelineEntryDTO, len(entries))
+	entries, tErr := h.svc.Timeline(ctx, input.CameraID, start, end)
+	if tErr != nil {
+		return nil, huma.Error500InternalServerError(tErr.Error())
+	}
+
+	result := make([]timelineEntry, len(entries))
 	for i, e := range entries {
-		result[i] = timelineEntryDTO{
+		result[i] = timelineEntry{
 			Start:      e.StartTime,
 			End:        e.EndTime,
 			DurationMs: e.EndTime.Sub(e.StartTime).Milliseconds(),
+			HasEvents:  e.HasEvents,
 		}
 	}
 
@@ -235,13 +395,16 @@ func (h *HTTPHandler) humaGetTimeline(
 
 func (h *HTTPHandler) humaRecordingTimeline(
 	ctx context.Context,
-	input *timebarInput,
-) (*timebarOutput, error) {
-	start, end := parseTimeRangeStrings(input.Start, input.End)
-
-	entries, err := h.svc.Timeline(ctx, input.ChannelID, start, end)
+	input *recordingTimelineInput,
+) (*recordingTimelineOutput, error) {
+	start, end, err := parseOptionalTimeRange(input.Start, input.End)
 	if err != nil {
-		return nil, huma.Error500InternalServerError(err.Error())
+		return nil, huma.Error400BadRequest(err.Error())
+	}
+
+	entries, tErr := h.svc.Timeline(ctx, input.CameraID, start, end)
+	if tErr != nil {
+		return nil, huma.Error500InternalServerError(tErr.Error())
 	}
 
 	result := make([]TimelineEntry, 0, len(entries))
@@ -258,7 +421,7 @@ func (h *HTTPHandler) humaRecordingTimeline(
 		})
 	}
 
-	return &timebarOutput{Body: result}, nil
+	return &recordingTimelineOutput{Body: result}, nil
 }
 
 func (h *HTTPHandler) humaHealthz(_ context.Context, _ *struct{}) (*healthzOutput, error) {
@@ -309,9 +472,9 @@ func (h *HTTPHandler) collectHealth(ctx context.Context) HealthSnapshot {
 
 // liveStream serves an fMP4-over-HTTP live stream for browser playback.
 func (h *HTTPHandler) liveStream(w http.ResponseWriter, r *http.Request) {
-	cameraID := chi.URLParam(r, "cameraID")
+	cameraID := chi.URLParam(r, "camera_id")
 	if cameraID == "" {
-		http.Error(w, "missing cameraID", http.StatusBadRequest)
+		http.Error(w, "missing camera_id", http.StatusBadRequest)
 
 		return
 	}
@@ -345,20 +508,21 @@ func (h *HTTPHandler) liveStream(w http.ResponseWriter, r *http.Request) {
 
 // playback serves recorded video for a time range as an fMP4-over-HTTP stream.
 func (h *HTTPHandler) playback(w http.ResponseWriter, r *http.Request) {
-	channelID := chi.URLParam(r, "cameraID")
-	if channelID == "" {
-		channelID = chi.URLParam(r, "channelID")
-	}
-
-	if channelID == "" {
-		http.Error(w, "missing channelID", http.StatusBadRequest)
+	cameraID := chi.URLParam(r, "camera_id")
+	if cameraID == "" {
+		http.Error(w, "missing camera_id", http.StatusBadRequest)
 
 		return
 	}
 
-	start, end := parseTimeRange(r)
+	start, end, err := parsePlaybackRange(r)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
 
-	factory := h.svc.RecordedDemuxerFactory(channelID, start, end)
+		return
+	}
+
+	factory := h.svc.RecordedDemuxerFactory(cameraID, start, end)
 
 	ctx := r.Context()
 
@@ -385,7 +549,7 @@ func (h *HTTPHandler) playback(w http.ResponseWriter, r *http.Request) {
 		}, nil
 	})
 
-	handle, err := playSM.Consume(ctx, channelID, av.ConsumeOptions{
+	handle, err := playSM.Consume(ctx, cameraID, av.ConsumeOptions{
 		MuxerFactory: muxerFactory,
 	})
 	if err != nil {
@@ -402,37 +566,72 @@ func (h *HTTPHandler) playback(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
-// ── Helpers ─────────────────────────────────────────────────────────────────
+// ── Time parsing ────────────────────────────────────────────────────────────
 
-// parseTimeRange extracts start/end query params from an HTTP request,
-// defaulting to last 24h.
-func parseTimeRange(r *http.Request) (time.Time, time.Time) {
-	return parseTimeRangeStrings(
-		r.URL.Query().Get("start"),
-		r.URL.Query().Get("end"),
-	)
+// parsePlaybackRange extracts start/end query params for playback.
+// If end is omitted, follow mode is enabled by returning a zero end time.
+func parsePlaybackRange(r *http.Request) (time.Time, time.Time, error) {
+	now := time.Now().UTC()
+	start := now.Add(-24 * time.Hour)
+
+	if s := r.URL.Query().Get("start"); s != "" {
+		t, err := time.Parse(time.RFC3339, s)
+		if err != nil {
+			return time.Time{}, time.Time{}, errInvalidStartRFC3339
+		}
+
+		start = t
+	}
+
+	endStr := r.URL.Query().Get("end")
+	if endStr == "" {
+		return start, time.Time{}, nil
+	}
+
+	end, err := time.Parse(time.RFC3339, endStr)
+	if err != nil {
+		return time.Time{}, time.Time{}, errInvalidEndRFC3339
+	}
+
+	if end.Before(start) {
+		return time.Time{}, time.Time{}, errInvalidTimeRange
+	}
+
+	return start, end, nil
 }
 
-// parseTimeRangeStrings parses RFC 3339 start/end strings, defaulting to last 24h.
-func parseTimeRangeStrings(startStr, endStr string) (time.Time, time.Time) {
+// parseOptionalTimeRange parses optional RFC3339 start/end strings, defaulting to last 24h.
+func parseOptionalTimeRange(startStr, endStr string) (time.Time, time.Time, error) {
 	now := time.Now().UTC()
 	start := now.Add(-24 * time.Hour)
 	end := now
 
 	if startStr != "" {
-		if t, err := time.Parse(time.RFC3339, startStr); err == nil {
-			start = t
+		t, err := time.Parse(time.RFC3339, startStr)
+		if err != nil {
+			return time.Time{}, time.Time{}, errInvalidStartRFC3339
 		}
+
+		start = t
 	}
 
 	if endStr != "" {
-		if t, err := time.Parse(time.RFC3339, endStr); err == nil {
-			end = t
+		t, err := time.Parse(time.RFC3339, endStr)
+		if err != nil {
+			return time.Time{}, time.Time{}, errInvalidEndRFC3339
 		}
+
+		end = t
 	}
 
-	return start, end
+	if end.Before(start) {
+		return time.Time{}, time.Time{}, errInvalidTimeRange
+	}
+
+	return start, end, nil
 }
+
+// ── Helpers ─────────────────────────────────────────────────────────────────
 
 // flushWriter wraps an http.ResponseWriter and flushes after each Write.
 type flushWriter struct {

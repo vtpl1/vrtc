@@ -10,7 +10,7 @@ import (
 	"go.mongodb.org/mongo-driver/v2/mongo/options"
 )
 
-// mongoProvider implements ChannelProvider using a MongoDB collection.
+// mongoProvider implements ChannelWriter using a MongoDB collection.
 //
 // Expected document shape:
 //
@@ -27,9 +27,9 @@ type mongoProvider struct {
 	coll *mongo.Collection
 }
 
-// NewMongoProvider returns a ChannelProvider backed by the given MongoDB collection.
+// NewMongoProvider returns a ChannelWriter backed by the given MongoDB collection.
 // The caller owns the client and is responsible for disconnecting it.
-func NewMongoProvider(coll *mongo.Collection) ChannelProvider {
+func NewMongoProvider(coll *mongo.Collection) ChannelWriter {
 	return &mongoProvider{coll: coll}
 }
 
@@ -77,6 +77,30 @@ func (p *mongoProvider) ListChannels(ctx context.Context) ([]Channel, error) {
 	}
 
 	return out, nil
+}
+
+func (p *mongoProvider) SaveChannel(ctx context.Context, ch Channel) error {
+	doc := mongoChannel(ch)
+
+	_, err := p.coll.ReplaceOne(ctx, bson.M{"_id": ch.ID}, doc, options.Replace().SetUpsert(true))
+	if err != nil {
+		return fmt.Errorf("channel mongo: save %q: %w", ch.ID, err)
+	}
+
+	return nil
+}
+
+func (p *mongoProvider) DeleteChannel(ctx context.Context, id string) error {
+	res, err := p.coll.DeleteOne(ctx, bson.M{"_id": id})
+	if err != nil {
+		return fmt.Errorf("channel mongo: delete %q: %w", id, err)
+	}
+
+	if res.DeletedCount == 0 {
+		return fmt.Errorf("%w: %s", ErrChannelNotFound, id)
+	}
+
+	return nil
 }
 
 func (p *mongoProvider) Close() error { return nil }

@@ -13,10 +13,13 @@ import (
 	"github.com/vtpl1/vrtc-sdk/av/format/mse"
 )
 
+var errCameraIDRequired = errors.New("camera_id is required")
+
 // wsCommand is a JSON command from the WebSocket client.
 type wsCommand struct {
 	Type  string `json:"type"`
 	Value string `json:"value,omitempty"`
+	Time  string `json:"time,omitempty"` // RFC3339 timestamp for seek
 }
 
 // wsLive handles the /ws/live WebSocket endpoint.
@@ -29,6 +32,13 @@ type wsCommand struct {
 //
 //nolint:funlen,gocognit // WebSocket handler -- lifecycle complexity is inherent.
 func (h *HTTPHandler) wsLive(w http.ResponseWriter, r *http.Request) {
+	sourceID, err := parseWSCameraID(r)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+
+		return
+	}
+
 	wsConn, err := websocket.Accept(w, r, &websocket.AcceptOptions{
 		OriginPatterns:  []string{"*"},
 		CompressionMode: websocket.CompressionDisabled,
@@ -44,11 +54,6 @@ func (h *HTTPHandler) wsLive(w http.ResponseWriter, r *http.Request) {
 			h.log.Error().Err(err).Msg("ws live: close")
 		}
 	}()
-
-	sourceID := r.URL.Query().Get("sourceID")
-	if sourceID == "" {
-		sourceID = r.URL.Query().Get("channel_id")
-	}
 
 	ctx := r.Context()
 	errWriteChan := make(chan error, 1)
@@ -101,7 +106,7 @@ func (h *HTTPHandler) wsLive(w http.ResponseWriter, r *http.Request) {
 							textWriterFactory,
 						)
 						if merr != nil {
-							writeWSErrorResponse(ctx, wsConn, merr)
+							writeWSErrorResponse(ctx, wsConn, merr, "consume failed")
 
 							return merr
 						}
@@ -122,7 +127,7 @@ func (h *HTTPHandler) wsLive(w http.ResponseWriter, r *http.Request) {
 							ErrChan: errWriteChan,
 						})
 						if cerr != nil {
-							writeWSErrorResponse(ctx, wsConn, cerr)
+							writeWSErrorResponse(ctx, wsConn, cerr, "consume failed")
 
 							return cerr
 						}
@@ -208,10 +213,20 @@ func readWSCommand(ctx context.Context, wsConn *websocket.Conn) (wsCommand, erro
 }
 
 // writeWSErrorResponse sends an error JSON message over the WebSocket.
-func writeWSErrorResponse(ctx context.Context, wsConn *websocket.Conn, err error) {
+func writeWSErrorResponse(ctx context.Context, wsConn *websocket.Conn, err error, msg string) {
 	errResponse := map[string]string{
 		"type":  "error",
-		"error": err.Error(),
+		"error": msg + ": " + err.Error(),
 	}
 	_ = wsjson.Write(ctx, wsConn, errResponse)
+}
+
+// parseWSCameraID extracts and validates the camera_id query parameter.
+func parseWSCameraID(r *http.Request) (string, error) {
+	id := r.URL.Query().Get("camera_id")
+	if id == "" {
+		return "", errCameraIDRequired
+	}
+
+	return id, nil
 }
