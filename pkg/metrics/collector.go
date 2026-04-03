@@ -8,7 +8,7 @@ import (
 	"github.com/vtpl1/vrtc-sdk/av"
 )
 
-const snapshotInterval = 30 * time.Second
+const snapshotInterval = 60 * time.Second
 
 // ActiveSegmentCounter returns the number of active recording segments.
 type ActiveSegmentCounter interface {

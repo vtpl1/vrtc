@@ -13,7 +13,7 @@ import (
 )
 
 const (
-	sampleBufSize   = 4096
+	sampleBufSize   = 32768
 	snapshotBufSize = 64
 	flushInterval   = time.Second
 	flushBatch      = 100

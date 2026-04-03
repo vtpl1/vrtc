@@ -13,21 +13,20 @@ func (s *Store) prune(ctx context.Context) {
 	_, _ = s.db.ExecContext(ctx, "DELETE FROM samples WHERE ts < ?", cutoff)
 	_, _ = s.db.ExecContext(ctx, "DELETE FROM snapshots WHERE ts < ?", cutoff)
 
-	// Row-count cap on samples.
+	// Row-count cap on samples using efficient row ID range delete.
 	if s.maxRows > 0 {
 		var count int64
 
 		row := s.db.QueryRowContext(ctx, "SELECT COUNT(*) FROM samples")
 		if err := row.Scan(&count); err == nil && count > s.maxRows {
-			keep := s.maxRows * 4 / 5 // keep 80%
-			_, _ = s.db.ExecContext(
-				ctx,
-				"DELETE FROM samples WHERE id NOT IN (SELECT id FROM samples ORDER BY ts DESC LIMIT ?)",
-				keep,
+			deleteCount := count - (s.maxRows * 4 / 5) // keep 80%
+			_, _ = s.db.ExecContext(ctx,
+				"DELETE FROM samples WHERE id IN (SELECT id FROM samples ORDER BY ts ASC LIMIT ?)",
+				deleteCount,
 			)
 		}
 	}
 
-	// Reclaim disk space.
-	_, _ = s.db.ExecContext(ctx, "PRAGMA incremental_vacuum")
+	// Reclaim disk space. VACUUM works with WAL mode (incremental_vacuum does not).
+	_, _ = s.db.ExecContext(ctx, "VACUUM")
 }
