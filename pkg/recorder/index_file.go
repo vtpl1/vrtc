@@ -148,6 +148,78 @@ func (idx *fileIndex) QueryByChannel(
 	return results, nil
 }
 
+func (idx *fileIndex) FirstAvailable(_ context.Context, channelID string) (RecordingEntry, error) {
+	idx.mu.Lock()
+	defer idx.mu.Unlock()
+
+	best, err := idx.readBest()
+	if err != nil {
+		return RecordingEntry{}, err
+	}
+
+	var (
+		found  bool
+		result RecordingEntry
+	)
+
+	for _, e := range best {
+		if e.ChannelID != channelID {
+			continue
+		}
+
+		if e.Status == StatusRecording || e.Status == StatusDeleted || e.Status == StatusCorrupted {
+			continue
+		}
+
+		if !found || e.StartTime.Before(result.StartTime) {
+			result = e
+			found = true
+		}
+	}
+
+	if !found {
+		return RecordingEntry{}, ErrNoRecordings
+	}
+
+	return result, nil
+}
+
+func (idx *fileIndex) LastAvailable(_ context.Context, channelID string) (RecordingEntry, error) {
+	idx.mu.Lock()
+	defer idx.mu.Unlock()
+
+	best, err := idx.readBest()
+	if err != nil {
+		return RecordingEntry{}, err
+	}
+
+	var (
+		found  bool
+		result RecordingEntry
+	)
+
+	for _, e := range best {
+		if e.ChannelID != channelID {
+			continue
+		}
+
+		if e.Status == StatusRecording || e.Status == StatusDeleted || e.Status == StatusCorrupted {
+			continue
+		}
+
+		if !found || e.StartTime.After(result.StartTime) {
+			result = e
+			found = true
+		}
+	}
+
+	if !found {
+		return RecordingEntry{}, ErrNoRecordings
+	}
+
+	return result, nil
+}
+
 // Delete appends a StatusDeleted entry for id so that the segment is excluded
 // from all future queries. The segment file must already have been removed by
 // the caller.

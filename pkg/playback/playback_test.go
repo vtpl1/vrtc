@@ -42,6 +42,54 @@ func (f *fakeIndex) QueryByChannel(
 	return out, nil
 }
 
+func (f *fakeIndex) FirstAvailable(_ context.Context, channelID string) (recorder.RecordingEntry, error) {
+	var (
+		found  bool
+		result recorder.RecordingEntry
+	)
+
+	for _, e := range f.entries {
+		if e.ChannelID != channelID {
+			continue
+		}
+
+		if !found || e.StartTime.Before(result.StartTime) {
+			result = e
+			found = true
+		}
+	}
+
+	if !found {
+		return recorder.RecordingEntry{}, recorder.ErrNoRecordings
+	}
+
+	return result, nil
+}
+
+func (f *fakeIndex) LastAvailable(_ context.Context, channelID string) (recorder.RecordingEntry, error) {
+	var (
+		found  bool
+		result recorder.RecordingEntry
+	)
+
+	for _, e := range f.entries {
+		if e.ChannelID != channelID {
+			continue
+		}
+
+		if !found || e.StartTime.After(result.StartTime) {
+			result = e
+			found = true
+		}
+	}
+
+	if !found {
+		return recorder.RecordingEntry{}, recorder.ErrNoRecordings
+	}
+
+	return result, nil
+}
+
 func (f *fakeIndex) Delete(_ context.Context, _ string) error { return nil }
 
 func (f *fakeIndex) SealInterrupted(_ context.Context) error { return nil }

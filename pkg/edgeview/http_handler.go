@@ -130,11 +130,15 @@ func (h *HTTPHandler) Router() http.Handler {
 	r.Get("/docs/", http.RedirectHandler("/docs", http.StatusMovedPermanently).ServeHTTP)
 
 	// ── Streaming endpoints (raw chi — not auto-documentable) ───────────
-	r.Get("/api/cameras/{camera_id}/live", h.liveStream)
-	r.Get("/api/cameras/{camera_id}/playback", h.playback)
-	r.Get("/api/cameras/{camera_id}/recorded", h.playback)
-	r.HandleFunc("/api/cameras/ws/live", h.wsLive)
-	r.HandleFunc("/api/cameras/ws/recorded", h.wsRecorded)
+	r.Get("/api/cameras/{camera_id}/stream", h.httpStream)
+	// Backward-compatible aliases for the old split endpoints.
+	r.Get("/api/cameras/{camera_id}/live", h.httpStream)
+	r.Get("/api/cameras/{camera_id}/playback", h.httpStream)
+	r.Get("/api/cameras/{camera_id}/recorded", h.httpStream)
+	r.HandleFunc("/api/cameras/ws/stream", h.wsStream)
+	// Backward-compatible aliases for the old split endpoints.
+	r.HandleFunc("/api/cameras/ws/live", h.wsStream)
+	r.HandleFunc("/api/cameras/ws/recorded", h.wsStream)
 
 	return r
 }
@@ -228,7 +232,7 @@ func (h *HTTPHandler) registerHealthOps(api huma.API) {
 // registerStreamingDocs adds streaming/WebSocket endpoints to the OpenAPI spec
 // as documentation-only entries. The actual handlers are on the chi router.
 //
-//nolint:funlen // OpenAPI operation definitions are inherently verbose.
+
 func (h *HTTPHandler) registerStreamingDocs(api huma.API) {
 	streamResp := map[string]*huma.Response{
 		"200": {
@@ -243,80 +247,38 @@ func (h *HTTPHandler) registerStreamingDocs(api huma.API) {
 	}
 
 	api.OpenAPI().AddOperation(&huma.Operation{
-		OperationID: "live-stream",
+		OperationID: "http-stream",
 		Method:      "GET",
-		Path:        "/api/cameras/{camera_id}/live",
-		Summary:     "Live fMP4 video stream",
-		Description: "HTTP chunked fMP4 stream for browser playback. Blocks until client disconnects.",
+		Path:        "/api/cameras/{camera_id}/stream",
+		Summary:     "fMP4 video stream (live + recorded)",
+		Description: "Unified HTTP chunked fMP4 stream. Omit start for live; provide start (RFC3339) for recorded playback.",
 		Tags:        []string{"Camera"},
 		Parameters: []*huma.Param{
 			{Name: "camera_id", In: "path", Required: true, Schema: &huma.Schema{Type: "string"}},
-		},
-		Responses: streamResp,
-	})
-
-	api.OpenAPI().AddOperation(&huma.Operation{
-		OperationID: "playback-stream",
-		Method:      "GET",
-		Path:        "/api/cameras/{camera_id}/playback",
-		Summary:     "Recorded playback fMP4 stream",
-		Description: "HTTP chunked fMP4 playback for a time range. Query params: start, end (RFC3339). Omit end for follow mode.",
-		Tags:        []string{"Camera"},
-		Parameters: []*huma.Param{
-			{Name: "camera_id", In: "path", Required: true, Schema: &huma.Schema{Type: "string"}},
-			{Name: "start", In: "query", Schema: &huma.Schema{Type: "string", Format: "date-time"}},
-			{Name: "end", In: "query", Schema: &huma.Schema{Type: "string", Format: "date-time"}},
-		},
-		Responses: streamResp,
-	})
-
-	api.OpenAPI().AddOperation(&huma.Operation{
-		OperationID: "recorded-stream",
-		Method:      "GET",
-		Path:        "/api/cameras/{camera_id}/recorded",
-		Summary:     "Recorded playback fMP4 stream (by channel)",
-		Description: "HTTP chunked fMP4 playback by channel ID. Query params: start, end (RFC3339).",
-		Tags:        []string{"Camera"},
-		Parameters: []*huma.Param{
-			{Name: "camera_id", In: "path", Required: true, Schema: &huma.Schema{Type: "string"}},
-			{Name: "start", In: "query", Schema: &huma.Schema{Type: "string", Format: "date-time"}},
-			{Name: "end", In: "query", Schema: &huma.Schema{Type: "string", Format: "date-time"}},
-		},
-		Responses: streamResp,
-	})
-
-	api.OpenAPI().AddOperation(&huma.Operation{
-		OperationID: "ws-live",
-		Method:      "GET",
-		Path:        "/api/cameras/ws/live",
-		Summary:     "WebSocket MSE live stream",
-		Description: "WebSocket upgrade. Send {\"type\":\"mse\"} to start. Server sends binary fMP4 fragments. Query: camera_id.",
-		Tags:        []string{"Camera"},
-		Parameters: []*huma.Param{
-			{Name: "camera_id", In: "query", Schema: &huma.Schema{Type: "string"}},
-		},
-		Responses: wsResp,
-	})
-
-	api.OpenAPI().AddOperation(&huma.Operation{
-		OperationID: "ws-recorded",
-		Method:      "GET",
-		Path:        "/api/cameras/ws/recorded",
-		Summary:     "WebSocket MSE recorded playback",
-		Description: "WebSocket upgrade for recorded MSE playback. Query: camera_id, start, end (RFC3339). Omit end for follow mode.",
-		Tags:        []string{"Camera"},
-		Parameters: []*huma.Param{
-			{Name: "camera_id", In: "query", Schema: &huma.Schema{Type: "string"}},
 			{
 				Name:        "start",
 				In:          "query",
-				Description: "Start time (RFC3339)",
+				Description: "Start time (RFC3339). Omit for live mode.",
 				Schema:      &huma.Schema{Type: "string", Format: "date-time"},
 			},
+		},
+		Responses: streamResp,
+	})
+
+	api.OpenAPI().AddOperation(&huma.Operation{
+		OperationID: "ws-stream",
+		Method:      "GET",
+		Path:        "/api/cameras/ws/stream",
+		Summary:     "WebSocket MSE stream (live + recorded)",
+		Description: "Unified WebSocket endpoint. Omit start for live; provide start (RFC3339) for recorded playback. " +
+			"Seek commands switch between modes transparently. Send {\"type\":\"mse\"} to start streaming.",
+		Tags: []string{"Camera"},
+		Parameters: []*huma.Param{
+			{Name: "camera_id", In: "query", Required: true, Schema: &huma.Schema{Type: "string"}},
 			{
-				Name:        "end",
+				Name:        "start",
 				In:          "query",
-				Description: "End time (RFC3339, omit for follow mode)",
+				Description: "Start time (RFC3339). Omit for live mode.",
 				Schema:      &huma.Schema{Type: "string", Format: "date-time"},
 			},
 		},
@@ -653,8 +615,10 @@ func (h *HTTPHandler) collectHealth(ctx context.Context) HealthSnapshot {
 
 // ── Streaming handlers (raw chi — binary/WebSocket, not JSON) ───────────────
 
-// liveStream serves an fMP4-over-HTTP live stream for browser playback.
-func (h *HTTPHandler) liveStream(w http.ResponseWriter, r *http.Request) {
+// httpStream serves an fMP4-over-HTTP stream. Without a start query param it
+// delivers live video from the main relay hub; with start it plays recorded
+// segments via a per-session relay hub.
+func (h *HTTPHandler) httpStream(w http.ResponseWriter, r *http.Request) {
 	cameraID := chi.URLParam(r, "camera_id")
 	if cameraID == "" {
 		http.Error(w, "missing camera_id", http.StatusBadRequest)
@@ -662,6 +626,25 @@ func (h *HTTPHandler) liveStream(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	start, _, err := parsePlaybackRange(r)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+
+		return
+	}
+
+	if start.IsZero() {
+		h.httpStreamLive(w, r, cameraID)
+	} else {
+		h.httpStreamRecorded(w, r, cameraID, start)
+	}
+}
+
+func (h *HTTPHandler) httpStreamLive(
+	w http.ResponseWriter,
+	r *http.Request,
+	cameraID string,
+) {
 	w.Header().Set("Content-Type", "video/mp4")
 	w.Header().Set("Cache-Control", "no-cache")
 
@@ -674,7 +657,6 @@ func (h *HTTPHandler) liveStream(w http.ResponseWriter, r *http.Request) {
 	defer h.svc.TrackConsumer()()
 
 	ctx := r.Context()
-
 	errCh := make(chan error, 1)
 	consumeStart := time.Now()
 
@@ -697,29 +679,23 @@ func (h *HTTPHandler) liveStream(w http.ResponseWriter, r *http.Request) {
 	select {
 	case <-ctx.Done():
 	case muxErr := <-errCh:
-		h.log.Warn().Err(muxErr).Str("camera", cameraID).Msg("live stream: muxer error")
+		h.log.Warn().Err(muxErr).Str("camera", cameraID).Msg("stream: live muxer error")
 	}
 }
 
-// playback serves recorded video for a time range as an fMP4-over-HTTP stream.
-func (h *HTTPHandler) playback(w http.ResponseWriter, r *http.Request) {
-	cameraID := chi.URLParam(r, "camera_id")
-	if cameraID == "" {
-		http.Error(w, "missing camera_id", http.StatusBadRequest)
-
-		return
-	}
-
-	start, end, err := parsePlaybackRange(r)
-	if err != nil {
-		http.Error(w, err.Error(), http.StatusBadRequest)
-
-		return
-	}
-
+func (h *HTTPHandler) httpStreamRecorded(
+	w http.ResponseWriter,
+	r *http.Request,
+	cameraID string,
+	start time.Time,
+) {
 	ctx := r.Context()
 
-	playSM := relayhub.New(h.svc.RecordedDemuxerFactory(cameraID, start, end), nil)
+	playSM := relayhub.New(
+		h.svc.RecordedDemuxerFactory(cameraID, start, time.Time{}),
+		nil,
+		relayhub.WithMaxConsumers(1),
+	)
 	if err := playSM.Start(ctx); err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 
@@ -730,8 +706,10 @@ func (h *HTTPHandler) playback(w http.ResponseWriter, r *http.Request) {
 
 	w.Header().Set("Content-Type", "video/mp4")
 	w.Header().Set("Cache-Control", "no-cache")
+
 	flusher, _ := w.(http.Flusher)
 	done := make(chan struct{})
+
 	muxerFactory := av.MuxerFactory(func(_ context.Context, _ string) (av.MuxCloser, error) {
 		return &notifyMuxer{
 			MuxCloser: fmp4.NewMuxer(&flushWriter{w: w, f: flusher}),
@@ -759,10 +737,10 @@ func (h *HTTPHandler) playback(w http.ResponseWriter, r *http.Request) {
 	defer func() { _ = handle.Close(ctx) }()
 
 	select {
-	case <-r.Context().Done():
+	case <-ctx.Done():
 	case <-done:
 	case muxErr := <-errCh:
-		h.log.Warn().Err(muxErr).Str("camera", cameraID).Msg("playback: muxer error")
+		h.log.Warn().Err(muxErr).Str("camera", cameraID).Msg("stream: playback muxer error")
 	}
 }
 

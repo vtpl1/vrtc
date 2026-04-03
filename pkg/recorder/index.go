@@ -2,8 +2,13 @@ package recorder
 
 import (
 	"context"
+	"errors"
 	"time"
 )
+
+// ErrNoRecordings is returned by FirstAvailable and LastAvailable when no
+// playable recordings exist for the requested channel.
+var ErrNoRecordings = errors.New("no playable recordings found")
 
 // Recording status values stored in RecordingEntry.Status.
 const (
@@ -65,6 +70,16 @@ type RecordingIndex interface {
 		channelID string,
 		from, to time.Time,
 	) ([]RecordingEntry, error)
+
+	// FirstAvailable returns the earliest playable recording for the channel.
+	// Only StatusComplete and StatusInterrupted entries are considered.
+	// Returns ErrNoRecordings if no playable recordings exist.
+	FirstAvailable(ctx context.Context, channelID string) (RecordingEntry, error)
+
+	// LastAvailable returns the latest playable recording for the channel.
+	// Only StatusComplete and StatusInterrupted entries are considered.
+	// Returns ErrNoRecordings if no playable recordings exist.
+	LastAvailable(ctx context.Context, channelID string) (RecordingEntry, error)
 
 	// Delete marks a segment as deleted in the index. The caller is responsible
 	// for removing the file from disk before calling Delete.

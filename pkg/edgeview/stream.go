@@ -19,6 +19,13 @@ import (
 	"github.com/vtpl1/vrtc/pkg/recorder"
 )
 
+// Playback modes returned by ResolvePlaybackStart.
+const (
+	PlaybackModeRecorded       = "recorded"
+	PlaybackModeFirstAvailable = "first_available"
+	PlaybackModeLive           = "live"
+)
+
 var (
 	errNoRecordingIndex  = errors.New("no recording index available on this relay")
 	errNoRecordingsFound = errors.New("no recordings found for the given range")
@@ -172,6 +179,64 @@ func (s *Service) ListCameras(ctx context.Context) []*CameraInfo {
 // HasPlayback returns whether this relay has recording access for playback.
 func (s *Service) HasPlayback() bool {
 	return s.recIndex != nil
+}
+
+// ResolvePlaybackStart determines the actual start time and mode for a
+// playback request. It handles three cases:
+//   - Normal: recordings exist in the requested range → mode "recorded".
+//   - First-available: no recordings in range but earlier ones exist → mode
+//     "first_available" with resolvedFrom set to the earliest segment start.
+//   - Live: the requested start is beyond the latest recording → mode "live".
+//
+// The caller should use the returned mode to decide whether to create a
+// recorded playback relay or attach to the live hub.
+func (s *Service) ResolvePlaybackStart(
+	ctx context.Context, channelID string, from, to time.Time,
+) (resolvedFrom time.Time, mode string, err error) {
+	if s.recIndex == nil {
+		return time.Time{}, "", errNoRecordingIndex
+	}
+
+	// Check latest recording to detect future-seek.
+	last, lerr := s.recIndex.LastAvailable(ctx, channelID)
+	if lerr != nil {
+		// No recordings at all for this channel.
+		if from.After(time.Now()) {
+			return time.Time{}, PlaybackModeLive, nil
+		}
+
+		return time.Time{}, "", errNoRecordingsFound
+	}
+
+	if from.After(last.EndTime) {
+		return time.Time{}, PlaybackModeLive, nil
+	}
+
+	// Normal range query.
+	entries, qerr := s.recIndex.QueryByChannel(ctx, channelID, from, to)
+	if qerr != nil {
+		return time.Time{}, "", qerr
+	}
+
+	if len(entries) > 0 {
+		// If from falls in a gap before the first returned segment, snap
+		// to the segment's start so the client knows the actual playback
+		// position.
+		actual := from
+		if from.Before(entries[0].StartTime) {
+			actual = entries[0].StartTime
+		}
+
+		return actual, PlaybackModeRecorded, nil
+	}
+
+	// No recordings in the requested range — fall back to first available.
+	first, ferr := s.recIndex.FirstAvailable(ctx, channelID)
+	if ferr != nil {
+		return time.Time{}, "", errNoRecordingsFound
+	}
+
+	return first.StartTime, PlaybackModeFirstAvailable, nil
 }
 
 // Timeline returns the recording timeline for a camera.
@@ -407,7 +472,8 @@ func (d *fileDemuxer) Close() error {
 }
 
 // NewPlaybackHub creates a temporary relayhub for playback of recorded segments.
+// The hub enforces a single-consumer limit to prevent leaky delivery mode.
 // The caller must Start and defer Stop on the returned hub.
 func NewPlaybackHub(factory av.DemuxerFactory) *relayhub.RelayHub {
-	return relayhub.New(factory, nil)
+	return relayhub.New(factory, nil, relayhub.WithMaxConsumers(1))
 }

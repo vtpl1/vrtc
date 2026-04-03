@@ -3,6 +3,7 @@ package recorder
 import (
 	"context"
 	"database/sql"
+	"errors"
 	"fmt"
 	"maps"
 	"os"
@@ -13,18 +14,30 @@ import (
 	_ "modernc.org/sqlite" // SQLite driver
 )
 
+const (
+	// maxIdleDBAge is the duration after which an idle per-channel database
+	// connection is eligible for eviction to bound open file handles.
+	maxIdleDBAge = 10 * time.Minute
+
+	// evictionThreshold is the number of open databases above which lazy
+	// eviction is triggered on each getDB call.
+	evictionThreshold = 100
+)
+
 // sqliteIndex implements RecordingIndex using per-channel SQLite databases.
 type sqliteIndex struct {
-	baseDir string
-	mu      sync.RWMutex
-	dbs     map[string]*sql.DB
+	baseDir    string
+	mu         sync.RWMutex
+	dbs        map[string]*sql.DB
+	lastAccess map[string]time.Time // tracks last access time per channel for LRU eviction
 }
 
 // NewSQLiteIndex returns a RecordingIndex backed by per-channel SQLite databases.
 func NewSQLiteIndex(baseDir string) RecordingIndex {
 	return &sqliteIndex{
-		baseDir: baseDir,
-		dbs:     make(map[string]*sql.DB),
+		baseDir:    baseDir,
+		dbs:        make(map[string]*sql.DB),
+		lastAccess: make(map[string]time.Time),
 	}
 }
 
@@ -121,6 +134,93 @@ func scanRecordingRow(rows *sql.Rows, channelID string) (RecordingEntry, error) 
 		&hasMotionInt, &hasObjInt,
 	); err != nil {
 		return RecordingEntry{}, fmt.Errorf("recorder sqlite: scan row: %w", err)
+	}
+
+	e.ChannelID = channelID
+	e.StartTime, _ = time.Parse(time.RFC3339Nano, startStr)
+	e.EndTime, _ = time.Parse(time.RFC3339Nano, endStr)
+	e.HasMotion = hasMotionInt != 0
+	e.HasObjects = hasObjInt != 0
+
+	return e, nil
+}
+
+func (idx *sqliteIndex) FirstAvailable(
+	ctx context.Context,
+	channelID string,
+) (RecordingEntry, error) {
+	db, err := idx.getDB(ctx, channelID)
+	if err != nil {
+		return RecordingEntry{}, err
+	}
+
+	const query = `SELECT id, start_time, end_time, file_path, size_bytes, status, has_motion, has_objects
+		FROM recordings
+		WHERE status NOT IN ('recording', 'deleted', 'corrupted')
+		ORDER BY start_time ASC
+		LIMIT 1`
+
+	row := db.QueryRowContext(ctx, query)
+
+	e, err := scanSingleRow(row, channelID)
+	if err != nil {
+		return RecordingEntry{}, fmt.Errorf(
+			"recorder sqlite: first available for %q: %w",
+			channelID,
+			err,
+		)
+	}
+
+	return e, nil
+}
+
+func (idx *sqliteIndex) LastAvailable(
+	ctx context.Context,
+	channelID string,
+) (RecordingEntry, error) {
+	db, err := idx.getDB(ctx, channelID)
+	if err != nil {
+		return RecordingEntry{}, err
+	}
+
+	const query = `SELECT id, start_time, end_time, file_path, size_bytes, status, has_motion, has_objects
+		FROM recordings
+		WHERE status NOT IN ('recording', 'deleted', 'corrupted')
+		ORDER BY start_time DESC
+		LIMIT 1`
+
+	row := db.QueryRowContext(ctx, query)
+
+	e, err := scanSingleRow(row, channelID)
+	if err != nil {
+		return RecordingEntry{}, fmt.Errorf(
+			"recorder sqlite: last available for %q: %w",
+			channelID,
+			err,
+		)
+	}
+
+	return e, nil
+}
+
+// scanSingleRow scans a single recording row from a *sql.Row. Returns
+// ErrNoRecordings if no row is found.
+func scanSingleRow(row *sql.Row, channelID string) (RecordingEntry, error) {
+	var (
+		e                       RecordingEntry
+		startStr, endStr        string
+		hasMotionInt, hasObjInt int
+	)
+
+	if err := row.Scan(
+		&e.ID, &startStr, &endStr, &e.FilePath, &e.SizeBytes, &e.Status,
+		&hasMotionInt, &hasObjInt,
+	); err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return RecordingEntry{}, ErrNoRecordings
+		}
+
+		return RecordingEntry{}, fmt.Errorf("scan row: %w", err)
 	}
 
 	e.ChannelID = channelID
@@ -258,44 +358,21 @@ func (idx *sqliteIndex) SeekInSegment(
 	return offset, nil
 }
 
-// getDB returns the *sql.DB for the given channelID, opening it lazily.
-func (idx *sqliteIndex) getDB(ctx context.Context, channelID string) (*sql.DB, error) {
-	idx.mu.RLock()
-	db, ok := idx.dbs[channelID]
-	idx.mu.RUnlock()
-
-	if ok {
-		return db, nil
-	}
-
-	idx.mu.Lock()
-	defer idx.mu.Unlock()
-
-	if db, ok = idx.dbs[channelID]; ok {
-		return db, nil
-	}
-
-	dir := filepath.Join(idx.baseDir, channelID)
-	if err := os.MkdirAll(dir, 0o750); err != nil {
-		return nil, fmt.Errorf("recorder sqlite: mkdir %q: %w", dir, err)
-	}
-
-	dsn := filepath.Join(dir, "index.db")
-
-	db, err := sql.Open("sqlite", dsn)
+// Vacuum runs VACUUM on the per-channel SQLite database to reclaim space
+// after bulk deletes (e.g. retention enforcement). The caller should rate-
+// limit invocations (e.g. once per day per channel) and avoid peak load.
+func (idx *sqliteIndex) Vacuum(ctx context.Context, channelID string) error {
+	db, err := idx.getDB(ctx, channelID)
 	if err != nil {
-		return nil, fmt.Errorf("recorder sqlite: open %q: %w", dsn, err)
+		return err
 	}
 
-	if err = idx.initSchema(ctx, db); err != nil {
-		db.Close()
-
-		return nil, err
+	_, err = db.ExecContext(ctx, "VACUUM")
+	if err != nil {
+		return fmt.Errorf("recorder sqlite: vacuum %q: %w", channelID, err)
 	}
 
-	idx.dbs[channelID] = db
-
-	return db, nil
+	return nil
 }
 
 func (*sqliteIndex) initSchema(ctx context.Context, db *sql.DB) error {
@@ -321,8 +398,10 @@ CREATE TABLE IF NOT EXISTS recordings (
     has_motion  INTEGER DEFAULT 0,
     has_objects INTEGER DEFAULT 0
 );
-CREATE INDEX IF NOT EXISTS idx_start  ON recordings(start_time);
-CREATE INDEX IF NOT EXISTS idx_status ON recordings(status);
+CREATE INDEX IF NOT EXISTS idx_start        ON recordings(start_time);
+CREATE INDEX IF NOT EXISTS idx_status       ON recordings(status);
+CREATE INDEX IF NOT EXISTS idx_status_start ON recordings(status, start_time);
+CREATE INDEX IF NOT EXISTS idx_end          ON recordings(end_time);
 
 CREATE TABLE IF NOT EXISTS seek_index (
     recording_id TEXT    NOT NULL,
@@ -344,4 +423,82 @@ func boolToInt(b bool) int {
 	}
 
 	return 0
+}
+
+// getDB returns the *sql.DB for the given channelID, opening it lazily.
+// It also triggers LRU eviction of idle databases when the open count
+// exceeds evictionThreshold.
+func (idx *sqliteIndex) getDB(ctx context.Context, channelID string) (*sql.DB, error) {
+	idx.mu.RLock()
+	db, ok := idx.dbs[channelID]
+	idx.mu.RUnlock()
+
+	if ok {
+		idx.mu.Lock()
+		idx.lastAccess[channelID] = time.Now()
+		idx.mu.Unlock()
+
+		return db, nil
+	}
+
+	idx.mu.Lock()
+	defer idx.mu.Unlock()
+
+	if db, ok = idx.dbs[channelID]; ok {
+		idx.lastAccess[channelID] = time.Now()
+
+		return db, nil
+	}
+
+	// Evict idle databases before opening a new one.
+	if len(idx.dbs) >= evictionThreshold {
+		idx.evictIdleLocked()
+	}
+
+	dir := filepath.Join(idx.baseDir, channelID)
+	if err := os.MkdirAll(dir, 0o750); err != nil {
+		return nil, fmt.Errorf("recorder sqlite: mkdir %q: %w", dir, err)
+	}
+
+	dsn := filepath.Join(dir, "index.db")
+
+	db, err := sql.Open("sqlite", dsn)
+	if err != nil {
+		return nil, fmt.Errorf("recorder sqlite: open %q: %w", dsn, err)
+	}
+
+	if err = idx.initSchema(ctx, db); err != nil {
+		db.Close()
+
+		return nil, err
+	}
+
+	// SQLite serialises writes; 2 conns is enough. This bounds file handle
+	// usage when hundreds of per-channel databases are open concurrently.
+	db.SetMaxOpenConns(2)
+	db.SetMaxIdleConns(1)
+	db.SetConnMaxIdleTime(5 * time.Minute)
+
+	idx.dbs[channelID] = db
+	idx.lastAccess[channelID] = time.Now()
+
+	return db, nil
+}
+
+// evictIdleLocked closes databases that have not been accessed for
+// maxIdleDBAge. Must be called with idx.mu held for writing.
+func (idx *sqliteIndex) evictIdleLocked() {
+	cutoff := time.Now().Add(-maxIdleDBAge)
+
+	for ch, lastAt := range idx.lastAccess {
+		if lastAt.Before(cutoff) {
+			if db, ok := idx.dbs[ch]; ok {
+				_ = db.Close()
+
+				delete(idx.dbs, ch)
+			}
+
+			delete(idx.lastAccess, ch)
+		}
+	}
 }

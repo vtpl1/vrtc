@@ -140,6 +140,14 @@ func (idx *fakeIndex) QueryByChannel(
 	return nil, nil
 }
 
+func (idx *fakeIndex) FirstAvailable(_ context.Context, _ string) (recorder.RecordingEntry, error) {
+	return recorder.RecordingEntry{}, recorder.ErrNoRecordings
+}
+
+func (idx *fakeIndex) LastAvailable(_ context.Context, _ string) (recorder.RecordingEntry, error) {
+	return recorder.RecordingEntry{}, recorder.ErrNoRecordings
+}
+
 func (idx *fakeIndex) Delete(_ context.Context, _ string) error { return nil }
 
 func (idx *fakeIndex) SealInterrupted(_ context.Context) error { return nil }

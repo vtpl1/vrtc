@@ -35,19 +35,15 @@ type channelOutput struct {
 type channelResponse struct {
 	channel.Channel
 
-	LiveURL     string `json:"live_url"`                  //nolint:tagliatelle
-	PlaybackURL string `json:"playback_url"`              //nolint:tagliatelle
-	WSURL       string `json:"ws_url"`                    //nolint:tagliatelle
-	WSRecURL    string `json:"ws_recorded_url,omitempty"` //nolint:tagliatelle
+	StreamURL string `json:"stream_url"` //nolint:tagliatelle
+	WSURL     string `json:"ws_url"`     //nolint:tagliatelle
 }
 
 func newChannelResponse(ch channel.Channel) *channelResponse {
 	return &channelResponse{
-		Channel:     ch,
-		LiveURL:     "/api/cameras/" + ch.ID + "/live",
-		PlaybackURL: "/api/cameras/" + ch.ID + "/playback",
-		WSURL:       "/api/cameras/ws/live?camera_id=" + ch.ID,
-		WSRecURL:    "/api/cameras/ws/recorded?camera_id=" + ch.ID,
+		Channel:   ch,
+		StreamURL: "/api/cameras/" + ch.ID + "/stream",
+		WSURL:     "/api/cameras/ws/stream?camera_id=" + ch.ID,
 	}
 }
 
