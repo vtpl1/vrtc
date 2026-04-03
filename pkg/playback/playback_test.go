@@ -16,7 +16,11 @@ type fakeIndex struct {
 
 func (f *fakeIndex) Insert(_ context.Context, _ recorder.RecordingEntry) error { return nil }
 
-func (f *fakeIndex) QueryByChannel(_ context.Context, channelID string, from, to time.Time) ([]recorder.RecordingEntry, error) {
+func (f *fakeIndex) QueryByChannel(
+	_ context.Context,
+	channelID string,
+	from, to time.Time,
+) ([]recorder.RecordingEntry, error) {
 	var out []recorder.RecordingEntry
 
 	for _, e := range f.entries {
@@ -55,12 +59,17 @@ func TestIsLive(t *testing.T) {
 		{"both zero is live", playback.Request{ChannelID: "cam-1"}, true},
 		{"from set is not live", playback.Request{ChannelID: "cam-1", From: time.Now()}, false},
 		{"to set is not live", playback.Request{ChannelID: "cam-1", To: time.Now()}, false},
-		{"both set is not live", playback.Request{ChannelID: "cam-1", From: time.Now(), To: time.Now().Add(time.Hour)}, false},
+		{
+			"both set is not live",
+			playback.Request{ChannelID: "cam-1", From: time.Now(), To: time.Now().Add(time.Hour)},
+			false,
+		},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
+
 			if got := playback.IsLive(tt.req); got != tt.want {
 				t.Errorf("IsLive(%v) = %v, want %v", tt.req, got, tt.want)
 			}
@@ -75,6 +84,7 @@ func TestRecordedDemuxerFactory_NoEntries(t *testing.T) {
 	router := playback.New(idx)
 
 	factory := router.RecordedDemuxerFactory(playback.Request{ChannelID: "cam-1"})
+
 	_, err := factory(context.Background(), "cam-1")
 	if err == nil {
 		t.Fatal("expected error when no entries found, got nil")
@@ -87,12 +97,18 @@ func TestRecordedDemuxerFactory_WrongChannel(t *testing.T) {
 	now := time.Now().UTC()
 	idx := &fakeIndex{
 		entries: []recorder.RecordingEntry{
-			{ChannelID: "cam-2", StartTime: now, EndTime: now.Add(time.Minute), FilePath: "/dev/null"},
+			{
+				ChannelID: "cam-2",
+				StartTime: now,
+				EndTime:   now.Add(time.Minute),
+				FilePath:  "/dev/null",
+			},
 		},
 	}
 	router := playback.New(idx)
 
 	factory := router.RecordedDemuxerFactory(playback.Request{ChannelID: "cam-1"})
+
 	_, err := factory(context.Background(), "cam-1")
 	if err == nil {
 		t.Fatal("expected error for missing channel, got nil")
@@ -105,12 +121,18 @@ func TestRecordedDemuxerFactory_FileNotFound(t *testing.T) {
 	now := time.Now().UTC()
 	idx := &fakeIndex{
 		entries: []recorder.RecordingEntry{
-			{ChannelID: "cam-1", StartTime: now, EndTime: now.Add(time.Minute), FilePath: "/nonexistent/path/segment.mp4"},
+			{
+				ChannelID: "cam-1",
+				StartTime: now,
+				EndTime:   now.Add(time.Minute),
+				FilePath:  "/nonexistent/path/segment.mp4",
+			},
 		},
 	}
 	router := playback.New(idx)
 
 	factory := router.RecordedDemuxerFactory(playback.Request{ChannelID: "cam-1"})
+
 	_, err := factory(context.Background(), "cam-1")
 	if err == nil {
 		t.Fatal("expected error for nonexistent file, got nil")

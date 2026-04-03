@@ -109,50 +109,90 @@ func (h *HTTPHandler) Router() http.Handler {
 	h.registerJSONOps(api)
 	h.registerCameraOps(api)
 
+	// CSV import/export (raw chi handlers — binary content, not JSON).
+	h.registerCameraCSVRoutes(r)
+
 	// Document streaming endpoints in OpenAPI (handled by raw chi handlers below).
 	h.registerStreamingDocs(api)
 
+	// Redirect trailing-slash docs URL to the canonical path.
+	r.Get("/docs/", http.RedirectHandler("/docs", http.StatusMovedPermanently).ServeHTTP)
+
 	// ── Streaming endpoints (raw chi — not auto-documentable) ───────────
-	r.Get("/live/{camera_id}", h.liveStream)
-	r.Get("/playback/{camera_id}", h.playback)
-	r.Get("/recorded/{camera_id}", h.playback)
-	r.HandleFunc("/ws/live", h.wsLive)
-	r.HandleFunc("/ws/recorded", h.wsRecorded)
+	r.Get("/api/cameras/{camera_id}/live", h.liveStream)
+	r.Get("/api/cameras/{camera_id}/playback", h.playback)
+	r.Get("/api/cameras/{camera_id}/recorded", h.playback)
+	r.HandleFunc("/api/cameras/ws/live", h.wsLive)
+	r.HandleFunc("/api/cameras/ws/recorded", h.wsRecorded)
 
 	return r
 }
 
 func (h *HTTPHandler) registerJSONOps(api huma.API) {
+	h.registerCameraViewOps(api)
+	h.registerStatsOps(api)
+	h.registerHealthOps(api)
+}
+
+func (h *HTTPHandler) registerCameraViewOps(api huma.API) {
 	huma.Register(api, huma.Operation{
 		OperationID: "list-view-cameras",
 		Method:      "GET",
 		Path:        "/api/cameras",
 		Summary:     "List all cameras on this edge device",
-		Tags:        []string{"View"},
+		Tags:        []string{"Camera"},
 	}, h.humaListCameras)
 
 	huma.Register(api, huma.Operation{
 		OperationID: "get-view-timeline",
 		Method:      "GET",
-		Path:        "/api/timeline/{camera_id}",
+		Path:        "/api/cameras/{camera_id}/timeline",
 		Summary:     "Get recording timeline for a camera",
-		Tags:        []string{"View"},
+		Tags:        []string{"Camera"},
 	}, h.humaGetTimeline)
 
 	huma.Register(api, huma.Operation{
 		OperationID: "get-recording-timeline-view",
 		Method:      "GET",
-		Path:        "/recordings/{camera_id}",
+		Path:        "/api/cameras/{camera_id}/recordings",
 		Summary:     "Get recording segments for timebar display",
-		Tags:        []string{"View"},
+		Tags:        []string{"Camera"},
 	}, h.humaRecordingTimeline)
+}
 
+func (h *HTTPHandler) registerStatsOps(api huma.API) {
+	huma.Register(api, huma.Operation{
+		OperationID: "get-camera-stats",
+		Method:      "GET",
+		Path:        "/api/cameras/stats",
+		Summary:     "Per-camera stream ingestion metrics",
+		Tags:        []string{"Camera"},
+	}, h.humaProducerStats)
+
+	huma.Register(api, huma.Operation{
+		OperationID: "get-camera-stats-by-id",
+		Method:      "GET",
+		Path:        "/api/cameras/{camera_id}/stats",
+		Summary:     "Stream ingestion metrics for a single camera",
+		Tags:        []string{"Camera"},
+	}, h.humaCameraStatsByID)
+
+	huma.Register(api, huma.Operation{
+		OperationID: "get-system-stats",
+		Method:      "GET",
+		Path:        "/api/cameras/stats/summary",
+		Summary:     "Aggregated system-wide camera stats",
+		Tags:        []string{"Camera"},
+	}, h.humaSystemStats)
+}
+
+func (h *HTTPHandler) registerHealthOps(api huma.API) {
 	huma.Register(api, huma.Operation{
 		OperationID: "get-healthz",
 		Method:      "GET",
 		Path:        "/healthz",
 		Summary:     "Basic health check",
-		Tags:        []string{"View"},
+		Tags:        []string{"System"},
 	}, h.humaHealthz)
 
 	huma.Register(api, huma.Operation{
@@ -160,16 +200,8 @@ func (h *HTTPHandler) registerJSONOps(api huma.API) {
 		Method:      "GET",
 		Path:        "/health",
 		Summary:     "System health stats",
-		Tags:        []string{"View"},
+		Tags:        []string{"System"},
 	}, h.humaHealth)
-
-	huma.Register(api, huma.Operation{
-		OperationID: "get-producer-stats",
-		Method:      "GET",
-		Path:        "/stats/producers",
-		Summary:     "Per-stream ingestion metrics",
-		Tags:        []string{"View"},
-	}, h.humaProducerStats)
 }
 
 // registerStreamingDocs adds streaming/WebSocket endpoints to the OpenAPI spec
@@ -192,10 +224,10 @@ func (h *HTTPHandler) registerStreamingDocs(api huma.API) {
 	api.OpenAPI().AddOperation(&huma.Operation{
 		OperationID: "live-stream",
 		Method:      "GET",
-		Path:        "/live/{camera_id}",
+		Path:        "/api/cameras/{camera_id}/live",
 		Summary:     "Live fMP4 video stream",
 		Description: "HTTP chunked fMP4 stream for browser playback. Blocks until client disconnects.",
-		Tags:        []string{"Streaming"},
+		Tags:        []string{"Camera"},
 		Parameters: []*huma.Param{
 			{Name: "camera_id", In: "path", Required: true, Schema: &huma.Schema{Type: "string"}},
 		},
@@ -205,10 +237,10 @@ func (h *HTTPHandler) registerStreamingDocs(api huma.API) {
 	api.OpenAPI().AddOperation(&huma.Operation{
 		OperationID: "playback-stream",
 		Method:      "GET",
-		Path:        "/playback/{camera_id}",
+		Path:        "/api/cameras/{camera_id}/playback",
 		Summary:     "Recorded playback fMP4 stream",
 		Description: "HTTP chunked fMP4 playback for a time range. Query params: start, end (RFC3339). Omit end for follow mode.",
-		Tags:        []string{"Streaming"},
+		Tags:        []string{"Camera"},
 		Parameters: []*huma.Param{
 			{Name: "camera_id", In: "path", Required: true, Schema: &huma.Schema{Type: "string"}},
 			{Name: "start", In: "query", Schema: &huma.Schema{Type: "string", Format: "date-time"}},
@@ -220,10 +252,10 @@ func (h *HTTPHandler) registerStreamingDocs(api huma.API) {
 	api.OpenAPI().AddOperation(&huma.Operation{
 		OperationID: "recorded-stream",
 		Method:      "GET",
-		Path:        "/recorded/{camera_id}",
+		Path:        "/api/cameras/{camera_id}/recorded",
 		Summary:     "Recorded playback fMP4 stream (by channel)",
 		Description: "HTTP chunked fMP4 playback by channel ID. Query params: start, end (RFC3339).",
-		Tags:        []string{"Streaming"},
+		Tags:        []string{"Camera"},
 		Parameters: []*huma.Param{
 			{Name: "camera_id", In: "path", Required: true, Schema: &huma.Schema{Type: "string"}},
 			{Name: "start", In: "query", Schema: &huma.Schema{Type: "string", Format: "date-time"}},
@@ -235,10 +267,10 @@ func (h *HTTPHandler) registerStreamingDocs(api huma.API) {
 	api.OpenAPI().AddOperation(&huma.Operation{
 		OperationID: "ws-live",
 		Method:      "GET",
-		Path:        "/ws/live",
+		Path:        "/api/cameras/ws/live",
 		Summary:     "WebSocket MSE live stream",
 		Description: "WebSocket upgrade. Send {\"type\":\"mse\"} to start. Server sends binary fMP4 fragments. Query: camera_id.",
-		Tags:        []string{"Streaming"},
+		Tags:        []string{"Camera"},
 		Parameters: []*huma.Param{
 			{Name: "camera_id", In: "query", Schema: &huma.Schema{Type: "string"}},
 		},
@@ -248,10 +280,10 @@ func (h *HTTPHandler) registerStreamingDocs(api huma.API) {
 	api.OpenAPI().AddOperation(&huma.Operation{
 		OperationID: "ws-recorded",
 		Method:      "GET",
-		Path:        "/ws/recorded",
+		Path:        "/api/cameras/ws/recorded",
 		Summary:     "WebSocket MSE recorded playback",
 		Description: "WebSocket upgrade for recorded MSE playback. Query: camera_id, start, end (RFC3339). Omit end for follow mode.",
-		Tags:        []string{"Streaming"},
+		Tags:        []string{"Camera"},
 		Parameters: []*huma.Param{
 			{Name: "camera_id", In: "query", Schema: &huma.Schema{Type: "string"}},
 			{
@@ -275,7 +307,8 @@ func (h *HTTPHandler) registerStreamingDocs(api huma.API) {
 func (h *HTTPHandler) authMiddleware(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		// Health check and docs are always allowed.
-		if r.URL.Path == "/healthz" || r.URL.Path == "/docs" ||
+		if r.URL.Path == "/healthz" || r.URL.Path == "/health" ||
+			r.URL.Path == "/docs" || r.URL.Path == "/docs/" ||
 			r.URL.Path == "/openapi.json" || r.URL.Path == "/openapi.yaml" {
 			next.ServeHTTP(w, r)
 
@@ -318,8 +351,8 @@ type timelineInput struct {
 	End      string `doc:"End time (RFC3339, default: now)"                        query:"end"`
 }
 
-// timelineEntry is a simplified timeline entry for the /api/timeline response.
-type timelineEntry struct {
+// timelineSummary is a simplified timeline entry for the /api/timeline response.
+type timelineSummary struct {
 	Start      time.Time `json:"start"`
 	End        time.Time `json:"end"`
 	DurationMs int64     `json:"duration_ms"` //nolint:tagliatelle
@@ -328,7 +361,7 @@ type timelineEntry struct {
 
 // timelineOutput wraps the timeline entries for Huma.
 type timelineOutput struct {
-	Body []timelineEntry
+	Body []timelineSummary
 }
 
 // recordingTimelineInput captures path and query parameters for the recordings endpoint.
@@ -362,8 +395,8 @@ type producerStatsOutput struct {
 
 // ── Huma handlers ───────────────────────────────────────────────────────────
 
-func (h *HTTPHandler) humaListCameras(_ context.Context, _ *struct{}) (*camerasOutput, error) {
-	return &camerasOutput{Body: h.svc.ListCameras()}, nil
+func (h *HTTPHandler) humaListCameras(ctx context.Context, _ *struct{}) (*camerasOutput, error) {
+	return &camerasOutput{Body: h.svc.ListCameras(ctx)}, nil
 }
 
 func (h *HTTPHandler) humaGetTimeline(
@@ -380,9 +413,9 @@ func (h *HTTPHandler) humaGetTimeline(
 		return nil, huma.Error500InternalServerError(tErr.Error())
 	}
 
-	result := make([]timelineEntry, len(entries))
+	result := make([]timelineSummary, len(entries))
 	for i, e := range entries {
-		result[i] = timelineEntry{
+		result[i] = timelineSummary{
 			Start:      e.StartTime,
 			End:        e.EndTime,
 			DurationMs: e.EndTime.Sub(e.StartTime).Milliseconds(),
@@ -435,11 +468,95 @@ func (h *HTTPHandler) humaHealth(ctx context.Context, _ *struct{}) (*healthOutpu
 	return &healthOutput{Body: h.collectHealth(ctx)}, nil
 }
 
+// cameraStatsInput captures the camera_id path param for per-camera stats.
+type cameraStatsInput struct {
+	CameraID string `doc:"Camera identifier" path:"camera_id"`
+}
+
+// cameraStatsOutput wraps a single relay's stats.
+type cameraStatsOutput struct {
+	Body av.RelayStats
+}
+
+func (h *HTTPHandler) humaCameraStatsByID(
+	ctx context.Context,
+	input *cameraStatsInput,
+) (*cameraStatsOutput, error) {
+	stats, ok := h.svc.Hub().GetRelayStatsByID(ctx, input.CameraID)
+	if !ok {
+		return nil, huma.Error404NotFound("camera not streaming")
+	}
+
+	return &cameraStatsOutput{Body: stats}, nil
+}
+
 func (h *HTTPHandler) humaProducerStats(
 	ctx context.Context,
 	_ *struct{},
 ) (*producerStatsOutput, error) {
 	return &producerStatsOutput{Body: h.svc.Hub().GetRelayStats(ctx)}, nil
+}
+
+// systemStatsOutput wraps the aggregated system stats for Huma.
+type systemStatsOutput struct {
+	Body SystemStats
+}
+
+// SystemStats aggregates metrics across all cameras.
+type SystemStats struct {
+	TotalCameras     int     `json:"totalCameras"`
+	StreamingCameras int     `json:"streamingCameras"`
+	RecordingCameras int     `json:"recordingCameras"`
+	TotalPacketsRead uint64  `json:"totalPacketsRead"`
+	TotalBytesRead   uint64  `json:"totalBytesRead"`
+	TotalKeyFrames   uint64  `json:"totalKeyFrames"`
+	TotalDropped     uint64  `json:"totalDropped"`
+	AvgFPS           float64 `json:"avgFps"`
+	TotalBitrateBps  float64 `json:"totalBitrateBps"`
+	ActiveSegments   int     `json:"activeSegments"`
+	ActiveViewers    int     `json:"activeViewers"`
+}
+
+func (h *HTTPHandler) humaSystemStats(
+	ctx context.Context,
+	_ *struct{},
+) (*systemStatsOutput, error) {
+	relays := h.svc.Hub().GetRelayStats(ctx)
+	cameras := h.svc.ListCameras(ctx)
+
+	var stats SystemStats
+
+	stats.TotalCameras = len(cameras)
+
+	for _, c := range cameras {
+		if c.Recording {
+			stats.RecordingCameras++
+		}
+	}
+
+	var fpsSum float64
+
+	for _, rs := range relays {
+		stats.StreamingCameras++
+		stats.TotalPacketsRead += rs.PacketsRead
+		stats.TotalBytesRead += rs.BytesRead
+		stats.TotalKeyFrames += rs.KeyFrames
+		stats.TotalDropped += rs.DroppedPackets
+		stats.TotalBitrateBps += rs.BitrateBps
+		fpsSum += rs.ActualFPS
+	}
+
+	if stats.StreamingCameras > 0 {
+		stats.AvgFPS = fpsSum / float64(stats.StreamingCameras)
+	}
+
+	if h.segmentCounter != nil {
+		stats.ActiveSegments = h.segmentCounter.ActiveCount()
+	}
+
+	stats.ActiveViewers = h.svc.ViewerCount()
+
+	return &systemStatsOutput{Body: stats}, nil
 }
 
 func (h *HTTPHandler) collectHealth(ctx context.Context) HealthSnapshot {
@@ -492,8 +609,11 @@ func (h *HTTPHandler) liveStream(w http.ResponseWriter, r *http.Request) {
 
 	ctx := r.Context()
 
+	errCh := make(chan error, 1)
+
 	handle, err := h.svc.Hub().Consume(ctx, cameraID, av.ConsumeOptions{
 		MuxerFactory: muxerFactory,
+		ErrChan:      errCh,
 	})
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusNotFound)
@@ -503,7 +623,11 @@ func (h *HTTPHandler) liveStream(w http.ResponseWriter, r *http.Request) {
 
 	defer func() { _ = handle.Close(ctx) }()
 
-	<-ctx.Done()
+	select {
+	case <-ctx.Done():
+	case muxErr := <-errCh:
+		h.log.Warn().Err(muxErr).Str("camera", cameraID).Msg("live stream: muxer error")
+	}
 }
 
 // playback serves recorded video for a time range as an fMP4-over-HTTP stream.
@@ -539,9 +663,7 @@ func (h *HTTPHandler) playback(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Cache-Control", "no-cache")
 
 	flusher, _ := w.(http.Flusher)
-
 	done := make(chan struct{})
-
 	muxerFactory := av.MuxerFactory(func(_ context.Context, _ string) (av.MuxCloser, error) {
 		return &notifyMuxer{
 			MuxCloser: fmp4.NewMuxer(&flushWriter{w: w, f: flusher}),
@@ -549,8 +671,11 @@ func (h *HTTPHandler) playback(w http.ResponseWriter, r *http.Request) {
 		}, nil
 	})
 
+	errCh := make(chan error, 1)
+
 	handle, err := playSM.Consume(ctx, cameraID, av.ConsumeOptions{
 		MuxerFactory: muxerFactory,
+		ErrChan:      errCh,
 	})
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusNotFound)
@@ -563,6 +688,8 @@ func (h *HTTPHandler) playback(w http.ResponseWriter, r *http.Request) {
 	select {
 	case <-r.Context().Done():
 	case <-done:
+	case muxErr := <-errCh:
+		h.log.Warn().Err(muxErr).Str("camera", cameraID).Msg("playback: muxer error")
 	}
 }
 

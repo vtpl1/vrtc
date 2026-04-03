@@ -125,6 +125,7 @@ func TestSplitAnnexB_ThreeNALUs_H265(t *testing.T) {
 	pps := []byte{0x44, 0x01}       // (34 << 1) | 0 = 0x44
 
 	var data []byte
+
 	sc := []byte{0x00, 0x00, 0x00, 0x01}
 	data = append(data, sc...)
 	data = append(data, vps...)
@@ -271,6 +272,7 @@ func TestVideoPayloadToAVCC_StripsParamSets_H264(t *testing.T) {
 	sc := []byte{0x00, 0x00, 0x00, 0x01}
 
 	var data []byte
+
 	data = append(data, sc...)
 	data = append(data, 0x67, 0x42, 0x00) // SPS
 	data = append(data, sc...)
@@ -296,6 +298,7 @@ func TestVideoPayloadToAVCC_StripsParamSets_H265(t *testing.T) {
 	sc := []byte{0x00, 0x00, 0x00, 0x01}
 
 	var data []byte
+
 	data = append(data, sc...)
 	data = append(data, 0x40, 0x01) // VPS (type 32)
 	data = append(data, sc...)
@@ -324,6 +327,7 @@ func TestVideoPayloadToAVCC_MultiNALU_AccessUnit(t *testing.T) {
 	sc := []byte{0x00, 0x00, 0x00, 0x01}
 
 	var data []byte
+
 	data = append(data, sc...)
 	data = append(data, 0x06, 0x05, 0x01) // SEI (type 6)
 	data = append(data, sc...)

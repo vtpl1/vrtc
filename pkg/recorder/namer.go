@@ -1,20 +1,33 @@
 package recorder
 
 import (
-	"path/filepath"
+	"fmt"
 	"time"
 )
 
-// SegmentPath returns the absolute file path for a new recording segment.
+// SegmentPath returns the file path for an in-progress recording segment.
 //
-// Format:  <base>/<channelID>/YYYY/MM/DD/HH/<channelID>_<startTime>.mp4
-// Example: /data/recordings/cam-1/2026/03/25/14/cam-1_20260325T143000Z.mp4.
+// Format:  <base>/<channelID>/<YYYY-MM-DD>/<HH>/<HHmmss>.fmp4
+// Example: /data/recordings/cam-1/2026-03-25/14/143000.fmp4.
 func SegmentPath(base, channelID string, startTime time.Time) string {
 	t := startTime.UTC()
+	date := t.Format("2006-01-02")
+	hour := fmt.Sprintf("%02d", t.Hour())
+	filename := t.Format("150405") + ".fmp4"
 
-	return filepath.Join(
-		base, channelID,
-		t.Format("2006"), t.Format("01"), t.Format("02"), t.Format("15"),
-		channelID+"_"+t.Format("20060102T150405Z")+".mp4",
-	)
+	return fmt.Sprintf("%s/%s/%s/%s/%s", base, channelID, date, hour, filename)
+}
+
+// SegmentPathFinal returns the file path for a completed recording segment.
+//
+// Format:  <base>/<channelID>/<YYYY-MM-DD>/<HH>/<HHmmss>_<HHmmss>.fmp4
+// Example: /data/recordings/cam-1/2026-03-25/14/143000_143500.fmp4.
+func SegmentPathFinal(base, channelID string, startTime, endTime time.Time) string {
+	t := startTime.UTC()
+	e := endTime.UTC()
+	date := t.Format("2006-01-02")
+	hour := fmt.Sprintf("%02d", t.Hour())
+	filename := t.Format("150405") + "_" + e.Format("150405") + ".fmp4"
+
+	return fmt.Sprintf("%s/%s/%s/%s/%s", base, channelID, date, hour, filename)
 }

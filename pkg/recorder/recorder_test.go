@@ -27,6 +27,7 @@ func (h *fakeHandle) ID() string { return h.id }
 
 func (h *fakeHandle) Close(ctx context.Context) error {
 	var err error
+
 	h.once.Do(func() {
 		if h.closeFn != nil {
 			err = h.closeFn(ctx)
@@ -50,7 +51,11 @@ type consumeCall struct {
 	opts     av.ConsumeOptions
 }
 
-func (sm *fakeStreamManager) Consume(_ context.Context, sourceID string, opts av.ConsumeOptions) (av.ConsumerHandle, error) {
+func (sm *fakeStreamManager) Consume(
+	_ context.Context,
+	sourceID string,
+	opts av.ConsumeOptions,
+) (av.ConsumerHandle, error) {
 	sm.mu.Lock()
 	sm.consumed = append(sm.consumed, consumeCall{sourceID, opts})
 	sm.mu.Unlock()
@@ -60,6 +65,7 @@ func (sm *fakeStreamManager) Consume(_ context.Context, sourceID string, opts av
 	}
 
 	h := &fakeHandle{id: opts.ConsumerID}
+
 	return h, nil
 }
 
@@ -74,9 +80,18 @@ func (sm *fakeStreamManager) GetRelayStats(_ context.Context) []av.RelayStats {
 	return nil
 }
 
+func (sm *fakeStreamManager) GetRelayStatsByID(_ context.Context, _ string) (av.RelayStats, bool) {
+	return av.RelayStats{}, false
+}
+
+func (sm *fakeStreamManager) ListRelayIDs(_ context.Context) []string {
+	return nil
+}
+
 func (sm *fakeStreamManager) consumeCount() int {
 	sm.mu.Lock()
 	defer sm.mu.Unlock()
+
 	return len(sm.consumed)
 }
 
@@ -95,8 +110,10 @@ func (p *fakeScheduleProvider) set(ss []schedule.Schedule) {
 func (p *fakeScheduleProvider) ListSchedules(_ context.Context) ([]schedule.Schedule, error) {
 	p.mu.Lock()
 	defer p.mu.Unlock()
+
 	out := make([]schedule.Schedule, len(p.schedules))
 	copy(out, p.schedules)
+
 	return out, nil
 }
 
@@ -112,10 +129,15 @@ func (idx *fakeIndex) Insert(_ context.Context, e recorder.RecordingEntry) error
 	idx.mu.Lock()
 	idx.entries = append(idx.entries, e)
 	idx.mu.Unlock()
+
 	return nil
 }
 
-func (idx *fakeIndex) QueryByChannel(_ context.Context, _ string, _, _ time.Time) ([]recorder.RecordingEntry, error) {
+func (idx *fakeIndex) QueryByChannel(
+	_ context.Context,
+	_ string,
+	_, _ time.Time,
+) ([]recorder.RecordingEntry, error) {
 	return nil, nil
 }
 
@@ -128,7 +150,17 @@ func (idx *fakeIndex) Close() error { return nil }
 func (idx *fakeIndex) count() int {
 	idx.mu.Lock()
 	defer idx.mu.Unlock()
+
 	return len(idx.entries)
+}
+
+// fakeChannelSource returns a fixed list of channels.
+type fakeChannelSource struct {
+	channels []recorder.Channel
+}
+
+func (f *fakeChannelSource) ListChannels(_ context.Context) ([]recorder.Channel, error) {
+	return f.channels, nil
 }
 
 // ---------------------------------------------------------------------------
@@ -170,6 +202,7 @@ func TestStartSegment_ConsumeCalledForActiveSchedule(t *testing.T) {
 		if sm.consumeCount() >= 1 {
 			break
 		}
+
 		time.Sleep(5 * time.Millisecond)
 	}
 
@@ -187,8 +220,11 @@ func TestStopSegment_HandleClosedOnStop(t *testing.T) {
 	t.Parallel()
 
 	dir := t.TempDir()
-	var closedIDs []string
-	var mu sync.Mutex
+
+	var (
+		closedIDs []string
+		mu        sync.Mutex
+	)
 
 	sm := &fakeStreamManager{}
 	sm.onConsume = func(sourceID string, opts av.ConsumeOptions) (av.ConsumerHandle, error) {
@@ -198,16 +234,20 @@ func TestStopSegment_HandleClosedOnStop(t *testing.T) {
 			id: opts.ConsumerID,
 			closeFn: func(_ context.Context) error {
 				mu.Lock()
+
 				closedIDs = append(closedIDs, opts.ConsumerID)
 				mu.Unlock()
+
 				return nil
 			},
 		}
+
 		return h, nil
 	}
 
 	sp := &fakeScheduleProvider{}
 	sp.set([]schedule.Schedule{activeSchedule("s1", "cam-1", dir)})
+
 	idx := &fakeIndex{}
 
 	rm := recorder.New(sm, sp, idx, 10*time.Millisecond)
@@ -221,6 +261,7 @@ func TestStopSegment_HandleClosedOnStop(t *testing.T) {
 		if sm.consumeCount() >= 1 {
 			break
 		}
+
 		time.Sleep(5 * time.Millisecond)
 	}
 
@@ -243,8 +284,11 @@ func TestScheduleRemoved_HandleClosed(t *testing.T) {
 	t.Parallel()
 
 	dir := t.TempDir()
-	var closedCount int32
-	var mu sync.Mutex
+
+	var (
+		closedCount int32
+		mu          sync.Mutex
+	)
 
 	sm := &fakeStreamManager{}
 	sm.onConsume = func(_ string, opts av.ConsumeOptions) (av.ConsumerHandle, error) {
@@ -254,14 +298,17 @@ func TestScheduleRemoved_HandleClosed(t *testing.T) {
 				mu.Lock()
 				closedCount++
 				mu.Unlock()
+
 				return nil
 			},
 		}
+
 		return h, nil
 	}
 
 	sp := &fakeScheduleProvider{}
 	sp.set([]schedule.Schedule{activeSchedule("s1", "cam-1", dir)})
+
 	idx := &fakeIndex{}
 
 	rm := recorder.New(sm, sp, idx, 20*time.Millisecond)
@@ -275,6 +322,7 @@ func TestScheduleRemoved_HandleClosed(t *testing.T) {
 		if sm.consumeCount() >= 1 {
 			break
 		}
+
 		time.Sleep(5 * time.Millisecond)
 	}
 
@@ -291,9 +339,11 @@ func TestScheduleRemoved_HandleClosed(t *testing.T) {
 		mu.Lock()
 		c := closedCount
 		mu.Unlock()
+
 		if c >= 1 {
 			break
 		}
+
 		time.Sleep(5 * time.Millisecond)
 	}
 
@@ -436,6 +486,7 @@ func TestMkdirCreated(t *testing.T) {
 		if sm.consumeCount() >= 1 {
 			break
 		}
+
 		time.Sleep(5 * time.Millisecond)
 	}
 
@@ -446,5 +497,109 @@ func TestMkdirCreated(t *testing.T) {
 	subdir := dir + "/cam-99"
 	if _, err := os.Stat(subdir); os.IsNotExist(err) {
 		t.Fatalf("expected directory %q to be created", subdir)
+	}
+}
+
+// TestDefaultRecording_NoSchedule verifies that channels without any explicit
+// schedule are recorded when WithDefaultRecording is enabled.
+func TestDefaultRecording_NoSchedule(t *testing.T) {
+	t.Parallel()
+
+	dir := t.TempDir()
+	sm := &fakeStreamManager{}
+	sp := &fakeScheduleProvider{} // no schedules
+	idx := &fakeIndex{}
+
+	cs := &fakeChannelSource{
+		channels: []recorder.Channel{
+			{ID: "cam-1"},
+			{ID: "cam-2"},
+		},
+	}
+
+	rm := recorder.New(sm, sp, idx, 10*time.Millisecond,
+		recorder.WithDefaultRecording(cs, dir),
+	)
+	if err := rm.Start(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+
+	deadline := time.Now().Add(500 * time.Millisecond)
+	for time.Now().Before(deadline) {
+		if sm.consumeCount() >= 2 {
+			break
+		}
+
+		time.Sleep(5 * time.Millisecond)
+	}
+
+	if err := rm.Stop(); err != nil {
+		t.Fatal(err)
+	}
+
+	if sm.consumeCount() < 2 {
+		t.Fatalf("expected at least 2 Consume calls (one per channel), got %d", sm.consumeCount())
+	}
+}
+
+// TestDefaultRecording_SkipsScheduledChannel verifies that a channel with an
+// explicit schedule does NOT get a default schedule added.
+func TestDefaultRecording_SkipsScheduledChannel(t *testing.T) {
+	t.Parallel()
+
+	dir := t.TempDir()
+	sm := &fakeStreamManager{}
+	sp := &fakeScheduleProvider{}
+	idx := &fakeIndex{}
+
+	// cam-1 has an explicit schedule; cam-2 does not.
+	sp.set([]schedule.Schedule{activeSchedule("s1", "cam-1", dir)})
+
+	cs := &fakeChannelSource{
+		channels: []recorder.Channel{
+			{ID: "cam-1"},
+			{ID: "cam-2"},
+		},
+	}
+
+	rm := recorder.New(sm, sp, idx, 10*time.Millisecond,
+		recorder.WithDefaultRecording(cs, dir),
+	)
+	if err := rm.Start(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+
+	deadline := time.Now().Add(500 * time.Millisecond)
+	for time.Now().Before(deadline) {
+		if sm.consumeCount() >= 2 {
+			break
+		}
+
+		time.Sleep(5 * time.Millisecond)
+	}
+
+	if err := rm.Stop(); err != nil {
+		t.Fatal(err)
+	}
+
+	// Expect exactly 2: one for the explicit schedule (cam-1), one default (cam-2).
+	if sm.consumeCount() != 2 {
+		t.Fatalf("expected exactly 2 Consume calls, got %d", sm.consumeCount())
+	}
+
+	sm.mu.Lock()
+	defer sm.mu.Unlock()
+
+	sourceIDs := make(map[string]bool, len(sm.consumed))
+	for _, c := range sm.consumed {
+		sourceIDs[c.sourceID] = true
+	}
+
+	if !sourceIDs["cam-1"] {
+		t.Error("expected Consume for cam-1 (explicit schedule)")
+	}
+
+	if !sourceIDs["cam-2"] {
+		t.Error("expected Consume for cam-2 (default schedule)")
 	}
 }

@@ -57,7 +57,7 @@ linters:
 
   exclusions:
     generated: lax
-    warn-unused: true
+    warn-unused: false
     paths:
       - '_test\.go'
     presets:

@@ -4,7 +4,6 @@ import (
 	"context"
 	"fmt"
 	"os"
-	"path/filepath"
 	"sync"
 	"time"
 
@@ -26,6 +25,17 @@ type ScheduleSource interface {
 	ListSchedules(ctx context.Context) ([]schedule.Schedule, error)
 }
 
+// ChannelSource is the subset of channel.ChannelProvider that
+// RecordingManager needs for default-schedule generation.
+type ChannelSource interface {
+	ListChannels(ctx context.Context) ([]Channel, error)
+}
+
+// Channel mirrors the fields RecordingManager needs from channel.Channel.
+type Channel struct {
+	ID string
+}
+
 // activeRec tracks one in-progress recording segment.
 type activeRec struct {
 	sched     schedule.Schedule
@@ -44,15 +54,32 @@ type RecordingManager struct {
 	index        RecordingIndex
 	pollInterval time.Duration
 
+	channels           ChannelSource
+	defaultStoragePath string
+
 	mu          sync.Mutex
 	active      map[string]*activeRec          // key = scheduleID
 	ringBuffers map[string]*segment.RingBuffer // key = channelID
+	failedStart map[string]string              // key = scheduleID, value = error message (warn once)
 
 	lastRetention time.Time
 
 	stopOnce sync.Once
 	cancel   context.CancelFunc
 	done     chan struct{}
+}
+
+// Option configures optional RecordingManager behaviour.
+type Option func(*RecordingManager)
+
+// WithDefaultRecording enables recording for channels that have no explicit
+// schedule. channels provides the channel list; storagePath is the base
+// directory for default segments.
+func WithDefaultRecording(channels ChannelSource, storagePath string) Option {
+	return func(rm *RecordingManager) {
+		rm.channels = channels
+		rm.defaultStoragePath = storagePath
+	}
 }
 
 // New creates a RecordingManager. Call Start to begin the poll loop.
@@ -64,20 +91,28 @@ func New(
 	schedProvider ScheduleSource,
 	index RecordingIndex,
 	pollInterval time.Duration,
+	opts ...Option,
 ) *RecordingManager {
 	if pollInterval <= 0 {
 		pollInterval = 30 * time.Second
 	}
 
-	return &RecordingManager{
+	rm := &RecordingManager{
 		sm:           sm,
 		schedules:    schedProvider,
 		index:        index,
 		pollInterval: pollInterval,
 		active:       make(map[string]*activeRec),
 		ringBuffers:  make(map[string]*segment.RingBuffer),
+		failedStart:  make(map[string]string),
 		done:         make(chan struct{}),
 	}
+
+	for _, o := range opts {
+		o(rm)
+	}
+
+	return rm
 }
 
 // Start seals any recordings interrupted by a previous run, then launches the
@@ -113,6 +148,19 @@ func (rm *RecordingManager) ActiveCount() int {
 	rm.mu.Unlock()
 
 	return n
+}
+
+// ActiveChannels returns the set of channel IDs that are currently recording.
+func (rm *RecordingManager) ActiveChannels() map[string]bool {
+	rm.mu.Lock()
+	defer rm.mu.Unlock()
+
+	result := make(map[string]bool, len(rm.active))
+	for _, ar := range rm.active {
+		result[ar.sched.ChannelID] = true
+	}
+
+	return result
 }
 
 // RingBuffer returns the ring buffer for a channel, or nil if not enabled.
@@ -228,15 +276,25 @@ func (rm *RecordingManager) tick(ctx context.Context) {
 		return
 	}
 
+	// Append default schedules for channels not covered by any explicit schedule.
+	schedules = rm.appendDefaults(ctx, schedules)
+
 	now := time.Now().UTC()
 	activeIDs := make(map[string]struct{}, len(schedules))
+
+	var wg sync.WaitGroup
 
 	for _, s := range schedules {
 		if schedule.IsActive(s, now) {
 			activeIDs[s.ID] = struct{}{}
-			rm.processSchedule(ctx, s, now)
+
+			wg.Go(func() {
+				rm.processSchedule(ctx, s, now)
+			})
 		}
 	}
+
+	wg.Wait()
 
 	// Stop recordings whose schedules are no longer active.
 	rm.mu.Lock()
@@ -329,12 +387,24 @@ func (rm *RecordingManager) makeOnCloseCallback(
 	s schedule.Schedule,
 ) func(segment.SegmentCloseInfo) {
 	return func(info segment.SegmentCloseInfo) {
+		// Rename to final path: HHmmss.fmp4 → HHmmss_HHmmss.fmp4
+		finalPath := SegmentPathFinal(s.StoragePath, s.ChannelID, info.Start, info.End)
+
+		if err := os.Rename(info.Path, finalPath); err != nil {
+			log.Warn().Err(err).
+				Str("from", info.Path).
+				Str("to", finalPath).
+				Msg("recorder: rename segment failed, keeping original path")
+
+			finalPath = info.Path
+		}
+
 		entry := RecordingEntry{
 			ID:         consumerID,
 			ChannelID:  s.ChannelID,
 			StartTime:  info.Start,
 			EndTime:    info.End,
-			FilePath:   info.Path,
+			FilePath:   finalPath,
 			SizeBytes:  info.SizeBytes,
 			Status:     StatusComplete,
 			HasMotion:  info.HasMotion,
@@ -347,7 +417,7 @@ func (rm *RecordingManager) makeOnCloseCallback(
 
 			log.Warn().
 				Err(info.ValidationError).
-				Str("path", info.Path).
+				Str("path", finalPath).
 				Msg("recorder: segment corrupted")
 		}
 
@@ -406,13 +476,6 @@ func (rm *RecordingManager) registerActiveSegment(
 //nolint:funlen // segment start wiring cannot be split cleanly
 func (rm *RecordingManager) startSegment(ctx context.Context, s schedule.Schedule, now time.Time) {
 	path := SegmentPath(s.StoragePath, s.ChannelID, now)
-
-	if err := os.MkdirAll(filepath.Dir(path), 0o750); err != nil {
-		log.Error().Err(err).Str("path", path).Msg("recorder: mkdir")
-
-		return
-	}
-
 	consumerID := fmt.Sprintf("recorder-%s-%s", s.ID, now.Format("20060102T150405Z"))
 
 	profile := segment.StorageProfile(s.StorageProfile)
@@ -451,21 +514,61 @@ func (rm *RecordingManager) startSegment(ctx context.Context, s schedule.Schedul
 		return mux, nil
 	})
 
+	errChan := make(chan error, 1)
+
 	handle, err := rm.sm.Consume(ctx, s.ChannelID, av.ConsumeOptions{
 		ConsumerID:   consumerID,
 		MuxerFactory: muxerFactory,
+		ErrChan:      errChan,
 	})
 	if err != nil {
-		log.Error().
-			Err(err).
-			Str("schedule", s.ID).
-			Str("channel", s.ChannelID).
-			Msg("recorder: attach consumer")
+		errMsg := err.Error()
+
+		rm.mu.Lock()
+		prev := rm.failedStart[s.ID]
+		rm.failedStart[s.ID] = errMsg
+		rm.mu.Unlock()
+
+		// Only warn once per distinct error to avoid log spam on every tick.
+		if prev != errMsg {
+			log.Warn().
+				Err(err).
+				Str("schedule", s.ID).
+				Str("channel", s.ChannelID).
+				Msg("recorder: skipping schedule, channel unavailable")
+		}
 
 		return
 	}
 
+	// Clear any previous failure on success.
+	rm.mu.Lock()
+	delete(rm.failedStart, s.ID)
+	rm.mu.Unlock()
+
+	log.Debug().
+		Str("schedule", s.ID).
+		Str("channel", s.ChannelID).
+		Str("consumer", consumerID).
+		Str("path", path).
+		Msg("recorder: recording started")
+
 	rm.registerActiveSegment(ctx, s, consumerID, path, now, handle, muxerRef)
+
+	// Listen for async muxer errors (e.g. file creation failure, disk full).
+	go func() {
+		muxErr, ok := <-errChan
+		if !ok || muxErr == nil {
+			return
+		}
+
+		log.Warn().
+			Err(muxErr).
+			Str("schedule", s.ID).
+			Str("channel", s.ChannelID).
+			Str("consumer", consumerID).
+			Msg("recorder: muxer error during recording")
+	}()
 }
 
 func (rm *RecordingManager) rotateSegment(
@@ -505,6 +608,12 @@ func (rm *RecordingManager) closeHandle(ctx context.Context, ar *activeRec) {
 	if err := ar.handle.Close(ctx); err != nil {
 		log.Error().Err(err).Str("schedule", ar.sched.ID).Msg("recorder: close handle")
 	}
+
+	log.Debug().
+		Str("schedule", ar.sched.ID).
+		Str("channel", ar.sched.ChannelID).
+		Dur("duration", time.Since(ar.startTime)).
+		Msg("recorder: recording stopped")
 }
 
 func (rm *RecordingManager) enforceRetention(
@@ -615,4 +724,46 @@ func (rm *RecordingManager) getOrCreateRingBuffer(s schedule.Schedule) *segment.
 	}
 
 	return rb
+}
+
+const defaultSegmentMinutes = 5
+
+// appendDefaults adds a synthetic always-active schedule for every channel
+// that is not already covered by an explicit schedule.
+func (rm *RecordingManager) appendDefaults(
+	ctx context.Context,
+	schedules []schedule.Schedule,
+) []schedule.Schedule {
+	if rm.channels == nil {
+		return schedules
+	}
+
+	channels, err := rm.channels.ListChannels(ctx)
+	if err != nil {
+		log.Error().Err(err).Msg("recorder: list channels for defaults")
+
+		return schedules
+	}
+
+	covered := make(map[string]struct{}, len(schedules))
+	for _, s := range schedules {
+		covered[s.ChannelID] = struct{}{}
+	}
+
+	for _, ch := range channels {
+		if _, ok := covered[ch.ID]; ok {
+			continue
+		}
+
+		schedules = append(schedules, schedule.Schedule{
+			ID:             "default-" + ch.ID,
+			ChannelID:      ch.ID,
+			StoragePath:    rm.defaultStoragePath,
+			SegmentMinutes: defaultSegmentMinutes,
+		})
+
+		log.Debug().Str("channel", ch.ID).Msg("recorder: using default schedule")
+	}
+
+	return schedules
 }

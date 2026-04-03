@@ -124,11 +124,11 @@ func (p *fileProvider) load() ([]Channel, error) {
 }
 
 func (p *fileProvider) save(channels []Channel) error {
-	data, err := json.MarshalIndent(
+	data, err := json.MarshalIndent( //nolint:gosec // channel config intentionally includes credentials
 		channels,
 		"",
 		"  ",
-	) //nolint:gosec // channel file contains stream credentials by design
+	)
 	if err != nil {
 		return fmt.Errorf("channel file provider: marshal: %w", err)
 	}

@@ -3,6 +3,7 @@ package edgeview
 import (
 	"context"
 	"errors"
+	"fmt"
 	"io"
 	"os"
 	"sync"
@@ -39,6 +40,7 @@ type Service struct {
 	recIndex recorder.RecordingIndex // nil if no recording available
 	bufProv  PacketBufferProvider    // nil if no recording available
 	chanW    channel.ChannelWriter   // nil if no channel CRUD available
+	recProv  ActiveRecordingProvider // nil if no recording manager
 	cameras  map[string]*CameraInfo
 
 	mu sync.RWMutex
@@ -83,12 +85,22 @@ func NewService(
 	return s
 }
 
+// ActiveRecordingProvider returns which channels are actively recording.
+type ActiveRecordingProvider interface {
+	ActiveChannels() map[string]bool
+}
+
 // ServiceOption configures optional Service dependencies.
 type ServiceOption func(*Service)
 
 // WithChannelWriter enables channel CRUD endpoints.
 func WithChannelWriter(cw channel.ChannelWriter) ServiceOption {
 	return func(s *Service) { s.chanW = cw }
+}
+
+// WithRecordingProvider sets the provider for active recording status.
+func WithRecordingProvider(rp ActiveRecordingProvider) ServiceOption {
+	return func(s *Service) { s.recProv = rp }
 }
 
 // Hub returns the underlying relay hub for direct consumer attachment.
@@ -120,14 +132,37 @@ func (s *Service) UnregisterCamera(cameraID string) {
 	s.mu.Unlock()
 }
 
-// ListCameras returns all cameras on this relay.
-func (s *Service) ListCameras() []*CameraInfo {
+// ListCameras returns all cameras enriched with live relay stats and recording status.
+func (s *Service) ListCameras(ctx context.Context) []*CameraInfo {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 
+	// Build active recording lookup.
+	var activeRec map[string]bool
+	if s.recProv != nil {
+		activeRec = s.recProv.ActiveChannels()
+	}
+
 	result := make([]*CameraInfo, 0, len(s.cameras))
+
 	for _, c := range s.cameras {
 		info := *c
+		info.Recording = activeRec[info.CameraID]
+
+		if rs, ok := s.hub.GetRelayStatsByID(ctx, info.CameraID); ok {
+			info.FPS = int(rs.ActualFPS)
+			info.State = "streaming"
+
+			for _, st := range rs.Streams {
+				if st.Width > 0 {
+					info.Codec = st.CodecType.String()
+					info.Resolution = fmt.Sprintf("%dx%d", st.Width, st.Height)
+
+					break
+				}
+			}
+		}
+
 		result = append(result, &info)
 	}
 

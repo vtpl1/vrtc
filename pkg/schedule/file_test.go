@@ -140,8 +140,12 @@ func TestIsActive(t *testing.T) {
 			active: false,
 		},
 		{
-			name:   "within window",
-			sched:  schedule.Schedule{ID: "s", StartAt: monday.Add(-time.Hour), EndAt: monday.Add(time.Hour)},
+			name: "within window",
+			sched: schedule.Schedule{
+				ID:      "s",
+				StartAt: monday.Add(-time.Hour),
+				EndAt:   monday.Add(time.Hour),
+			},
 			now:    monday,
 			active: true,
 		},
@@ -152,8 +156,11 @@ func TestIsActive(t *testing.T) {
 			active: true,
 		},
 		{
-			name:   "non-matching day of week",
-			sched:  schedule.Schedule{ID: "s", DaysOfWeek: []time.Weekday{time.Sunday, time.Saturday}},
+			name: "non-matching day of week",
+			sched: schedule.Schedule{
+				ID:         "s",
+				DaysOfWeek: []time.Weekday{time.Sunday, time.Saturday},
+			},
 			now:    monday,
 			active: false,
 		},

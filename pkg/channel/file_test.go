@@ -36,6 +36,7 @@ func TestFileProvider_ListChannels(t *testing.T) {
 	}
 
 	path := writeTempChannelFile(t, want)
+
 	p := channel.NewFileProvider(path)
 	defer p.Close()
 

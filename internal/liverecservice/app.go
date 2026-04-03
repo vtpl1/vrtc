@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"path/filepath"
 	"time"
 
 	"github.com/go-chi/chi/v5"
@@ -102,7 +103,12 @@ func Run(appName string, cfg Config) error {
 	// -----------------------------------------------------------------------
 	// Recording manager
 	// -----------------------------------------------------------------------
-	rm := recorder.New(sm, schedProvider, recIndex, 30*time.Second)
+	rm := recorder.New(sm, schedProvider, recIndex, 30*time.Second,
+		recorder.WithDefaultRecording(
+			channelAdapter{chanProvider},
+			filepath.Dir(c.RecordingIndexPath),
+		),
+	)
 	if err := rm.Start(ctx); err != nil {
 		return fmt.Errorf("liverecservice: recording manager start: %w", err)
 	}
@@ -114,6 +120,7 @@ func Run(appName string, cfg Config) error {
 	// -----------------------------------------------------------------------
 	viewSvc := edgeview.NewService(log.Logger, sm, recIndex, nil,
 		edgeview.WithChannelWriter(chanProvider),
+		edgeview.WithRecordingProvider(rm),
 	)
 
 	// Register channels as cameras for the camera listing endpoint.
@@ -175,12 +182,16 @@ func Run(appName string, cfg Config) error {
 
 	log.Info().Str("appName", appName).Str("addr", c.APIListen).Msg("liverecservice starting")
 
-	if err := srv.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
-		return fmt.Errorf("http server: %w", err)
-	}
+	go func() {
+		if err := srv.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
+			errChan <- fmt.Errorf("http server: %w", err)
+		}
+	}()
 
 	lifecycle.WaitForTerminationRequest(errChan)
+	log.Info().Str("appName", appName).Msg("termination signal received, shutting down gracefully")
 	cancel()
+	log.Info().Str("appName", appName).Msg("shutdown complete")
 
 	return nil
 }
@@ -265,4 +276,23 @@ func newScheduleProvider(
 
 		return schedule.NewFileProvider(c.ScheduleFilePath), nil
 	}
+}
+
+// channelAdapter adapts channel.ChannelProvider to recorder.ChannelSource.
+type channelAdapter struct {
+	p channel.ChannelProvider
+}
+
+func (a channelAdapter) ListChannels(ctx context.Context) ([]recorder.Channel, error) {
+	chs, err := a.p.ListChannels(ctx)
+	if err != nil {
+		return nil, err
+	}
+
+	out := make([]recorder.Channel, len(chs))
+	for i, ch := range chs {
+		out[i] = recorder.Channel{ID: ch.ID}
+	}
+
+	return out, nil
 }

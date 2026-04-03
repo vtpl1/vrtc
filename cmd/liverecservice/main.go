@@ -45,7 +45,7 @@ func newRootCmd() *cobra.Command {
 		RunE: func(_ *cobra.Command, _ []string) error {
 			logLevel := cfgGlobal.LiveRecordingConfig.LogLevel
 			if logLevel == "" {
-				logLevel = "info"
+				logLevel = "debug"
 			}
 
 			logFile := configpath.GetLogFilePath(liverecservice.AppName)
