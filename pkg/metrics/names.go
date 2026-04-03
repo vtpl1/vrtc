@@ -1,0 +1,10 @@
+package metrics
+
+const (
+	MetricLiveViewStartupMs   = "live_view_startup_ms"
+	MetricRTSPSessionSetupMs  = "rtsp_session_setup_ms"
+	MetricRecordingGapSeconds = "recording_gap_seconds"
+	MetricAPIResponseMs       = "api_response_ms"
+	MetricConsumerAddMs       = "consumer_add_ms"
+	MetricFragmentGapMs       = "fragment_gap_ms"
+)

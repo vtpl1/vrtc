@@ -22,7 +22,7 @@ PLATFORMS := \
     linux/amd64 \
 	linux/arm64
 
-.PHONY: all prerequisite fmt lint update build test test-edge-cgo docker-build clean
+.PHONY: all prerequisite fmt lint update build test test-edge-cgo docker-build clean benchmark
 
 all: fmt lint build
 
@@ -82,6 +82,12 @@ docker-build:
 	docker build --build-arg NODE_TYPE=edge   -t $(BINARY):edge-$(VERSION) .
 	docker build --build-arg NODE_TYPE=proxy  -t $(BINARY):proxy-$(VERSION) .
 	docker build --build-arg NODE_TYPE=cloud  -t $(BINARY):cloud-$(VERSION) .
+
+benchmark:
+	@echo "Building loadtest tool..."
+	@go build -ldflags "$(LDFLAGS)" -o $(OUTPUT_DIR)/loadtest_$(HOST_OS)_$(HOST_ARCH) ./cmd/loadtest
+	@echo "Binary: $(OUTPUT_DIR)/loadtest_$(HOST_OS)_$(HOST_ARCH)"
+	@echo "Usage:  ./$(OUTPUT_DIR)/loadtest_$(HOST_OS)_$(HOST_ARCH) --help"
 
 clean:
 	rm -rf bin/ data/ hls/

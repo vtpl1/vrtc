@@ -16,6 +16,7 @@ import (
 	"github.com/vtpl1/vrtc-sdk/av"
 	"github.com/vtpl1/vrtc-sdk/av/format/fmp4"
 	"github.com/vtpl1/vrtc-sdk/av/relayhub"
+	"github.com/vtpl1/vrtc/pkg/metrics"
 )
 
 var (
@@ -57,6 +58,7 @@ type HTTPHandler struct {
 	log            zerolog.Logger
 	authToken      string
 	segmentCounter ActiveSegmentCounter
+	collector      *metrics.Collector
 	startTime      time.Time
 }
 
@@ -88,6 +90,11 @@ func WithSegmentCounter(sc ActiveSegmentCounter) HTTPHandlerOption {
 	return func(h *HTTPHandler) { h.segmentCounter = sc }
 }
 
+// WithMetricsCollector enables KPI metrics collection.
+func WithMetricsCollector(c *metrics.Collector) HTTPHandlerOption {
+	return func(h *HTTPHandler) { h.collector = c }
+}
+
 // Router returns a chi router with all LAN endpoints.
 // JSON endpoints are registered via Huma (auto-generates OpenAPI spec at
 // /openapi.json and interactive docs UI at /docs). Streaming and WebSocket
@@ -99,6 +106,10 @@ func (h *HTTPHandler) Router() http.Handler {
 	r.Use(middleware.Recoverer)
 	r.Use(middleware.RealIP)
 	r.Use(h.authMiddleware)
+
+	if h.collector != nil {
+		r.Use(metrics.ChiMiddleware(h.collector))
+	}
 
 	// ── Huma API (auto-generated OpenAPI + /docs UI) ────────────────────
 	cfg := huma.DefaultConfig("Edge View API", "1.0.0")
@@ -184,6 +195,16 @@ func (h *HTTPHandler) registerStatsOps(api huma.API) {
 		Summary:     "Aggregated system-wide camera stats",
 		Tags:        []string{"Camera"},
 	}, h.humaSystemStats)
+
+	if h.collector != nil {
+		huma.Register(api, huma.Operation{
+			OperationID: "get-metrics",
+			Method:      "GET",
+			Path:        "/api/metrics",
+			Summary:     "KPI metrics with histograms and system snapshots",
+			Tags:        []string{"System"},
+		}, h.humaMetrics)
+	}
 }
 
 func (h *HTTPHandler) registerHealthOps(api huma.API) {
@@ -468,6 +489,39 @@ func (h *HTTPHandler) humaHealth(ctx context.Context, _ *struct{}) (*healthOutpu
 	return &healthOutput{Body: h.collectHealth(ctx)}, nil
 }
 
+// metricsInput captures optional query params for the metrics endpoint.
+type metricsInput struct {
+	Since string `doc:"Lookback duration (e.g. 1h, 30m). Default: 1h" query:"since"`
+}
+
+// metricsOutput wraps the metrics response for Huma.
+type metricsOutput struct {
+	Body metrics.MetricsResponse
+}
+
+func (h *HTTPHandler) humaMetrics(
+	ctx context.Context,
+	input *metricsInput,
+) (*metricsOutput, error) {
+	since := time.Hour
+
+	if input.Since != "" {
+		if d, err := time.ParseDuration(input.Since); err == nil {
+			since = d
+		}
+	}
+
+	resp, err := h.collector.Store().Query(ctx, metrics.QueryOpts{Since: since})
+	if err != nil {
+		return nil, huma.Error500InternalServerError(err.Error())
+	}
+
+	resp.Uptime = h.collector.Uptime().Round(time.Second).String()
+	resp.Relays = h.collector.RelayMetrics(ctx)
+
+	return &metricsOutput{Body: *resp}, nil
+}
+
 // cameraStatsInput captures the camera_id path param for per-camera stats.
 type cameraStatsInput struct {
 	CameraID string `doc:"Camera identifier" path:"camera_id"`
@@ -610,6 +664,7 @@ func (h *HTTPHandler) liveStream(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 
 	errCh := make(chan error, 1)
+	consumeStart := time.Now()
 
 	handle, err := h.svc.Hub().Consume(ctx, cameraID, av.ConsumeOptions{
 		MuxerFactory: muxerFactory,
@@ -619,6 +674,10 @@ func (h *HTTPHandler) liveStream(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, err.Error(), http.StatusNotFound)
 
 		return
+	}
+
+	if h.collector != nil {
+		h.collector.RecordLiveViewStartup(time.Since(consumeStart), cameraID)
 	}
 
 	defer func() { _ = handle.Close(ctx) }()

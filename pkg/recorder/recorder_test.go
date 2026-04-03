@@ -2,7 +2,6 @@ package recorder_test
 
 import (
 	"context"
-	"os"
 	"sync"
 	"testing"
 	"time"
@@ -464,9 +463,9 @@ func TestStopIsIdempotent(t *testing.T) {
 	}
 }
 
-// TestMkdirCreated verifies that the channel sub-directory is created under
-// StoragePath when a segment starts.
-func TestMkdirCreated(t *testing.T) {
+// TestConsumeSourceID verifies that Consume is called with the correct
+// channel ID from the schedule.
+func TestConsumeSourceID(t *testing.T) {
 	t.Parallel()
 
 	dir := t.TempDir()
@@ -494,9 +493,15 @@ func TestMkdirCreated(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	subdir := dir + "/cam-99"
-	if _, err := os.Stat(subdir); os.IsNotExist(err) {
-		t.Fatalf("expected directory %q to be created", subdir)
+	sm.mu.Lock()
+	defer sm.mu.Unlock()
+
+	if len(sm.consumed) == 0 {
+		t.Fatal("expected at least 1 Consume call")
+	}
+
+	if sm.consumed[0].sourceID != "cam-99" {
+		t.Errorf("expected sourceID cam-99, got %s", sm.consumed[0].sourceID)
 	}
 }
 

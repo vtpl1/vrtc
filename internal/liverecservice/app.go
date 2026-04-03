@@ -20,6 +20,7 @@ import (
 	"github.com/vtpl1/vrtc/pkg/channel"
 	"github.com/vtpl1/vrtc/pkg/edgeview"
 	"github.com/vtpl1/vrtc/pkg/lifecycle"
+	"github.com/vtpl1/vrtc/pkg/metrics"
 	"github.com/vtpl1/vrtc/pkg/recorder"
 	"github.com/vtpl1/vrtc/pkg/schedule"
 	"go.mongodb.org/mongo-driver/v2/mongo"
@@ -72,8 +73,12 @@ func Run(appName string, cfg Config) error {
 	recIndex := recorder.NewFileIndex(c.RecordingIndexPath)
 	defer recIndex.Close()
 
+	var metricsCollector *metrics.Collector // set later; safe to capture in closure
+
 	demuxerFactory := av.DemuxerFactory(
 		func(ctx context.Context, sourceID string) (av.DemuxCloser, error) {
+			start := time.Now()
+
 			ch, err := chanProvider.GetChannel(ctx, sourceID)
 			if err != nil {
 				return nil, fmt.Errorf("liverecservice: channel %q: %w", sourceID, err)
@@ -87,6 +92,10 @@ func Run(appName string, cfg Config) error {
 			})
 			if err != nil {
 				return nil, fmt.Errorf("liverecservice: open stream %q: %w", ch.StreamURL, err)
+			}
+
+			if metricsCollector != nil {
+				metricsCollector.RecordRTSPSessionSetup(time.Since(start), sourceID)
 			}
 
 			return d, nil
@@ -137,6 +146,23 @@ func Run(appName string, cfg Config) error {
 	startTime := time.Now()
 
 	// -----------------------------------------------------------------------
+	// KPI Metrics
+	// -----------------------------------------------------------------------
+	metricsDBPath := filepath.Join(filepath.Dir(c.RecordingIndexPath), "metrics.db")
+
+	metricsStore, err := metrics.New(metricsDBPath, 7*24*time.Hour, 500_000)
+	if err != nil {
+		log.Warn().Err(err).Msg("liverecservice: metrics store disabled")
+	}
+
+	if metricsStore != nil {
+		defer metricsStore.Close()
+
+		metricsCollector = metrics.NewCollector(metricsStore, sm, rm, viewSvc)
+		defer metricsCollector.Stop()
+	}
+
+	// -----------------------------------------------------------------------
 	// Periodic health logging
 	// -----------------------------------------------------------------------
 	startHealthLogger(ctx, sm, rm, startTime, 60*time.Second)
@@ -160,9 +186,14 @@ func Run(appName string, cfg Config) error {
 
 	// All JSON, streaming, and WebSocket endpoints via edgeview (includes
 	// auto-generated OpenAPI spec at /openapi.json and docs UI at /docs).
-	viewHandler := edgeview.NewHTTPHandler(viewSvc, log.Logger, "",
+	handlerOpts := []edgeview.HTTPHandlerOption{
 		edgeview.WithSegmentCounter(rm),
-	)
+	}
+	if metricsCollector != nil {
+		handlerOpts = append(handlerOpts, edgeview.WithMetricsCollector(metricsCollector))
+	}
+
+	viewHandler := edgeview.NewHTTPHandler(viewSvc, log.Logger, "", handlerOpts...)
 	router.Mount("/", viewHandler.Router())
 
 	srv := &http.Server{
