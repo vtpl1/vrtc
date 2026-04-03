@@ -429,9 +429,15 @@ func (h *HTTPHandler) humaGetTimeline(
 		return nil, huma.Error400BadRequest(err.Error())
 	}
 
+	queryStart := time.Now()
+
 	entries, tErr := h.svc.Timeline(ctx, input.CameraID, start, end)
 	if tErr != nil {
 		return nil, huma.Error500InternalServerError(tErr.Error())
+	}
+
+	if h.collector != nil {
+		h.collector.RecordTimelineQuery(time.Since(queryStart), input.CameraID)
 	}
 
 	result := make([]timelineSummary, len(entries))
@@ -456,9 +462,15 @@ func (h *HTTPHandler) humaRecordingTimeline(
 		return nil, huma.Error400BadRequest(err.Error())
 	}
 
+	queryStart := time.Now()
+
 	entries, tErr := h.svc.Timeline(ctx, input.CameraID, start, end)
 	if tErr != nil {
 		return nil, huma.Error500InternalServerError(tErr.Error())
+	}
+
+	if h.collector != nil {
+		h.collector.RecordTimelineQuery(time.Since(queryStart), input.CameraID)
 	}
 
 	result := make([]TimelineEntry, 0, len(entries))
@@ -705,11 +717,9 @@ func (h *HTTPHandler) playback(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	factory := h.svc.RecordedDemuxerFactory(cameraID, start, end)
-
 	ctx := r.Context()
 
-	playSM := relayhub.New(factory, nil)
+	playSM := relayhub.New(h.svc.RecordedDemuxerFactory(cameraID, start, end), nil)
 	if err := playSM.Start(ctx); err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 
@@ -720,7 +730,6 @@ func (h *HTTPHandler) playback(w http.ResponseWriter, r *http.Request) {
 
 	w.Header().Set("Content-Type", "video/mp4")
 	w.Header().Set("Cache-Control", "no-cache")
-
 	flusher, _ := w.(http.Flusher)
 	done := make(chan struct{})
 	muxerFactory := av.MuxerFactory(func(_ context.Context, _ string) (av.MuxCloser, error) {
@@ -731,6 +740,7 @@ func (h *HTTPHandler) playback(w http.ResponseWriter, r *http.Request) {
 	})
 
 	errCh := make(chan error, 1)
+	consumeStart := time.Now()
 
 	handle, err := playSM.Consume(ctx, cameraID, av.ConsumeOptions{
 		MuxerFactory: muxerFactory,
@@ -740,6 +750,10 @@ func (h *HTTPHandler) playback(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, err.Error(), http.StatusNotFound)
 
 		return
+	}
+
+	if h.collector != nil {
+		h.collector.RecordPlaybackStartup(time.Since(consumeStart), cameraID)
 	}
 
 	defer func() { _ = handle.Close(ctx) }()

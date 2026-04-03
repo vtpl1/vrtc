@@ -30,7 +30,7 @@ func main() {
 	root.PersistentFlags().
 		BoolVar(&flagOutputJSON, "json", false, "Output as JSON instead of table")
 
-	root.AddCommand(streamCmd(), burstCmd(), apiCmd(), recordingCmd())
+	root.AddCommand(streamCmd(), burstCmd(), apiCmd(), recordingCmd(), playbackCmd(), timelineCmd())
 
 	if err := root.Execute(); err != nil {
 		fmt.Fprintln(os.Stderr, err)

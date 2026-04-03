@@ -83,6 +83,31 @@ func (c *Collector) RecordAPIResponse(d time.Duration, method, path string, stat
 	_ = status // available for future per-status tracking
 }
 
+// RecordPlaybackStartup records the latency of a playback Consume() call.
+func (c *Collector) RecordPlaybackStartup(d time.Duration, cameraID string) {
+	c.store.RecordLatency(MetricPlaybackStartupMs, d, map[string]string{"camera_id": cameraID})
+}
+
+// RecordTimelineQuery records the latency of a timeline/recordings query.
+func (c *Collector) RecordTimelineQuery(d time.Duration, cameraID string) {
+	c.store.RecordLatency(MetricTimelineQueryMs, d, map[string]string{"camera_id": cameraID})
+}
+
+// RecordSegmentOpen records the latency of opening a single fMP4 segment file.
+func (c *Collector) RecordSegmentOpen(d time.Duration, path string) {
+	c.store.RecordLatency(MetricSegmentOpenMs, d, map[string]string{"path": path})
+}
+
+// RecordRecToLiveTransition records the latency of switching from disk to live buffer.
+func (c *Collector) RecordRecToLiveTransition(d time.Duration, cameraID string) {
+	c.store.RecordLatency(MetricRecToLiveTransMs, d, map[string]string{"camera_id": cameraID})
+}
+
+// RecordSeekLatency records the latency of a seek operation.
+func (c *Collector) RecordSeekLatency(d time.Duration, cameraID string) {
+	c.store.RecordLatency(MetricSeekLatencyMs, d, map[string]string{"camera_id": cameraID})
+}
+
 // RecordFragmentGap records a DTS discontinuity at a fragment boundary.
 func (c *Collector) RecordFragmentGap(d time.Duration, cameraID string) {
 	c.store.RecordLatency(MetricFragmentGapMs, d, map[string]string{"camera_id": cameraID})
