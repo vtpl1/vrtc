@@ -90,6 +90,27 @@ func (f *fakeIndex) LastAvailable(_ context.Context, channelID string) (recorder
 	return result, nil
 }
 
+func (f *fakeIndex) QueryAllChannels(
+	_ context.Context,
+	from, to time.Time,
+) ([]recorder.RecordingEntry, error) {
+	var out []recorder.RecordingEntry
+
+	for _, e := range f.entries {
+		if !from.IsZero() && e.EndTime.Before(from) {
+			continue
+		}
+
+		if !to.IsZero() && e.StartTime.After(to) {
+			continue
+		}
+
+		out = append(out, e)
+	}
+
+	return out, nil
+}
+
 func (f *fakeIndex) Delete(_ context.Context, _ string) error { return nil }
 
 func (f *fakeIndex) SealInterrupted(_ context.Context) error { return nil }

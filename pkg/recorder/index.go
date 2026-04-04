@@ -91,6 +91,11 @@ type RecordingIndex interface {
 	// for removing the file from disk before calling Delete.
 	Delete(ctx context.Context, id string) error
 
+	// QueryAllChannels returns entries across every known channel, optionally
+	// filtered by time range. A zero from or to means no lower/upper bound.
+	// Used for cross-channel metrics aggregation.
+	QueryAllChannels(ctx context.Context, from, to time.Time) ([]RecordingEntry, error)
+
 	// SealInterrupted finds every entry whose last-known status is
 	// StatusRecording and appends a StatusInterrupted entry for it. Call once
 	// on startup before starting any new recordings.

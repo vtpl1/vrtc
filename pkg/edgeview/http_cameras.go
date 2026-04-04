@@ -159,6 +159,7 @@ func (h *HTTPHandler) registerCameraOps(api huma.API) {
 // csvHeader returns the column order for channel CSV import/export.
 func csvHeader() []string {
 	return []string{
+		"id",
 		"name",
 		"ip_address",
 		"manufacturer",
@@ -228,10 +229,12 @@ func (h *HTTPHandler) importCSV(w http.ResponseWriter, r *http.Request) {
 	}
 
 	colIdx := buildColumnIndex(header)
-	if colIdx["name"] < 0 || colIdx["rtsp_main"] < 0 {
+	hasID := colIdx["id"] >= 0 || colIdx["name"] >= 0
+
+	if !hasID || colIdx["rtsp_main"] < 0 {
 		http.Error(
 			w,
-			"CSV must have at least 'name' and 'rtsp_main' columns",
+			"CSV must have at least 'id' (or 'name') and 'rtsp_main' columns",
 			http.StatusBadRequest,
 		)
 
@@ -293,6 +296,7 @@ func (h *HTTPHandler) saveCSVRecords(
 func channelToRecord(ch channel.Channel) []string {
 	return []string{
 		ch.ID,
+		ch.Name,
 		ch.Extra["ip_address"],
 		ch.Extra["manufacturer"],
 		ch.Extra["model"],
@@ -305,7 +309,7 @@ func channelToRecord(ch channel.Channel) []string {
 
 func buildColumnIndex(header []string) map[string]int {
 	idx := map[string]int{
-		"name": -1, "ip_address": -1, "manufacturer": -1, "model": -1,
+		"id": -1, "name": -1, "ip_address": -1, "manufacturer": -1, "model": -1,
 		"username": -1, "password": -1, "rtsp_main": -1, "rtsp_sub": -1,
 	}
 
@@ -347,8 +351,13 @@ func recordToChannel(record []string, colIdx map[string]int) channel.Channel {
 		extra["rtsp_sub"] = v
 	}
 
+	id := get("id")
+	if id == "" {
+		id = get("name") // backward compat: old CSVs without "id" column
+	}
+
 	return channel.Channel{
-		ID:        get("name"),
+		ID:        id,
 		Name:      get("name"),
 		StreamURL: get("rtsp_main"),
 		Username:  get("username"),

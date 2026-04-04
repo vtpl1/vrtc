@@ -122,6 +122,44 @@ func (idx *sqliteIndex) QueryByChannel(
 	return results, nil
 }
 
+func (idx *sqliteIndex) QueryAllChannels(
+	ctx context.Context,
+	from, to time.Time,
+) ([]RecordingEntry, error) {
+	dirs, err := os.ReadDir(idx.baseDir)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return nil, nil
+		}
+
+		return nil, fmt.Errorf("recorder sqlite: scan base dir: %w", err)
+	}
+
+	var all []RecordingEntry
+
+	for _, d := range dirs {
+		if !d.IsDir() {
+			continue
+		}
+
+		channelID := d.Name()
+
+		dbPath := filepath.Join(idx.baseDir, channelID, "index.db")
+		if _, serr := os.Stat(dbPath); serr != nil {
+			continue
+		}
+
+		entries, qerr := idx.QueryByChannel(ctx, channelID, from, to)
+		if qerr != nil {
+			return nil, fmt.Errorf("recorder sqlite: query all channel %q: %w", channelID, qerr)
+		}
+
+		all = append(all, entries...)
+	}
+
+	return all, nil
+}
+
 func scanRecordingRow(rows *sql.Rows, channelID string) (RecordingEntry, error) {
 	var (
 		e                       RecordingEntry

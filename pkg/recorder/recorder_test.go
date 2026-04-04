@@ -148,6 +148,19 @@ func (idx *fakeIndex) LastAvailable(_ context.Context, _ string) (recorder.Recor
 	return recorder.RecordingEntry{}, recorder.ErrNoRecordings
 }
 
+func (idx *fakeIndex) QueryAllChannels(
+	_ context.Context,
+	_, _ time.Time,
+) ([]recorder.RecordingEntry, error) {
+	idx.mu.Lock()
+	defer idx.mu.Unlock()
+
+	out := make([]recorder.RecordingEntry, len(idx.entries))
+	copy(out, idx.entries)
+
+	return out, nil
+}
+
 func (idx *fakeIndex) Delete(_ context.Context, _ string) error { return nil }
 
 func (idx *fakeIndex) SealInterrupted(_ context.Context) error { return nil }

@@ -209,8 +209,8 @@ func (rm *RecordingManager) Metrics(ctx context.Context) Metrics {
 	lastRet := rm.lastRetention
 	rm.mu.Unlock()
 
-	// Query index for all channels' stats.
-	allEntries, _ := rm.index.QueryByChannel(ctx, "", time.Time{}, time.Time{})
+	// Query index across all channels for stats.
+	allEntries, _ := rm.index.QueryAllChannels(ctx, time.Time{}, time.Time{})
 
 	perChannel, totalSize := buildPerChannelStats(allEntries, activeChannels, ringBufSizes)
 
@@ -402,10 +402,14 @@ func (rm *RecordingManager) hasRetentionPolicy(s schedule.Schedule) bool {
 //
 
 func (rm *RecordingManager) makeOnCloseCallback(
-	consumerID string,
 	s schedule.Schedule,
 ) func(segment.SegmentCloseInfo) {
 	return func(info segment.SegmentCloseInfo) {
+		// Derive a unique entry ID from the segment's actual start time so that
+		// size-based rotations (which reuse the same consumer) each get their
+		// own index row instead of overwriting earlier segments via INSERT OR REPLACE.
+		entryID := fmt.Sprintf("recorder-%s-%s", s.ID, info.Start.UTC().Format("20060102T150405.000Z"))
+
 		// Rename to final path: HHmmss.fmp4 → HHmmss_HHmmss.fmp4
 		finalPath := SegmentPathFinal(s.StoragePath, s.ChannelID, info.Start, info.End)
 
@@ -419,7 +423,7 @@ func (rm *RecordingManager) makeOnCloseCallback(
 		}
 
 		entry := RecordingEntry{
-			ID:         consumerID,
+			ID:         entryID,
 			ChannelID:  s.ChannelID,
 			StartTime:  info.Start,
 			EndTime:    info.End,
@@ -467,28 +471,13 @@ func segmentPreallocBytes(s schedule.Schedule) int64 {
 	return 0
 }
 
-// registerActiveSegment inserts the "recording" status entry into the index
-// and adds the segment to the active map.
+// registerActiveSegment adds the segment to the active map.
 func (rm *RecordingManager) registerActiveSegment(
-	ctx context.Context,
 	s schedule.Schedule,
-	consumerID, path string,
 	now time.Time,
 	handle av.ConsumerHandle,
 	muxerRef *segment.SegmentMuxer,
 ) {
-	startEntry := RecordingEntry{
-		ID:        consumerID,
-		ChannelID: s.ChannelID,
-		StartTime: now,
-		FilePath:  path,
-		Status:    StatusRecording,
-	}
-
-	if iErr := rm.index.Insert(ctx, startEntry); iErr != nil {
-		log.Error().Err(iErr).Msg("recorder: index insert recording")
-	}
-
 	rm.mu.Lock()
 	rm.active[s.ID] = &activeRec{
 		sched:     s,
@@ -501,7 +490,6 @@ func (rm *RecordingManager) registerActiveSegment(
 
 //nolint:funlen // segment start wiring cannot be split cleanly
 func (rm *RecordingManager) startSegment(ctx context.Context, s schedule.Schedule, now time.Time) {
-	path := SegmentPath(s.StoragePath, s.ChannelID, now)
 	consumerID := fmt.Sprintf("recorder-%s-%s", s.ID, now.Format("20060102T150405Z"))
 
 	profile := segment.StorageProfile(s.StorageProfile)
@@ -513,7 +501,7 @@ func (rm *RecordingManager) startSegment(ctx context.Context, s schedule.Schedul
 
 	var muxerRef *segment.SegmentMuxer
 
-	onClose := rm.makeOnCloseCallback(consumerID, s)
+	onClose := rm.makeOnCloseCallback(s)
 	preallocBytes := segmentPreallocBytes(s)
 
 	maxBytes := int64(0)
@@ -522,9 +510,12 @@ func (rm *RecordingManager) startSegment(ctx context.Context, s schedule.Schedul
 	}
 
 	muxerFactory := av.MuxerFactory(func(_ context.Context, _ string) (av.MuxCloser, error) {
+		segStart := time.Now().UTC()
+		segPath := SegmentPath(s.StoragePath, s.ChannelID, segStart)
+
 		mux, err := segment.NewSegmentMuxer(
-			path,
-			now,
+			segPath,
+			segStart,
 			profile,
 			maxBytes,
 			preallocBytes,
@@ -536,6 +527,20 @@ func (rm *RecordingManager) startSegment(ctx context.Context, s schedule.Schedul
 		}
 
 		muxerRef = mux
+
+		// Per-segment recording marker for crash recovery. Uses the same ID
+		// format as onClose so that INSERT OR REPLACE overwrites this entry
+		// when the segment completes normally.
+		segEntryID := fmt.Sprintf("recorder-%s-%s", s.ID, segStart.Format("20060102T150405.000Z"))
+		if iErr := rm.index.Insert(context.Background(), RecordingEntry{
+			ID:        segEntryID,
+			ChannelID: s.ChannelID,
+			StartTime: segStart,
+			FilePath:  segPath,
+			Status:    StatusRecording,
+		}); iErr != nil {
+			log.Error().Err(iErr).Msg("recorder: index insert recording")
+		}
 
 		return mux, nil
 	})
@@ -576,10 +581,9 @@ func (rm *RecordingManager) startSegment(ctx context.Context, s schedule.Schedul
 		Str("schedule", s.ID).
 		Str("channel", s.ChannelID).
 		Str("consumer", consumerID).
-		Str("path", path).
 		Msg("recorder: recording started")
 
-	rm.registerActiveSegment(ctx, s, consumerID, path, now, handle, muxerRef)
+	rm.registerActiveSegment(s, now, handle, muxerRef)
 
 	// Listen for async muxer errors (e.g. file creation failure, disk full).
 	// Select on ctx.Done() so this goroutine exits when the segment is closed

@@ -8,8 +8,8 @@ spec first, then implement.
 
 | Document | Covers |
 |----------|--------|
-| [`av-packet-spec.md`](av-packet-spec.md) | `av.Packet` in-memory struct: all field contracts, Data format (AVCC), Duration derivation, NewCodecs semantics |
-| [`mse-websocket-api.md`](mse-websocket-api.md) | WebSocket-based MSE streaming API: endpoint, command protocol, frame types, browser consumption guide |
+| [`seek-protocol.md`](seek-protocol.md) | Unified WebSocket streaming & seek protocol: endpoint, commands, server messages, client implementation guide |
+| [`kpi-targets.md`](kpi-targets.md) | Performance targets for streaming, recording, playback, scalability, and system health |
 
 ## Key invariants (quick reference)
 

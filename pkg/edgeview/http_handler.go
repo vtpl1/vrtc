@@ -626,7 +626,7 @@ func (h *HTTPHandler) httpStream(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	start, _, err := parsePlaybackRange(r)
+	start, err := parsePlaybackStart(r)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusBadRequest)
 
@@ -746,36 +746,21 @@ func (h *HTTPHandler) httpStreamRecorded(
 
 // ── Time parsing ────────────────────────────────────────────────────────────
 
-// parsePlaybackRange extracts start/end query params for playback.
-// If end is omitted, follow mode is enabled by returning a zero end time.
-func parsePlaybackRange(r *http.Request) (time.Time, time.Time, error) {
-	now := time.Now().UTC()
-	start := now.Add(-24 * time.Hour)
-
-	if s := r.URL.Query().Get("start"); s != "" {
-		t, err := time.Parse(time.RFC3339, s)
-		if err != nil {
-			return time.Time{}, time.Time{}, errInvalidStartRFC3339
-		}
-
-		start = t
+// parsePlaybackStart extracts the optional start query param for playback.
+// A zero time means live mode; a non-zero time starts recorded playback in
+// follow mode (matching the WebSocket endpoint behaviour).
+func parsePlaybackStart(r *http.Request) (time.Time, error) {
+	s := r.URL.Query().Get("start")
+	if s == "" {
+		return time.Time{}, nil
 	}
 
-	endStr := r.URL.Query().Get("end")
-	if endStr == "" {
-		return start, time.Time{}, nil
-	}
-
-	end, err := time.Parse(time.RFC3339, endStr)
+	t, err := time.Parse(time.RFC3339, s)
 	if err != nil {
-		return time.Time{}, time.Time{}, errInvalidEndRFC3339
+		return time.Time{}, errInvalidStartRFC3339
 	}
 
-	if end.Before(start) {
-		return time.Time{}, time.Time{}, errInvalidTimeRange
-	}
-
-	return start, end, nil
+	return t, nil
 }
 
 // parseOptionalTimeRange parses optional RFC3339 start/end strings, defaulting to last 24h.
