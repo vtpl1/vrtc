@@ -20,7 +20,7 @@ func playbackCmd() *cobra.Command {
 
 	cmd := &cobra.Command{
 		Use:   "playback",
-		Short: "Simulate concurrent playback clients on /api/cameras/{id}/playback",
+		Short: "Simulate concurrent playback clients on /api/cameras/{id}/stream?start=...",
 		RunE: func(_ *cobra.Command, _ []string) error {
 			if cameraID == "" {
 				return errors.New("--camera-id is required")
@@ -40,7 +40,7 @@ func runPlaybackTest(cameraID string, lookback time.Duration) error {
 	now := time.Now().UTC()
 	start := now.Add(-lookback)
 
-	url := fmt.Sprintf("%s/api/cameras/%s/playback?start=%s&end=%s",
+	url := fmt.Sprintf("%s/api/cameras/%s/stream?start=%s&end=%s",
 		flagTarget, cameraID,
 		start.Format(time.RFC3339),
 		now.Format(time.RFC3339),

@@ -14,7 +14,6 @@ import (
 	"github.com/vtpl1/vrtc-sdk/av/format/llhls"
 	"github.com/vtpl1/vrtc-sdk/av/relayhub"
 	"github.com/vtpl1/vrtc/internal/avgrabber"
-	"github.com/vtpl1/vrtc/internal/httprouter"
 	"github.com/vtpl1/vrtc/pkg/edgeview"
 	"github.com/vtpl1/vrtc/pkg/lifecycle"
 	"github.com/vtpl1/vrtc/pkg/pva"
@@ -357,11 +356,6 @@ func Run(appName, appMode string, cfg Config) error {
 		})
 	}
 
-	// WebSocket MSE endpoint — same protocol as the cloud node.
-	mux.HandleFunc("/v3/api/ws", func(w http.ResponseWriter, r *http.Request) {
-		httprouter.WSHandler(ctx, w, r, sm)
-	})
-
 	// GET /hls/<consumerID>/index.m3u8   → playlist  (auto-creates consumer)
 	// GET /hls/<consumerID>/init.mp4     → init segment
 	// GET /hls/<consumerID>/part*.mp4    → LL-HLS parts
@@ -424,8 +418,8 @@ func Run(appName, appMode string, cfg Config) error {
 	viewHandler := edgeview.NewHTTPHandler(viewSvc, log.Logger, "")
 	chiRouter := viewHandler.Router()
 
-	// Compose: ServeMux handles /v3/api/ws and /hls/; edgeview chi router
-	// handles /live/, /ws/live, /health, /api/cameras, etc. ServeMux returns
+	// Compose: ServeMux handles /hls/; edgeview chi router
+	// handles /health, /api/cameras, and unified streaming endpoints. ServeMux returns
 	// 404 for unmatched patterns, so we wrap with a fallback.
 	httpHandler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		rec := &statusRecorder{ResponseWriter: w, status: http.StatusOK}

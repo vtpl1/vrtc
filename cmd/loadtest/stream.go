@@ -17,7 +17,7 @@ func streamCmd() *cobra.Command {
 
 	cmd := &cobra.Command{
 		Use:   "stream",
-		Short: "Simulate parallel streaming clients on /api/cameras/{id}/live",
+		Short: "Simulate parallel streaming clients on /api/cameras/{id}/stream",
 		RunE: func(_ *cobra.Command, _ []string) error {
 			if cameraID == "" {
 				return errors.New("--camera-id is required")
@@ -33,7 +33,7 @@ func streamCmd() *cobra.Command {
 }
 
 func runStreamTest(cameraID string) error {
-	url := fmt.Sprintf("%s/api/cameras/%s/live", flagTarget, cameraID)
+	url := fmt.Sprintf("%s/api/cameras/%s/stream", flagTarget, cameraID)
 	ctx, cancel := context.WithTimeout(context.Background(), flagDuration)
 
 	defer cancel()

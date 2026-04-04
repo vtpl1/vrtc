@@ -39,7 +39,7 @@ func burstCmd() *cobra.Command {
 }
 
 func runBurstTest(cameraID string, cycles int, pause time.Duration) error {
-	url := fmt.Sprintf("%s/api/cameras/%s/live", flagTarget, cameraID)
+	url := fmt.Sprintf("%s/api/cameras/%s/stream", flagTarget, cameraID)
 
 	var (
 		wg         sync.WaitGroup

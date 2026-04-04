@@ -504,10 +504,11 @@ function appendNext() {
 
 ## Timeline API
 
-To render a recording availability bar, use the timeline REST endpoint:
+To render a recording availability bar, use one of the current camera REST endpoints:
 
 ```
-GET /api/recording/timeline?camera_id=<id>&start=<RFC3339>&end=<RFC3339>
+GET /api/cameras/{camera_id}/timeline?start=<RFC3339>&end=<RFC3339>
+GET /api/cameras/{camera_id}/recordings?start=<RFC3339>&end=<RFC3339>
 ```
 
 Returns an array of recording entries:

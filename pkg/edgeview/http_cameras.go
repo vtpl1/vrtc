@@ -351,13 +351,8 @@ func recordToChannel(record []string, colIdx map[string]int) channel.Channel {
 		extra["rtsp_sub"] = v
 	}
 
-	id := get("id")
-	if id == "" {
-		id = get("name") // backward compat: old CSVs without "id" column
-	}
-
 	return channel.Channel{
-		ID:        id,
+		ID:        get("id"),
 		Name:      get("name"),
 		StreamURL: get("rtsp_main"),
 		Username:  get("username"),

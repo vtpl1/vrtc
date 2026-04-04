@@ -13,7 +13,7 @@ import (
 	"github.com/soheilhy/cmux"
 	"github.com/vtpl1/vrtc-sdk/av"
 	"github.com/vtpl1/vrtc-sdk/av/relayhub"
-	"github.com/vtpl1/vrtc/internal/httprouter"
+	"github.com/vtpl1/vrtc/pkg/edgeview"
 	"github.com/vtpl1/vrtc/pkg/lifecycle"
 )
 
@@ -61,8 +61,11 @@ func Run(appName, appMode string, cfg Config) error {
 		return err
 	}
 
+	viewSvc := edgeview.NewService(log.Logger, sm, nil, nil)
+	viewHandler := edgeview.NewHTTPHandler(viewSvc, log.Logger, "")
+
 	httpServer := &http.Server{
-		Handler:           httprouter.NewRouter(ctx, sm),
+		Handler:           viewHandler.Router(),
 		ReadHeaderTimeout: 5 * time.Second,
 	}
 

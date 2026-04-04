@@ -131,14 +131,7 @@ func (h *HTTPHandler) Router() http.Handler {
 
 	// ── Streaming endpoints (raw chi — not auto-documentable) ───────────
 	r.Get("/api/cameras/{camera_id}/stream", h.httpStream)
-	// Backward-compatible aliases for the old split endpoints.
-	r.Get("/api/cameras/{camera_id}/live", h.httpStream)
-	r.Get("/api/cameras/{camera_id}/playback", h.httpStream)
-	r.Get("/api/cameras/{camera_id}/recorded", h.httpStream)
 	r.HandleFunc("/api/cameras/ws/stream", h.wsStream)
-	// Backward-compatible aliases for the old split endpoints.
-	r.HandleFunc("/api/cameras/ws/live", h.wsStream)
-	r.HandleFunc("/api/cameras/ws/recorded", h.wsStream)
 
 	return r
 }
