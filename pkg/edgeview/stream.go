@@ -371,9 +371,71 @@ const (
 	gapThreshold = 5 * time.Second
 )
 
+// Compile-time interface checks.
+var (
+	_ chain.GapDetector           = (*indexSource)(nil)
+	_ chain.SeekableSegmentSource = (*indexSource)(nil)
+)
+
 // LastGap returns the wall-clock gap detected at the last segment transition.
 // Returns zero when there is no significant gap. Implements chain.GapDetector.
 func (s *indexSource) LastGap() time.Duration { return s.lastGap }
+
+// OpenAt implements chain.SeekableSegmentSource. It finds and opens the segment
+// containing the given wall-clock timestamp, and resets the iteration cursor so
+// that subsequent Next calls continue from the segment after it.
+// Returns io.EOF if no segment covers the timestamp.
+func (s *indexSource) OpenAt(ctx context.Context, ts time.Time) (av.DemuxCloser, error) {
+	// Query for segments that overlap ts and onward. The SQL uses:
+	//   end_time >= ts (from bound) — ordered by start_time ASC.
+	// This finds the segment containing ts, or the next segment after a gap.
+	entries, err := s.recIndex.QueryByChannel(ctx, s.channelID, ts, time.Time{})
+	if err != nil {
+		return nil, fmt.Errorf("openat query: %w", err)
+	}
+
+	if len(entries) == 0 {
+		return nil, io.EOF
+	}
+
+	// Try to open the first available segment, skipping those deleted by retention.
+	for i, entry := range entries {
+		dmx, oerr := openFMP4File(entry.FilePath)
+		if oerr != nil {
+			if os.IsNotExist(oerr) {
+				continue
+			}
+
+			return nil, oerr
+		}
+
+		// Reset the iteration cursor so Next() continues from after this segment.
+		seenIDs := make(map[string]struct{}, len(entries))
+		for _, e := range entries {
+			seenIDs[e.ID] = struct{}{}
+		}
+
+		// Also preserve any IDs already seen before the seek.
+		for id := range s.seenIDs {
+			seenIDs[id] = struct{}{}
+		}
+
+		s.entries = entries
+		s.idx = i + 1
+		s.seenIDs = seenIDs
+
+		// Update gap tracking.
+		s.lastGap = 0
+
+		if !entry.EndTime.IsZero() {
+			s.lastSegEnd = entry.EndTime
+		}
+
+		return dmx, nil
+	}
+
+	return nil, io.EOF
+}
 
 func (s *indexSource) Next(ctx context.Context) (av.DemuxCloser, error) {
 	for s.idx < len(s.entries) {

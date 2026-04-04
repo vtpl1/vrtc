@@ -23,9 +23,23 @@ var (
 
 // wsCommand is a JSON command from the WebSocket client.
 type wsCommand struct {
-	Type  string `json:"type"`
-	Value string `json:"value,omitempty"`
-	Time  string `json:"time,omitempty"` // RFC3339 timestamp for seek
+	Type   string  `json:"type"`
+	Value  string  `json:"value,omitempty"`
+	Time   string  `json:"time,omitempty"`   // RFC3339 timestamp for seek
+	Seq    int64   `json:"seq,omitempty"`    // monotonic counter for seek debouncing
+	Offset string  `json:"offset,omitempty"` // relative seek: "-30s", "60s", etc (Go duration)
+	Rate   float64 `json:"rate,omitempty"`   // playback speed (reserved for future use)
+}
+
+// seekedResponse is sent to the client after a seek completes.
+type seekedResponse struct {
+	Type         string `json:"type"`             // always "seeked"
+	Time         string `json:"time"`             // actual wall-clock time landed on (RFC3339)
+	Mode         string `json:"mode"`             // "recorded", "live", "first_available"
+	CodecChanged bool   `json:"codecChanged"`     // true if codecs differ from previous position
+	Codecs       string `json:"codecs,omitempty"` // new MIME codec string (only when codecChanged)
+	Gap          bool   `json:"gap,omitempty"`    // true if seek landed after a gap (snapped forward)
+	Seq          int64  `json:"seq"`              // echoed from request
 }
 
 // wsStream handles the unified /ws/stream WebSocket endpoint.
@@ -121,35 +135,16 @@ func (h *HTTPHandler) wsStream(w http.ResponseWriter, r *http.Request) {
 				case "resume":
 					session.resume(ctx)
 				case "seek":
-					seekTime, perr := time.Parse(time.RFC3339, cmd.Time)
-					if perr != nil {
-						_ = wsjson.Write(ctx, wsConn, map[string]string{
-							"type":  "error",
-							"error": "invalid seek time, expected RFC3339",
-						})
-
-						continue
-					}
-
-					session.stop(ctx)
-
-					if serr := session.start(ctx, seekTime); serr != nil {
+					if serr := session.handleSeek(ctx, cmd, errChan); serr != nil {
 						writeWSErrorResponse(ctx, wsConn, serr, "seek failed")
 
 						errChan <- serr
 
 						return
 					}
-
-					// Signal the client to reinitialise MSE before the new
-					// init segment arrives, preventing decode errors from
-					// stale codec state.
-					_ = wsjson.Write(ctx, wsConn, map[string]string{
-						"type": "reinit",
-					})
-
-					if serr := session.attachConsumer(ctx, errChan); serr != nil {
-						writeWSErrorResponse(ctx, wsConn, serr, "consume after seek failed")
+				case "skip":
+					if serr := session.handleSkip(ctx, cmd, errChan); serr != nil {
+						writeWSErrorResponse(ctx, wsConn, serr, "skip failed")
 
 						errChan <- serr
 
@@ -183,6 +178,12 @@ type streamSession struct {
 	liveMode   bool              // true when attached to the live hub
 	liveHandle av.ConsumerHandle // non-nil when in live mode
 	untrack    func()            // decrements viewer count; non-nil when live
+
+	// Seek state.
+	lastSeqSeen  int64     // highest seq received; used to discard stale seeks
+	lastSeekTime time.Time // wall-clock time of the last successful seek target
+	lastMode     string    // mode after last start/seek ("recorded", "live", "first_available")
+	lastCodecStr string    // MIME codec string after last start (for codec-change detection)
 }
 
 // start resolves the playback mode and prepares the session.
@@ -259,6 +260,8 @@ func (s *streamSession) startResolved(ctx context.Context, from time.Time) error
 	s.untrack = nil
 	s.ms = nil
 	s.consumer = nil
+	s.lastSeekTime = resolvedFrom
+	s.lastMode = mode
 	s.mu.Unlock()
 
 	return nil
@@ -436,6 +439,256 @@ func (s *streamSession) stop(ctx context.Context) {
 	if sm != nil {
 		_ = sm.Stop()
 	}
+}
+
+// handleSeek processes an absolute seek command. It stops the current session,
+// resolves the target time, starts a new session, and sends a seekedResponse.
+func (s *streamSession) handleSeek(ctx context.Context, cmd wsCommand, errChan chan<- error) error {
+	// Seq-based debounce: discard stale seeks.
+	s.mu.Lock()
+	if cmd.Seq > 0 && cmd.Seq <= s.lastSeqSeen {
+		s.mu.Unlock()
+
+		return nil // superseded by a newer seek
+	}
+
+	if cmd.Seq > 0 {
+		s.lastSeqSeen = cmd.Seq
+	}
+
+	prevCodecStr := s.lastCodecStr
+	s.mu.Unlock()
+
+	// Special value "now" means switch to live.
+	if cmd.Time == "now" {
+		s.stop(ctx)
+
+		if err := s.startLive(ctx); err != nil {
+			return err
+		}
+
+		if err := s.attachConsumer(ctx, errChan); err != nil {
+			return err
+		}
+
+		_ = wsjson.Write(ctx, s.wsConn, seekedResponse{
+			Type:         "seeked",
+			Time:         time.Now().UTC().Format(time.RFC3339),
+			Mode:         PlaybackModeLive,
+			CodecChanged: false,
+			Seq:          cmd.Seq,
+		})
+
+		return nil
+	}
+
+	seekTime, perr := time.Parse(time.RFC3339, cmd.Time)
+	if perr != nil {
+		_ = wsjson.Write(ctx, s.wsConn, map[string]string{
+			"type":  "error",
+			"error": "invalid seek time, expected RFC3339 or \"now\"",
+		})
+
+		return nil //nolint:nilerr // not fatal — client can retry with valid time
+	}
+
+	return s.executeSeek(ctx, seekTime, cmd.Seq, prevCodecStr, errChan)
+}
+
+// handleSkip processes a relative seek command. It computes the absolute target
+// from the current position + offset, then delegates to executeSeek.
+func (s *streamSession) handleSkip(ctx context.Context, cmd wsCommand, errChan chan<- error) error {
+	offset, perr := time.ParseDuration(cmd.Offset)
+	if perr != nil {
+		_ = wsjson.Write(ctx, s.wsConn, map[string]string{
+			"type":  "error",
+			"error": "invalid offset, expected Go duration (e.g. \"-30s\", \"60s\")",
+		})
+
+		return nil //nolint:nilerr // not fatal — client can retry with valid offset
+	}
+
+	s.mu.Lock()
+	base := s.lastSeekTime
+	prevCodecStr := s.lastCodecStr
+
+	if cmd.Seq > 0 && cmd.Seq <= s.lastSeqSeen {
+		s.mu.Unlock()
+
+		return nil
+	}
+
+	if cmd.Seq > 0 {
+		s.lastSeqSeen = cmd.Seq
+	}
+	s.mu.Unlock()
+
+	if base.IsZero() {
+		base = time.Now()
+	}
+
+	target := base.Add(offset)
+
+	return s.executeSeek(ctx, target, cmd.Seq, prevCodecStr, errChan)
+}
+
+// executeSeek performs the stop → resolve → start → attach cycle for a seek
+// and sends the appropriate seekedResponse to the client.
+func (s *streamSession) executeSeek(
+	ctx context.Context,
+	seekTime time.Time,
+	seq int64,
+	prevCodecStr string,
+	errChan chan<- error,
+) error {
+	s.stop(ctx)
+
+	resolvedFrom, mode, gap, err := s.resolveAndStartSeek(ctx, seekTime)
+	if err != nil {
+		return err
+	}
+
+	// Check for stale seq before the expensive attach step.
+	s.mu.Lock()
+	if seq > 0 && seq < s.lastSeqSeen {
+		s.mu.Unlock()
+		s.stop(ctx)
+
+		return nil
+	}
+	s.mu.Unlock()
+
+	if err := s.attachConsumer(ctx, errChan); err != nil {
+		return err
+	}
+
+	// Determine if codecs changed and send the response.
+	newCodecStr := s.captureCodecStr()
+	codecChanged := prevCodecStr != "" && newCodecStr != "" && prevCodecStr != newCodecStr
+
+	s.sendSeekedResponse(ctx, resolvedFrom, mode, gap, codecChanged, newCodecStr, seq)
+
+	// Update seek state.
+	s.mu.Lock()
+
+	actualTime := resolvedFrom
+	if mode == PlaybackModeLive {
+		actualTime = time.Now()
+	}
+
+	s.lastSeekTime = actualTime
+	s.lastMode = mode
+	s.lastCodecStr = newCodecStr
+	s.mu.Unlock()
+
+	return nil
+}
+
+// resolveAndStartSeek resolves the playback mode for the given time, starts
+// the appropriate session, and returns the resolved time, mode, and gap flag.
+func (s *streamSession) resolveAndStartSeek(
+	ctx context.Context,
+	seekTime time.Time,
+) (resolvedFrom time.Time, mode string, gap bool, err error) {
+	resolvedFrom, mode, rerr := s.handler.svc.ResolvePlaybackStart(
+		ctx, s.cameraID, seekTime, time.Time{},
+	)
+	if rerr != nil {
+		if seekTime.After(time.Now()) {
+			mode = PlaybackModeLive
+		} else {
+			return time.Time{}, "", false, rerr
+		}
+	}
+
+	switch mode {
+	case PlaybackModeLive:
+		if err := s.startLive(ctx); err != nil {
+			return time.Time{}, "", false, err
+		}
+	case PlaybackModeFirstAvailable:
+		gap = true
+
+		if err := s.startRecordedAt(ctx, resolvedFrom); err != nil {
+			return time.Time{}, "", false, err
+		}
+	case PlaybackModeRecorded:
+		if resolvedFrom.Sub(seekTime) >= gapThreshold {
+			gap = true
+		}
+
+		if err := s.startRecordedAt(ctx, resolvedFrom); err != nil {
+			return time.Time{}, "", false, err
+		}
+	}
+
+	return resolvedFrom, mode, gap, nil
+}
+
+// sendSeekedResponse writes the seeked JSON response to the WebSocket.
+func (s *streamSession) sendSeekedResponse(
+	ctx context.Context,
+	resolvedFrom time.Time,
+	mode string,
+	gap, codecChanged bool,
+	newCodecStr string,
+	seq int64,
+) {
+	actualTime := resolvedFrom
+	if mode == PlaybackModeLive {
+		actualTime = time.Now()
+	}
+
+	resp := seekedResponse{
+		Type:         "seeked",
+		Time:         actualTime.UTC().Format(time.RFC3339),
+		Mode:         mode,
+		CodecChanged: codecChanged,
+		Gap:          gap,
+		Seq:          seq,
+	}
+
+	if codecChanged {
+		resp.Codecs = newCodecStr
+	}
+
+	_ = wsjson.Write(ctx, s.wsConn, resp)
+}
+
+// startRecordedAt creates a recorded playback session starting at the given time.
+// Unlike startResolved, this skips the resolution step (caller already resolved).
+func (s *streamSession) startRecordedAt(ctx context.Context, from time.Time) error {
+	factory := s.handler.svc.RecordedDemuxerFactory(s.cameraID, from, time.Time{})
+	sm := relayhub.New(factory, nil, relayhub.WithMaxConsumers(1))
+
+	if err := sm.Start(ctx); err != nil {
+		return fmt.Errorf("start playback: %w", err)
+	}
+
+	s.mu.Lock()
+	s.playSM = sm
+	s.liveMode = false
+	s.liveHandle = nil
+	s.untrack = nil
+	s.ms = nil
+	s.consumer = nil
+	s.mu.Unlock()
+
+	return nil
+}
+
+// captureCodecStr returns the current MIME codec string from the MSE writer,
+// or empty string if not yet available.
+func (s *streamSession) captureCodecStr() string {
+	s.mu.Lock()
+	ms := s.ms
+	s.mu.Unlock()
+
+	if ms == nil {
+		return ""
+	}
+
+	return ms.CodecString()
 }
 
 // ── Shared helpers ──────────────────────────────────────────────────────────
