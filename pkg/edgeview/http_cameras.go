@@ -229,12 +229,10 @@ func (h *HTTPHandler) importCSV(w http.ResponseWriter, r *http.Request) {
 	}
 
 	colIdx := buildColumnIndex(header)
-	hasID := colIdx["id"] >= 0 || colIdx["name"] >= 0
-
-	if !hasID || colIdx["rtsp_main"] < 0 {
+	if colIdx["id"] < 0 || colIdx["rtsp_main"] < 0 {
 		http.Error(
 			w,
-			"CSV must have at least 'id' (or 'name') and 'rtsp_main' columns",
+			"CSV must have at least 'id' and 'rtsp_main' columns",
 			http.StatusBadRequest,
 		)
 

@@ -408,7 +408,11 @@ func (rm *RecordingManager) makeOnCloseCallback(
 		// Derive a unique entry ID from the segment's actual start time so that
 		// size-based rotations (which reuse the same consumer) each get their
 		// own index row instead of overwriting earlier segments via INSERT OR REPLACE.
-		entryID := fmt.Sprintf("recorder-%s-%s", s.ID, info.Start.UTC().Format("20060102T150405.000Z"))
+		entryID := fmt.Sprintf(
+			"recorder-%s-%s",
+			s.ID,
+			info.Start.UTC().Format("20060102T150405.000Z"),
+		)
 
 		// Rename to final path: HHmmss.fmp4 → HHmmss_HHmmss.fmp4
 		finalPath := SegmentPathFinal(s.StoragePath, s.ChannelID, info.Start, info.End)
@@ -509,7 +513,7 @@ func (rm *RecordingManager) startSegment(ctx context.Context, s schedule.Schedul
 		maxBytes = int64(s.SegmentSizeMB) * 1024 * 1024
 	}
 
-	muxerFactory := av.MuxerFactory(func(_ context.Context, _ string) (av.MuxCloser, error) {
+	muxerFactory := av.MuxerFactory(func(muxCtx context.Context, _ string) (av.MuxCloser, error) {
 		segStart := time.Now().UTC()
 		segPath := SegmentPath(s.StoragePath, s.ChannelID, segStart)
 
@@ -532,7 +536,7 @@ func (rm *RecordingManager) startSegment(ctx context.Context, s schedule.Schedul
 		// format as onClose so that INSERT OR REPLACE overwrites this entry
 		// when the segment completes normally.
 		segEntryID := fmt.Sprintf("recorder-%s-%s", s.ID, segStart.Format("20060102T150405.000Z"))
-		if iErr := rm.index.Insert(context.Background(), RecordingEntry{
+		if iErr := rm.index.Insert(muxCtx, RecordingEntry{
 			ID:        segEntryID,
 			ChannelID: s.ChannelID,
 			StartTime: segStart,

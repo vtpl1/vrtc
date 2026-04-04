@@ -268,6 +268,8 @@ func (s *streamSession) startResolved(ctx context.Context, from time.Time) error
 }
 
 func (s *streamSession) attachConsumer(ctx context.Context, errChan chan<- error) error {
+	addStart := time.Now()
+
 	s.mu.Lock()
 	sm := s.playSM
 	live := s.liveMode
@@ -279,7 +281,15 @@ func (s *streamSession) attachConsumer(ctx context.Context, errChan chan<- error
 	}
 
 	if live {
-		return s.attachLiveConsumer(ctx, localMs, consumeOpts)
+		if lerr := s.attachLiveConsumer(ctx, localMs, consumeOpts); lerr != nil {
+			return lerr
+		}
+
+		if s.handler.collector != nil {
+			s.handler.collector.RecordConsumerAdd(time.Since(addStart), s.cameraID)
+		}
+
+		return nil
 	}
 
 	if sm == nil {
@@ -293,6 +303,10 @@ func (s *streamSession) attachConsumer(ctx context.Context, errChan chan<- error
 		_ = localMs.Close()
 
 		return cerr
+	}
+
+	if s.handler.collector != nil {
+		s.handler.collector.RecordConsumerAdd(time.Since(addStart), s.cameraID)
 	}
 
 	s.mu.Lock()
@@ -541,6 +555,8 @@ func (s *streamSession) executeSeek(
 	prevCodecStr string,
 	errChan chan<- error,
 ) error {
+	seekStart := time.Now()
+
 	s.stop(ctx)
 
 	resolvedFrom, mode, gap, err := s.resolveAndStartSeek(ctx, seekTime)
@@ -560,6 +576,10 @@ func (s *streamSession) executeSeek(
 
 	if err := s.attachConsumer(ctx, errChan); err != nil {
 		return err
+	}
+
+	if s.handler.collector != nil {
+		s.handler.collector.RecordSeekLatency(time.Since(seekStart), s.cameraID)
 	}
 
 	// Determine if codecs changed and send the response.

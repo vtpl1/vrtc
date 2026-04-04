@@ -16,6 +16,7 @@ import (
 	"github.com/vtpl1/vrtc-sdk/av/packetbuf"
 	"github.com/vtpl1/vrtc-sdk/av/relayhub"
 	"github.com/vtpl1/vrtc/pkg/channel"
+	"github.com/vtpl1/vrtc/pkg/metrics"
 	"github.com/vtpl1/vrtc/pkg/recorder"
 )
 
@@ -42,13 +43,14 @@ type PacketBufferProvider interface {
 // fmp4/mse/chain packages. Live and recorded HTTP/WS handlers attach consumers
 // directly to the hub rather than maintaining per-viewer frame channels.
 type Service struct {
-	log      zerolog.Logger
-	hub      av.RelayHub
-	recIndex recorder.RecordingIndex // nil if no recording available
-	bufProv  PacketBufferProvider    // nil if no recording available
-	chanW    channel.ChannelWriter   // nil if no channel CRUD available
-	recProv  ActiveRecordingProvider // nil if no recording manager
-	cameras  map[string]*CameraInfo
+	log       zerolog.Logger
+	hub       av.RelayHub
+	recIndex  recorder.RecordingIndex // nil if no recording available
+	bufProv   PacketBufferProvider    // nil if no recording available
+	chanW     channel.ChannelWriter   // nil if no channel CRUD available
+	recProv   ActiveRecordingProvider // nil if no recording manager
+	collector *metrics.Collector      // nil if metrics not configured
+	cameras   map[string]*CameraInfo
 
 	mu sync.RWMutex
 
@@ -108,6 +110,11 @@ func WithChannelWriter(cw channel.ChannelWriter) ServiceOption {
 // WithRecordingProvider sets the provider for active recording status.
 func WithRecordingProvider(rp ActiveRecordingProvider) ServiceOption {
 	return func(s *Service) { s.recProv = rp }
+}
+
+// WithCollector enables KPI metrics collection on streaming paths.
+func WithCollector(c *metrics.Collector) ServiceOption {
+	return func(s *Service) { s.collector = c }
 }
 
 // Hub returns the underlying relay hub for direct consumer attachment.
@@ -337,6 +344,7 @@ func (s *Service) RecordedDemuxerFactory(channelID string, from, to time.Time) a
 			recIndex:  s.recIndex,
 			channelID: channelID,
 			bufProv:   s.bufProv, // resolved lazily in Next() when needed
+			collector: s.collector,
 		}
 
 		return chain.NewChainingDemuxer(first, src), nil
@@ -355,7 +363,8 @@ type indexSource struct {
 	channelID string
 	liveBuf   *packetbuf.Buffer // near-live tail; nil if not available
 	bufProv   PacketBufferProvider
-	usedBuf   bool // true once we've returned the buffer demuxer
+	collector *metrics.Collector // nil if metrics not configured
+	usedBuf   bool               // true once we've returned the buffer demuxer
 
 	// Gap detection: track the end time of the last segment so the
 	// ChainingDemuxer can set IsDiscontinuity on the first packet when
@@ -467,31 +476,54 @@ func (s *indexSource) Next(ctx context.Context) (av.DemuxCloser, error) {
 	// No new disk segments — transition to the packet buffer for near-live.
 	// Resolve lazily so that a camera that started recording after the
 	// factory was created is picked up.
-	if !s.usedBuf && s.bufProv != nil {
-		buf := s.bufProv.PacketBuffer(s.channelID)
-		if buf != nil {
-			s.liveBuf = buf
-			s.usedBuf = true
-
-			since := time.Now().Add(-30 * time.Second) // overlap generously
-			if len(s.entries) > 0 {
-				since = s.entries[len(s.entries)-1].EndTime
-			}
-
-			return s.liveBuf.Demuxer(since), nil
-		}
+	if dmx := s.tryLiveTransition(); dmx != nil {
+		return dmx, nil
 	}
 
 	// No buffer available — keep polling disk.
 	return s.waitForNext(ctx)
 }
 
+// tryLiveTransition attempts to transition from disk segments to the near-live
+// packet buffer. Returns the live demuxer, or nil if no transition occurred.
+func (s *indexSource) tryLiveTransition() av.DemuxCloser {
+	if s.usedBuf || s.bufProv == nil {
+		return nil
+	}
+
+	buf := s.bufProv.PacketBuffer(s.channelID)
+	if buf == nil {
+		return nil
+	}
+
+	transStart := time.Now()
+	s.liveBuf = buf
+	s.usedBuf = true
+
+	since := time.Now().Add(-30 * time.Second) // overlap generously
+	if len(s.entries) > 0 {
+		since = s.entries[len(s.entries)-1].EndTime
+	}
+
+	if s.collector != nil {
+		s.collector.RecordRecToLiveTransition(time.Since(transStart), s.channelID)
+	}
+
+	return s.liveBuf.Demuxer(since)
+}
+
 // openEntry opens a segment and updates gap tracking. Returns the demuxer or
 // an error. Returns os.IsNotExist-matchable error if the file was deleted.
 func (s *indexSource) openEntry(entry recorder.RecordingEntry) (av.DemuxCloser, error) {
+	openStart := time.Now()
+
 	dmx, err := openFMP4File(entry.FilePath)
 	if err != nil {
 		return nil, err
+	}
+
+	if s.collector != nil {
+		s.collector.RecordSegmentOpen(time.Since(openStart), entry.FilePath)
 	}
 
 	// Detect wall-clock gap between this segment and the previous one.
@@ -500,6 +532,10 @@ func (s *indexSource) openEntry(entry recorder.RecordingEntry) (av.DemuxCloser, 
 		gap := entry.StartTime.Sub(s.lastSegEnd)
 		if gap >= gapThreshold {
 			s.lastGap = gap
+
+			if s.collector != nil {
+				s.collector.RecordFragmentGap(gap, s.channelID)
+			}
 		}
 	}
 

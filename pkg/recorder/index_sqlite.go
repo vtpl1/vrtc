@@ -80,7 +80,7 @@ func (idx *sqliteIndex) QueryByChannel(
 
 	query := `SELECT id, start_time, end_time, file_path, size_bytes, status, has_motion, has_objects
 		FROM recordings
-		WHERE status NOT IN ('recording', 'deleted')`
+		WHERE status NOT IN ('recording', 'deleted', 'corrupted')`
 
 	var args []any
 
