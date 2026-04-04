@@ -2,7 +2,8 @@ package avgrabber
 
 /*
 #cgo CFLAGS:  -I${SRCDIR}
-#cgo LDFLAGS: -L${SRCDIR} -lAudioVideoGrabber2 -Wl,-rpath,${SRCDIR}
+#cgo windows LDFLAGS: -L${SRCDIR} -lAudioVideoGrabber2
+#cgo linux darwin freebsd LDFLAGS: -L${SRCDIR} -lAudioVideoGrabber2 -Wl,-rpath,${SRCDIR}
 
 #include "avgrabber_api.h"
 #include <stdlib.h>

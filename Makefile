@@ -68,7 +68,11 @@ define build_platform
 endef
 
 test:
+ifeq ($(HOST_OS),windows)
+	powershell -ExecutionPolicy Bypass -File ./scripts/go-cgo.ps1 test -race -count=1 ./...
+else
 	go test -race -count=1 ./...
+endif
 
 test-edge-cgo:
 ifeq ($(HOST_OS),windows)
