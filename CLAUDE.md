@@ -30,13 +30,12 @@ go test -race -count=1 -run TestName ./path/to/package/...
 
 ### Services (cmd/ → internal/)
 
-Three runnable binaries, each with a `cmd/<name>/main.go` entry point wired to an `internal/<name>/` implementation:
+Two runnable binaries, each with a `cmd/<name>/main.go` entry point wired to an `internal/<name>/` implementation:
 
 | Binary | Purpose |
 |--------|---------|
-| `edge` | Main streaming edge node; MySQL + MongoDB; YAML config |
+| `edge` | Edge streaming + recording node; MySQL/MongoDB/file providers; JSON config |
 | `cloud` | Cloud coordination node; gRPC-based; YAML config |
-| `liverecservice` | Live recording; MySQL; JSON config |
 
 Services load `.env` via `godotenv`, then read their config via `pkg/configpath`.
 
@@ -81,7 +80,7 @@ Browser-facing HTTP/WebSocket server for live view and recorded playback. Key fi
 |------|---------|
 | `stream.go` | `Service` struct, `ResolvePlaybackStart`, `RecordedDemuxerFactory`, `indexSource` |
 | `ws_stream.go` | Unified `/ws/stream` WebSocket endpoint (live + recorded + seek) |
-| `http_handler.go` | HTTP routes, unified `/api/cameras/{camera_id}/stream` endpoint, Huma OpenAPI |
+| `http_handler.go` | HTTP routes, unified `/api/cameras/{cameraId}/stream` endpoint, Huma OpenAPI |
 | `http_cameras.go` | Camera CRUD + CSV import/export |
 | `timeline.go` | Recording timeline for timebar display |
 

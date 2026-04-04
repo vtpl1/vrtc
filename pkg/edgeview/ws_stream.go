@@ -45,7 +45,7 @@ type seekedResponse struct {
 // wsStream handles the unified /ws/stream WebSocket endpoint.
 //
 // Protocol:
-//   - Client connects with query params: camera_id, start (RFC3339, optional)
+//   - Client connects with query params: cameraId, start (RFC3339, optional)
 //   - No start param → live mode (attach to main hub, multi-consumer fan-out)
 //   - start param → recorded mode (per-session relay, single consumer)
 //   - Client sends JSON: {"type":"mse"} to start streaming
@@ -730,9 +730,9 @@ func writeWSErrorResponse(ctx context.Context, wsConn *websocket.Conn, err error
 	_ = wsjson.Write(ctx, wsConn, errResponse)
 }
 
-// parseWSCameraID extracts and validates the camera_id query parameter.
+// parseWSCameraID extracts and validates the cameraId query parameter.
 func parseWSCameraID(r *http.Request) (string, error) {
-	id := r.URL.Query().Get("camera_id")
+	id := r.URL.Query().Get("cameraId")
 	if id == "" {
 		return "", errCameraIDRequired
 	}

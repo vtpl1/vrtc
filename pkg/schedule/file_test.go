@@ -27,10 +27,10 @@ func TestFileProvider_ListSchedules(t *testing.T) {
 	const content = `[
 		{
 			"id": "sched-1",
-			"channel_id": "cam-1",
-			"storage_path": "/data/recordings",
-			"segment_minutes": 5,
-			"days_of_week": [1,2,3,4,5]
+			"channelId": "cam-1",
+			"storagePath": "/data/recordings",
+			"segmentMinutes": 5,
+			"daysOfWeek": [1,2,3,4,5]
 		}
 	]`
 
@@ -71,11 +71,11 @@ func TestFileProvider_StartEndAt(t *testing.T) {
 	const content = `[
 		{
 			"id": "sched-2",
-			"channel_id": "cam-1",
-			"storage_path": "/data",
-			"segment_minutes": 0,
-			"start_at": "2026-01-01T00:00:00Z",
-			"end_at":   "2026-12-31T23:59:59Z"
+			"channelId": "cam-1",
+			"storagePath": "/data",
+			"segmentMinutes": 0,
+			"startAt": "2026-01-01T00:00:00Z",
+			"endAt":   "2026-12-31T23:59:59Z"
 		}
 	]`
 

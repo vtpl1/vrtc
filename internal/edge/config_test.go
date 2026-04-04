@@ -10,7 +10,7 @@ import (
 func TestSaveAndLoadConfig_Defaults(t *testing.T) {
 	t.Parallel()
 
-	cfgFile := filepath.Join(t.TempDir(), "edge.yaml")
+	cfgFile := filepath.Join(t.TempDir(), "edge.json")
 
 	err := edge.SaveConfig(cfgFile)
 	if err != nil {
@@ -22,49 +22,87 @@ func TestSaveAndLoadConfig_Defaults(t *testing.T) {
 		t.Fatalf("LoadConfig: %v", err)
 	}
 
-	if cfg.Edge.VmsAddr != "http://127.0.0.1:2500" {
-		t.Errorf("VmsAddr = %q, want default", cfg.Edge.VmsAddr)
+	lrc := cfg.LiveRecordingConfig
+
+	if lrc.VMSIP != "127.0.0.1" {
+		t.Errorf("VMSIP = %q, want default", lrc.VMSIP)
 	}
 
-	if cfg.API.Listen != 8083 {
-		t.Errorf("API.Listen = %d, want 8083", cfg.API.Listen)
+	if lrc.ClipDurationMins != 5 {
+		t.Errorf("ClipDurationMins = %d, want 5", lrc.ClipDurationMins)
 	}
 
-	if cfg.Edge.MySQLConnStr != "" {
-		t.Errorf("MySQLConnStr = %q, want empty (should come from env)", cfg.Edge.MySQLConnStr)
+	if lrc.MySQLConfig.Username != "" {
+		t.Errorf("Username = %q, want empty (should come from env)", lrc.MySQLConfig.Username)
 	}
 
-	if cfg.Edge.MongoConnStr != "" {
-		t.Errorf("MongoConnStr = %q, want empty (should come from env)", cfg.Edge.MongoConnStr)
+	if lrc.MySQLConfig.Password != "" {
+		t.Errorf("Password = %q, want empty (should come from env)", lrc.MySQLConfig.Password)
+	}
+
+	if lrc.ChannelSource != "file" {
+		t.Errorf("ChannelSource = %q, want %q", lrc.ChannelSource, "file")
+	}
+
+	if lrc.ScheduleSource != "file" {
+		t.Errorf("ScheduleSource = %q, want %q", lrc.ScheduleSource, "file")
+	}
+
+	if lrc.APIListen != ":8080" {
+		t.Errorf("APIListen = %q, want %q", lrc.APIListen, ":8080")
 	}
 }
 
 func TestLoadConfig_EnvOverridesSecrets(t *testing.T) {
-	cfgFile := filepath.Join(t.TempDir(), "edge.yaml")
+	cfgFile := filepath.Join(t.TempDir(), "edge.json")
 
 	err := edge.SaveConfig(cfgFile)
 	if err != nil {
 		t.Fatalf("SaveConfig: %v", err)
 	}
 
-	t.Setenv("EDGE_MYSQL_CONN_STR", "testuser:testpass@tcp(10.0.0.1:3306)/testdb")
-	t.Setenv("EDGE_MONGO_CONN_STR", "mongodb://testuser:testpass@10.0.0.1:27017/")
+	t.Setenv("EDGE_MYSQL_CONFIG_USERNAME", "dbuser")
+	t.Setenv("EDGE_MYSQL_CONFIG_PASSWORD", "s3cret")
 
 	cfg, err := edge.LoadConfig(cfgFile)
 	if err != nil {
 		t.Fatalf("LoadConfig: %v", err)
 	}
 
-	if cfg.Edge.MySQLConnStr != "testuser:testpass@tcp(10.0.0.1:3306)/testdb" {
-		t.Errorf("MySQLConnStr = %q, want env var value", cfg.Edge.MySQLConnStr)
+	lrc := cfg.LiveRecordingConfig
+
+	if lrc.MySQLConfig.Username != "dbuser" {
+		t.Errorf("Username = %q, want env var value", lrc.MySQLConfig.Username)
 	}
 
-	if cfg.Edge.MongoConnStr != "mongodb://testuser:testpass@10.0.0.1:27017/" { //nolint:gosec
-		t.Errorf("MongoConnStr = %q, want env var value", cfg.Edge.MongoConnStr)
+	if lrc.MySQLConfig.Password != "s3cret" {
+		t.Errorf("Password = %q, want env var value", lrc.MySQLConfig.Password)
 	}
 
 	// Non-secret defaults must survive the env override
-	if cfg.Edge.VmsAddr != "http://127.0.0.1:2500" {
-		t.Errorf("VmsAddr = %q, want default", cfg.Edge.VmsAddr)
+	if lrc.VMSIP != "127.0.0.1" {
+		t.Errorf("VMSIP = %q, want default", lrc.VMSIP)
+	}
+
+	if lrc.ClipDurationMins != 5 {
+		t.Errorf("ClipDurationMins = %d, want 5", lrc.ClipDurationMins)
+	}
+}
+
+func TestMySQLConfig_DSN(t *testing.T) {
+	t.Parallel()
+
+	mysqlCfg := edge.MySQLConfig{
+		Host:     "10.0.0.1",
+		Port:     3306,
+		Username: "dbuser",
+		Password: "s3cret",
+	}
+
+	got := mysqlCfg.DSN("mydb")
+	want := "dbuser:s3cret@tcp(10.0.0.1:3306)/mydb?parseTime=true&charset=utf8mb4&loc=Local"
+
+	if got != want {
+		t.Errorf("DSN() = %q, want %q", got, want)
 	}
 }

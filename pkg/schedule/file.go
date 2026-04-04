@@ -13,12 +13,12 @@ import (
 // expressed as RFC 3339 strings and plain integers respectively in JSON.
 type jsonSchedule struct {
 	ID             string `json:"id"`
-	ChannelID      string `json:"channel_id"`         //nolint:tagliatelle
-	StoragePath    string `json:"storage_path"`       //nolint:tagliatelle
-	SegmentMinutes int    `json:"segment_minutes"`    //nolint:tagliatelle
-	StartAt        string `json:"start_at,omitempty"` //nolint:tagliatelle // RFC 3339; empty = zero
-	EndAt          string `json:"end_at,omitempty"`   //nolint:tagliatelle // RFC 3339; empty = zero
-	DaysOfWeek     []int  `json:"days_of_week"`       //nolint:tagliatelle // 0=Sun … 6=Sat
+	ChannelID      string `json:"channelId"`
+	StoragePath    string `json:"storagePath"`
+	SegmentMinutes int    `json:"segmentMinutes"`
+	StartAt        string `json:"startAt,omitempty"` // RFC 3339; empty = zero
+	EndAt          string `json:"endAt,omitempty"`   // RFC 3339; empty = zero
+	DaysOfWeek     []int  `json:"daysOfWeek"`        // 0=Sun … 6=Sat
 }
 
 func (j jsonSchedule) toSchedule() (Schedule, error) {
@@ -60,11 +60,11 @@ func (j jsonSchedule) toSchedule() (Schedule, error) {
 //
 //	[
 //	  {
-//	    "id":              "sched-1",
-//	    "channel_id":      "cam-1",
-//	    "storage_path":    "/data/recordings",
-//	    "segment_minutes": 5,
-//	    "days_of_week":    [1,2,3,4,5]
+//	    "id":             "sched-1",
+//	    "channelId":      "cam-1",
+//	    "storagePath":    "/data/recordings",
+//	    "segmentMinutes": 5,
+//	    "daysOfWeek":     [1,2,3,4,5]
 //	  }
 //	]
 type fileProvider struct {

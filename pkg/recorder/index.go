@@ -43,15 +43,15 @@ const (
 // RecordingEntry describes one recording segment stored on disk.
 type RecordingEntry struct {
 	ID         string    `json:"id"`
-	ChannelID  string    `json:"channel_id"` //nolint:tagliatelle
-	StartTime  time.Time `json:"start_time"` //nolint:tagliatelle
-	EndTime    time.Time `json:"end_time"`   //nolint:tagliatelle
-	FilePath   string    `json:"file_path"`  //nolint:tagliatelle
-	SizeBytes  int64     `json:"size_bytes"` //nolint:tagliatelle
+	ChannelID  string    `json:"channelId"`
+	StartTime  time.Time `json:"startTime"`
+	EndTime    time.Time `json:"endTime"`
+	FilePath   string    `json:"filePath"`
+	SizeBytes  int64     `json:"sizeBytes"`
 	Status     string    `json:"status"`
-	HasMotion  bool      `json:"has_motion"`  //nolint:tagliatelle
-	HasObjects bool      `json:"has_objects"` //nolint:tagliatelle
-	HasEvents  bool      `json:"has_events"`  //nolint:tagliatelle
+	HasMotion  bool      `json:"hasMotion"`
+	HasObjects bool      `json:"hasObjects"`
+	HasEvents  bool      `json:"hasEvents"`
 }
 
 // SeekEntry represents a keyframe position within a recording segment,

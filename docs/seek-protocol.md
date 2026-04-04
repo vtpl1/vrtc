@@ -11,24 +11,24 @@ seek operations with codec-change detection.
 ## Endpoint
 
 ```text
-ws://<host>/api/cameras/ws/stream?camera_id=<id>&start=<RFC3339>
+ws://<host>/api/cameras/ws/stream?cameraId=<id>&start=<RFC3339>
 ```
 
 ### Query Parameters
 
 | Name | Required | Meaning |
 |------|----------|---------|
-| `camera_id` | yes | Camera/channel identifier |
+| `cameraId` | yes | Camera/channel identifier |
 | `start` | no | RFC3339 timestamp. Omit for live mode; provide for recorded playback. |
 
 ### Examples
 
 ```text
 # Live mode
-ws://localhost:8080/api/cameras/ws/stream?camera_id=cam-01
+ws://localhost:8080/api/cameras/ws/stream?cameraId=cam-01
 
 # Recorded playback from a specific time
-ws://localhost:8080/api/cameras/ws/stream?camera_id=cam-01&start=2026-04-04T14:00:00Z
+ws://localhost:8080/api/cameras/ws/stream?cameraId=cam-01&start=2026-04-04T14:00:00Z
 ```
 
 ---
@@ -507,33 +507,38 @@ function appendNext() {
 To render a recording availability bar, use one of the current camera REST endpoints:
 
 ```
-GET /api/cameras/{camera_id}/timeline?start=<RFC3339>&end=<RFC3339>
-GET /api/cameras/{camera_id}/recordings?start=<RFC3339>&end=<RFC3339>
+GET /api/cameras/{cameraId}/timeline?start=<RFC3339>&end=<RFC3339>
+GET /api/cameras/{cameraId}/recordings?start=<RFC3339>&end=<RFC3339>
 ```
 
-Returns an array of recording entries:
+Returns a paginated object wrapping recording entries:
 
 ```json
-[
-  {
-    "id": "rec-001",
-    "channel_id": "cam-01",
-    "start_time": "2026-04-04T09:00:00Z",
-    "end_time": "2026-04-04T14:30:00Z",
-    "status": "complete",
-    "has_motion": true,
-    "has_objects": false
-  },
-  {
-    "id": "rec-002",
-    "channel_id": "cam-01",
-    "start_time": "2026-04-04T14:35:00Z",
-    "end_time": "2026-04-04T16:00:00Z",
-    "status": "complete",
-    "has_motion": false,
-    "has_objects": true
-  }
-]
+{
+  "items": [
+    {
+      "id": "rec-001",
+      "channelId": "cam-01",
+      "startTime": "2026-04-04T09:00:00Z",
+      "endTime": "2026-04-04T14:30:00Z",
+      "status": "complete",
+      "hasMotion": true,
+      "hasObjects": false
+    },
+    {
+      "id": "rec-002",
+      "channelId": "cam-01",
+      "startTime": "2026-04-04T14:35:00Z",
+      "endTime": "2026-04-04T16:00:00Z",
+      "status": "complete",
+      "hasMotion": false,
+      "hasObjects": true
+    }
+  ],
+  "totalCount": 2,
+  "limit": 100,
+  "offset": 0
+}
 ```
 
 Gaps between entries represent periods with no recording. The client should
@@ -614,7 +619,7 @@ scrubber.addEventListener("change", (e) => {
   const cameraId = "cam-01";
   const startTime = "2026-04-04T09:00:00Z";
   const wsURL = `ws://${location.host}/api/cameras/ws/stream`
-    + `?camera_id=${encodeURIComponent(cameraId)}`
+    + `?cameraId=${encodeURIComponent(cameraId)}`
     + `&start=${encodeURIComponent(startTime)}`;
 
   const video = document.getElementById("player");

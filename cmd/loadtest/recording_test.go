@@ -28,10 +28,13 @@ func TestRunRecordingTest_JSONOutput(t *testing.T) {
 			t.Fatalf("unexpected path %q", r.URL.Path)
 		}
 
-		_, _ = io.WriteString(w, `[
-			{"start":"2026-04-04T11:00:00Z","end":"2026-04-04T11:30:00Z","duration_ms":1800000},
-			{"start":"2026-04-04T11:30:01Z","end":"2026-04-04T12:00:00Z","duration_ms":1799000}
-		]`)
+		_, _ = io.WriteString(w, `{
+			"items":[
+				{"start":"2026-04-04T11:00:00Z","end":"2026-04-04T11:30:00Z","durationMs":1800000},
+				{"start":"2026-04-04T11:30:01Z","end":"2026-04-04T12:00:00Z","durationMs":1799000}
+			],
+			"totalCount":2,"limit":100,"offset":0
+		}`)
 	}))
 	defer server.Close()
 
@@ -78,9 +81,12 @@ func TestRunRecordingTest_JSONOutput(t *testing.T) {
 
 func TestRunRecordingTest_ThresholdOutput(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-		_, _ = io.WriteString(w, `[
-			{"start":"2026-04-04T11:00:00Z","end":"2026-04-04T11:59:56.400Z","duration_ms":3596400}
-		]`)
+		_, _ = io.WriteString(w, `{
+			"items":[
+				{"start":"2026-04-04T11:00:00Z","end":"2026-04-04T11:59:56.400Z","durationMs":3596400}
+			],
+			"totalCount":1,"limit":100,"offset":0
+		}`)
 	}))
 	defer server.Close()
 

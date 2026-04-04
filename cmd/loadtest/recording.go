@@ -39,7 +39,7 @@ func recordingCmd() *cobra.Command {
 type timelineEntry struct {
 	Start      time.Time `json:"start"`
 	End        time.Time `json:"end"`
-	DurationMs int64     `json:"duration_ms"` //nolint:tagliatelle
+	DurationMs int64     `json:"durationMs"`
 }
 
 func runRecordingTest(cameraID string, lookback time.Duration) error {
@@ -72,10 +72,14 @@ func runRecordingTest(cameraID string, lookback time.Duration) error {
 		return fmt.Errorf("read body: %w", err)
 	}
 
-	var entries []timelineEntry
-	if err := json.Unmarshal(body, &entries); err != nil {
+	var page struct {
+		Items []timelineEntry `json:"items"`
+	}
+	if err := json.Unmarshal(body, &page); err != nil {
 		return fmt.Errorf("parse response: %w", err)
 	}
+
+	entries := page.Items
 
 	// Analyze gaps.
 	var (

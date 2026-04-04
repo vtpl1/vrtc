@@ -10,21 +10,18 @@ import (
 	"github.com/vtpl1/vrtc/internal/edge"
 	"github.com/vtpl1/vrtc/pkg/appinfo"
 	"github.com/vtpl1/vrtc/pkg/configpath"
+	"github.com/vtpl1/vrtc/pkg/logger"
 )
 
-func main() {
-	// Load .env into the process environment before Viper reads it.
-	// Non-fatal: silently ignored when the file does not exist.
-	_ = godotenv.Load()
-
+func newRootCmd() *cobra.Command {
 	var cfgGlobal edge.Config
 
-	root := &cobra.Command{
+	return &cobra.Command{
 		Use:     edge.AppName,
 		Short:   edge.AppName,
 		Version: appinfo.GetVersion(),
 		PersistentPreRunE: func(_ *cobra.Command, _ []string) error {
-			cfgFile := configpath.GetYAMLConfigFilePath(edge.AppName)
+			cfgFile := configpath.GetJSONConfigFilePath(edge.AppName)
 
 			cfg, err := edge.LoadConfig(cfgFile)
 			if err != nil {
@@ -46,12 +43,38 @@ func main() {
 			return nil
 		},
 		RunE: func(_ *cobra.Command, _ []string) error {
-			return edge.Run(edge.AppName, "edge", cfgGlobal)
+			logLevel := cfgGlobal.LiveRecordingConfig.LogLevel
+			if logLevel == "" {
+				logLevel = "debug"
+			}
+
+			logFile := configpath.GetLogFilePath(edge.AppName)
+
+			closeLog, err := logger.InitLogger(logFile, logLevel)
+			if err != nil {
+				return err
+			}
+
+			defer closeLog()
+
+			log.Info().
+				Str("appName", edge.AppName).
+				Str("version", appinfo.GetVersion()).
+				Str("logFile", logFile).
+				Str("logLevel", logLevel).
+				Msg("starting")
+
+			return edge.Run(edge.AppName, cfgGlobal)
 		},
 	}
+}
 
-	err := root.Execute()
-	if err != nil {
+func main() {
+	// Load .env into the process environment before Viper reads it.
+	// Non-fatal: silently ignored when the file does not exist.
+	_ = godotenv.Load()
+
+	if err := newRootCmd().Execute(); err != nil {
 		log.Error().Err(err).Msg("command failed")
 		os.Exit(1)
 	}

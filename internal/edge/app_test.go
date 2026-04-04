@@ -1,4 +1,4 @@
-package liverecservice
+package edge
 
 import (
 	"context"
@@ -75,7 +75,7 @@ func TestNewScheduleProvider_FileBacked(t *testing.T) {
 	t.Parallel()
 
 	path := filepath.Join(t.TempDir(), "schedules.json")
-	payload := `[{"id":"sched-1","channel_id":"cam-1","storage_path":"D:/recordings","segment_minutes":5,"days_of_week":[1,2]}]`
+	payload := `[{"id":"sched-1","channelId":"cam-1","storagePath":"D:/recordings","segmentMinutes":5,"daysOfWeek":[1,2]}]`
 	if err := os.WriteFile(path, []byte(payload), 0o644); err != nil {
 		t.Fatalf("write schedules file: %v", err)
 	}

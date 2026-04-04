@@ -19,9 +19,15 @@ import (
 
 type channelListOutput struct {
 	Body struct {
-		Channels []channel.Channel `json:"channels"`
-		Count    int               `json:"count"`
+		Items      []channel.Channel `json:"items"`
+		TotalCount int               `json:"totalCount"`
+		Limit      int               `json:"limit"`
+		Offset     int               `json:"offset"`
 	}
+}
+
+type listCameraConfigsInput struct {
+	paginatedInput
 }
 
 type channelIDInput struct {
@@ -35,15 +41,15 @@ type channelOutput struct {
 type channelResponse struct {
 	channel.Channel
 
-	StreamURL string `json:"stream_url"` //nolint:tagliatelle
-	WSURL     string `json:"ws_url"`     //nolint:tagliatelle
+	StreamURL string `json:"streamUrl"`
+	WSURL     string `json:"wsUrl"`
 }
 
 func newChannelResponse(ch channel.Channel) *channelResponse {
 	return &channelResponse{
 		Channel:   ch,
 		StreamURL: "/api/cameras/" + ch.ID + "/stream",
-		WSURL:     "/api/cameras/ws/stream?camera_id=" + ch.ID,
+		WSURL:     "/api/cameras/ws/stream?cameraId=" + ch.ID,
 	}
 }
 
@@ -61,26 +67,38 @@ func (h *HTTPHandler) registerCameraOps(api huma.API) {
 	}
 
 	huma.Register(api, huma.Operation{
-		OperationID: "list-cameras",
+		OperationID: "listCameraConfigs",
 		Method:      "GET",
-		Path:        "/api/cameras/all",
+		Path:        "/api/cameras/config",
 		Summary:     "List all registered cameras with full details",
 		Tags:        []string{"Camera"},
-	}, func(ctx context.Context, _ *struct{}) (*channelListOutput, error) {
+	}, func(ctx context.Context, input *listCameraConfigsInput) (*channelListOutput, error) {
 		channels, err := cw.ListChannels(ctx)
 		if err != nil {
 			return nil, huma.Error500InternalServerError("failed to list cameras", err)
 		}
 
+		limit := input.effectiveLimit()
+		offset := input.Offset
+
+		total := len(channels)
+		if offset > total {
+			offset = total
+		}
+
+		end := min(offset+limit, total)
+
 		out := &channelListOutput{}
-		out.Body.Channels = channels
-		out.Body.Count = len(channels)
+		out.Body.Items = channels[offset:end]
+		out.Body.TotalCount = total
+		out.Body.Limit = limit
+		out.Body.Offset = offset
 
 		return out, nil
 	})
 
 	huma.Register(api, huma.Operation{
-		OperationID:   "save-camera",
+		OperationID:   "upsertCamera",
 		Method:        "PUT",
 		Path:          "/api/cameras",
 		Summary:       "Create or update a camera",
@@ -111,7 +129,7 @@ func (h *HTTPHandler) registerCameraOps(api huma.API) {
 	})
 
 	huma.Register(api, huma.Operation{
-		OperationID: "get-camera",
+		OperationID: "getCameraConfig",
 		Method:      "GET",
 		Path:        "/api/cameras/{id}",
 		Summary:     "Get a camera by ID",
@@ -130,7 +148,7 @@ func (h *HTTPHandler) registerCameraOps(api huma.API) {
 	})
 
 	huma.Register(api, huma.Operation{
-		OperationID:   "delete-camera",
+		OperationID:   "deleteCamera",
 		Method:        "DELETE",
 		Path:          "/api/cameras/{id}",
 		Summary:       "Delete a camera",

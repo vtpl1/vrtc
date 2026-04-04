@@ -18,7 +18,7 @@ var (
 func main() {
 	root := &cobra.Command{
 		Use:   "loadtest",
-		Short: "Load testing tool for vrtc liverecservice",
+		Short: "Load testing tool for vrtc edge",
 	}
 
 	root.PersistentFlags().

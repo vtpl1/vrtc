@@ -1,36 +1,74 @@
 package edge
 
-const AppName = "vrtc3"
-
-//nolint:gosec
-const DefaultSecretKey = "vtpl_e6a333d0f5616e2b0f28baebf0f41932"
+import (
+	"fmt"
+	"net/url"
+)
 
 type Config struct {
-	Edge Edge `json:"edge" mapstructure:"edge" yaml:"edge"`
-	API  API  `json:"api"  mapstructure:"api"  yaml:"api"`
+	LiveRecordingConfig LiveRecordingConfig `json:"config" mapstructure:"config"`
 }
 
-type Edge struct {
-	MySQLConnStr  string   `json:"mysql_conn_str"            mapstructure:"mysql_conn_str"  yaml:"mysql_conn_str"`            //nolint:tagliatelle
-	MongoConnStr  string   `json:"mongo_conn_str"            mapstructure:"mongo_conn_str"  yaml:"mongo_conn_str"`            //nolint:tagliatelle
-	VmsAddr       string   `json:"vms_addr"                  mapstructure:"vms_addr"        yaml:"vms_addr"`                  //nolint:tagliatelle
-	SinkAddrs     []string `json:"sink_addrs"                mapstructure:"sink_addrs"      yaml:"sink_addrs"`                //nolint:tagliatelle
-	SiteID        int      `json:"site_id"                   mapstructure:"site_id"         yaml:"site_id"`                   //nolint:tagliatelle
-	IsPublicCloud bool     `json:"is_public_cloud,omitempty" mapstructure:"is_public_cloud" yaml:"is_public_cloud,omitempty"` //nolint:tagliatelle
-	ChannelsCSV   string   `json:"channels_csv,omitempty"    mapstructure:"channels_csv"    yaml:"channels_csv,omitempty"`    //nolint:tagliatelle
-	DontListen    bool     `json:"dont_listen,omitempty"     mapstructure:"dont_listen"     yaml:"dont_listen,omitempty"`     //nolint:tagliatelle
-	StreamAddr    string   `json:"stream_addr,omitempty"     mapstructure:"stream_addr"     yaml:"stream_addr,omitempty"`     //nolint:tagliatelle
-	StoragePath   string   `json:"storage_path,omitempty"    mapstructure:"storage_path"    yaml:"storage_path,omitempty"`    //nolint:tagliatelle
+type LiveRecordingConfig struct {
+	MediaServerID             string      `json:"media_server_id,omitempty"              mapstructure:"media_server_id"`              //nolint:tagliatelle
+	SiteID                    int         `json:"site_id,omitempty"                      mapstructure:"site_id"`                      //nolint:tagliatelle
+	MaxChannels               int         `json:"max_channels,omitempty"                 mapstructure:"max_channels"`                 //nolint:tagliatelle
+	EnableMinorStreamGrabbing bool        `json:"enable_minor_stream_grabbing,omitempty" mapstructure:"enable_minor_stream_grabbing"` //nolint:tagliatelle
+	EnableTCPServer           bool        `json:"enable_tcp_server,omitempty"            mapstructure:"enable_tcp_server"`            //nolint:tagliatelle
+	EnableGRPCServer          bool        `json:"enable_grpc_server,omitempty"           mapstructure:"enable_grpc_server"`           //nolint:tagliatelle
+	NASPaths                  []string    `json:"nas_paths"                              mapstructure:"nas_paths"`                    //nolint:tagliatelle
+	EdgeEventManagerIP        string      `json:"edge_event_manager_ip,omitempty"        mapstructure:"edge_event_manager_ip"`        //nolint:tagliatelle
+	IsTestMode                bool        `json:"is_test_mode,omitempty"                 mapstructure:"is_test_mode"`                 //nolint:tagliatelle
+	PreMotionDurSecs          int         `json:"pre_motion_dur_secs,omitempty"          mapstructure:"pre_motion_dur_secs"`          //nolint:tagliatelle
+	PostMotionDurSecs         int         `json:"post_motion_dur_secs,omitempty"         mapstructure:"post_motion_dur_secs"`         //nolint:tagliatelle
+	MySQLConfig               MySQLConfig `json:"mysql_config"                           mapstructure:"mysql_config"`                 //nolint:tagliatelle
+	ClipDurationMins          int         `json:"clip_duration_mins,omitempty"           mapstructure:"clip_duration_mins"`           //nolint:tagliatelle
+	VMSIP                     string      `json:"vms_ip,omitempty"                       mapstructure:"vms_ip"`                       //nolint:tagliatelle
 
-	// RTSP credentials used when StreamAddr is set (avgrabber demuxer).
-	RTSPUsername string `json:"rtsp_username,omitempty" mapstructure:"rtsp_username" yaml:"rtsp_username,omitempty"` //nolint:tagliatelle
-	RTSPPassword string `json:"rtsp_password,omitempty" mapstructure:"rtsp_password" yaml:"rtsp_password,omitempty"` //nolint:tagliatelle
-	// RTSPProto selects the RTP transport: "tcp" (default) or "udp".
-	RTSPProto string `json:"rtsp_proto,omitempty" mapstructure:"rtsp_proto" yaml:"rtsp_proto,omitempty"` //nolint:tagliatelle
+	EnableAlternateStreamGrabbing bool `json:"enable_alternate_stream_grabbing,omitempty" mapstructure:"enable_alternate_stream_grabbing"` //nolint:tagliatelle
+
+	// Channel / schedule / recording / API
+	ChannelSource      string      `json:"channel_source,omitempty"       mapstructure:"channel_source"`       //nolint:tagliatelle
+	ScheduleSource     string      `json:"schedule_source,omitempty"      mapstructure:"schedule_source"`      //nolint:tagliatelle
+	ChannelFilePath    string      `json:"channel_file_path,omitempty"    mapstructure:"channel_file_path"`    //nolint:tagliatelle
+	ScheduleFilePath   string      `json:"schedule_file_path,omitempty"   mapstructure:"schedule_file_path"`   //nolint:tagliatelle
+	RecordingIndexPath string      `json:"recording_index_path,omitempty" mapstructure:"recording_index_path"` //nolint:tagliatelle
+	APIListen          string      `json:"api_listen,omitempty"           mapstructure:"api_listen"`           //nolint:tagliatelle
+	ChannelDB          string      `json:"channel_db,omitempty"           mapstructure:"channel_db"`           //nolint:tagliatelle
+	ScheduleDB         string      `json:"schedule_db,omitempty"          mapstructure:"schedule_db"`          //nolint:tagliatelle
+	MongoConfig        MongoConfig `json:"mongo_config"                   mapstructure:"mongo_config"`         //nolint:tagliatelle
+	LogLevel           string      `json:"log_level,omitempty"            mapstructure:"log_level"`            //nolint:tagliatelle
+	AuthToken          string      `json:"auth_token,omitempty"           mapstructure:"auth_token"`           //nolint:tagliatelle
 }
 
-type API struct {
-	Listen    int      `json:"listen"               mapstructure:"listen"     yaml:"listen"`
-	StaticDir string   `json:"static_dir,omitempty" mapstructure:"static_dir" yaml:"static_dir,omitempty"` //nolint:tagliatelle
-	Origins   []string `json:"origins,omitempty"    mapstructure:"origins"    yaml:"origins,omitempty"`
+// MongoConfig holds connection parameters for a MongoDB deployment.
+type MongoConfig struct {
+	URI      string `json:"uri"      mapstructure:"uri"`
+	Database string `json:"database" mapstructure:"database"`
+}
+
+type MySQLConfig struct {
+	Host     string `json:"host"     mapstructure:"host"`
+	Port     int    `json:"port"     mapstructure:"port"`
+	Username string `json:"username" mapstructure:"username"`
+	Password string `json:"password" mapstructure:"password"`
+}
+
+func (m MySQLConfig) DSN(dbName string) string {
+	u := &url.URL{
+		User: url.UserPassword(m.Username, m.Password),
+		Host: fmt.Sprintf("%s:%d", m.Host, m.Port),
+	}
+
+	path := "/"
+	if dbName != "" {
+		path += dbName
+	}
+
+	return fmt.Sprintf(
+		"%s@tcp(%s)%s?parseTime=true&charset=utf8mb4&loc=Local",
+		u.User.String(),
+		u.Host,
+		path,
+	)
 }

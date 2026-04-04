@@ -1,4 +1,4 @@
-package liverecservice
+package edge
 
 import (
 	"context"

@@ -184,12 +184,12 @@ func TestHumaRecordingTimeline_MapsFields(t *testing.T) {
 		t.Fatalf("humaRecordingTimeline: %v", err)
 	}
 
-	if len(out.Body) != 1 {
-		t.Fatalf("expected 1 recording entry, got %d", len(out.Body))
+	if len(out.Body.Items) != 1 {
+		t.Fatalf("expected 1 recording entry, got %d", len(out.Body.Items))
 	}
 
-	if out.Body[0].ID != "seg-1" || out.Body[0].DurationMs != 120000 {
-		t.Fatalf("unexpected recording timeline output: %+v", out.Body[0])
+	if out.Body.Items[0].ID != "seg-1" || out.Body.Items[0].DurationMs != 120000 {
+		t.Fatalf("unexpected recording timeline output: %+v", out.Body.Items[0])
 	}
 }
 

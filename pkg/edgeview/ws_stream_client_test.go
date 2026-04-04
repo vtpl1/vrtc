@@ -473,7 +473,7 @@ func TestWSClient_LiveMode_ReceivesModeChange(t *testing.T) {
 
 	streams := testH264Streams(t)
 	server := newWSTestServer(t, streams)
-	client := dialWS(t, server, "camera_id=cam-1")
+	client := dialWS(t, server, "cameraId=cam-1")
 
 	// Per protocol: connection without start param → mode_change(live)
 	msg := client.readTextJSON(2 * time.Second)
@@ -506,7 +506,7 @@ func TestWSClient_RecordedMode_ReceivesPlaybackInfo(t *testing.T) {
 
 	server := newWSTestServer(t, streams, withRecordingIndex(idx))
 	start := base.Add(30 * time.Second).Format(time.RFC3339)
-	client := dialWS(t, server, "camera_id=cam-1&start="+start)
+	client := dialWS(t, server, "cameraId=cam-1&start="+start)
 
 	// Per protocol: connection with start param → playback_info
 	msg := client.readTextJSON(2 * time.Second)
@@ -546,7 +546,7 @@ func TestWSClient_EarlyStart_SnapsToFirstSegment(t *testing.T) {
 
 	server := newWSTestServer(t, streams, withRecordingIndex(idx))
 	start := base.Add(-30 * time.Minute).Format(time.RFC3339)
-	client := dialWS(t, server, "camera_id=cam-1&start="+start)
+	client := dialWS(t, server, "cameraId=cam-1&start="+start)
 
 	msg := client.readTextJSON(2 * time.Second)
 	if msg["type"] != "playback_info" {
@@ -594,7 +594,7 @@ func TestWSClient_RecordedMode_SeekBeyondSwitchesToLive(t *testing.T) {
 	server := newWSTestServer(t, streams, withRecordingIndex(idx))
 	// Request a time after the last recording → should switch to live
 	start := time.Now().Add(1 * time.Hour).Format(time.RFC3339)
-	client := dialWS(t, server, "camera_id=cam-1&start="+start)
+	client := dialWS(t, server, "cameraId=cam-1&start="+start)
 
 	msg := client.readTextJSON(2 * time.Second)
 	if msg["type"] != "mode_change" {
@@ -612,12 +612,12 @@ func TestWSClient_MissingCameraID_Returns400(t *testing.T) {
 	streams := testH264Streams(t)
 	server := newWSTestServer(t, streams)
 
-	// Try to upgrade WebSocket without camera_id — should fail with HTTP 400.
+	// Try to upgrade WebSocket without cameraId — should fail with HTTP 400.
 	wsURL := "ws" + strings.TrimPrefix(server.URL, "http") + "/api/cameras/ws/stream"
 	_, resp, err := websocket.Dial(context.Background(), wsURL, nil)
 
 	if err == nil {
-		t.Fatal("expected dial to fail without camera_id")
+		t.Fatal("expected dial to fail without cameraId")
 	}
 
 	if resp != nil && resp.StatusCode != http.StatusBadRequest {
@@ -632,7 +632,7 @@ func TestWSClient_LiveStreaming_ReceivesCodecStringAndBinary(t *testing.T) {
 
 	streams := testH264Streams(t)
 	server := newWSTestServer(t, streams)
-	client := dialWS(t, server, "camera_id=cam-1")
+	client := dialWS(t, server, "cameraId=cam-1")
 
 	// 1. Read mode_change
 	msg := client.readTextJSON(2 * time.Second)
@@ -689,7 +689,7 @@ func TestWSClient_RecordedStreaming_ReceivesCodecStringAndBinary(t *testing.T) {
 
 	server := newWSTestServer(t, streams, withRecordingIndex(idx))
 	start := base.Add(10 * time.Second).Format(time.RFC3339)
-	client := dialWS(t, server, "camera_id=cam-1&start="+start)
+	client := dialWS(t, server, "cameraId=cam-1&start="+start)
 
 	// 1. Read playback_info
 	msg := client.readTextJSON(2 * time.Second)
@@ -739,7 +739,7 @@ func TestWSClient_SeekToNow_SwitchesToLive(t *testing.T) {
 
 	server := newWSTestServer(t, streams, withRecordingIndex(idx))
 	start := base.Add(10 * time.Second).Format(time.RFC3339)
-	client := dialWS(t, server, "camera_id=cam-1&start="+start)
+	client := dialWS(t, server, "cameraId=cam-1&start="+start)
 
 	// Read playback_info
 	client.readTextJSON(2 * time.Second)
@@ -786,7 +786,7 @@ func TestWSClient_SeekToRecordedTime(t *testing.T) {
 
 	server := newWSTestServer(t, streams, withRecordingIndex(idx))
 	// Start in live mode
-	client := dialWS(t, server, "camera_id=cam-1")
+	client := dialWS(t, server, "cameraId=cam-1")
 
 	// Read mode_change(live)
 	client.readTextJSON(2 * time.Second)
@@ -840,7 +840,7 @@ func TestWSClient_SeekIntoGap_ReturnsGapTrue(t *testing.T) {
 	})
 
 	server := newWSTestServer(t, streams, withRecordingIndex(idx))
-	client := dialWS(t, server, "camera_id=cam-1")
+	client := dialWS(t, server, "cameraId=cam-1")
 	client.readTextJSON(2 * time.Second) // mode_change(live)
 
 	client.sendCommand(wsCommand{Type: "mse"})
@@ -880,7 +880,7 @@ func TestWSClient_SeekEchoesSeq(t *testing.T) {
 	})
 
 	server := newWSTestServer(t, streams, withRecordingIndex(idx))
-	client := dialWS(t, server, "camera_id=cam-1")
+	client := dialWS(t, server, "cameraId=cam-1")
 	client.readTextJSON(2 * time.Second)
 	client.sendCommand(wsCommand{Type: "mse"})
 	client.drainUntilText(5 * time.Second)
@@ -993,7 +993,7 @@ func TestWSClient_SkipForward(t *testing.T) {
 
 	server := newWSTestServer(t, streams, withRecordingIndex(idx))
 	start := base.Add(1 * time.Minute).Format(time.RFC3339)
-	client := dialWS(t, server, "camera_id=cam-1&start="+start)
+	client := dialWS(t, server, "cameraId=cam-1&start="+start)
 
 	client.readTextJSON(2 * time.Second) // playback_info
 	client.sendCommand(wsCommand{Type: "mse"})
@@ -1029,7 +1029,7 @@ func TestWSClient_SkipBackward(t *testing.T) {
 
 	server := newWSTestServer(t, streams, withRecordingIndex(idx))
 	start := base.Add(2 * time.Minute).Format(time.RFC3339)
-	client := dialWS(t, server, "camera_id=cam-1&start="+start)
+	client := dialWS(t, server, "cameraId=cam-1&start="+start)
 
 	client.readTextJSON(2 * time.Second) // playback_info
 	client.sendCommand(wsCommand{Type: "mse"})
@@ -1137,7 +1137,7 @@ func TestWSClient_RapidSeeks_OnlyLatestProcessed(t *testing.T) {
 	})
 
 	server := newWSTestServer(t, streams, withRecordingIndex(idx))
-	client := dialWS(t, server, "camera_id=cam-1")
+	client := dialWS(t, server, "cameraId=cam-1")
 	client.readTextJSON(2 * time.Second) // mode_change
 	client.sendCommand(wsCommand{Type: "mse"})
 	client.drainUntilText(5 * time.Second) // codec string
@@ -1205,7 +1205,7 @@ func TestWSClient_PauseResume_LiveMode_NoEffect(t *testing.T) {
 
 	streams := testH264Streams(t)
 	server := newWSTestServer(t, streams)
-	client := dialWS(t, server, "camera_id=cam-1")
+	client := dialWS(t, server, "cameraId=cam-1")
 
 	client.readTextJSON(2 * time.Second) // mode_change(live)
 	client.sendCommand(wsCommand{Type: "mse"})
@@ -1249,7 +1249,7 @@ func TestWSClient_PauseResume_RecordedMode(t *testing.T) {
 
 	server := newWSTestServer(t, streams, withRecordingIndex(idx))
 	start := base.Add(10 * time.Second).Format(time.RFC3339)
-	client := dialWS(t, server, "camera_id=cam-1&start="+start)
+	client := dialWS(t, server, "cameraId=cam-1&start="+start)
 
 	client.readTextJSON(2 * time.Second) // playback_info
 	client.sendCommand(wsCommand{Type: "mse"})
@@ -1291,7 +1291,7 @@ func TestWSClient_NonMSECommand_Ignored(t *testing.T) {
 
 	streams := testH264Streams(t)
 	server := newWSTestServer(t, streams)
-	client := dialWS(t, server, "camera_id=cam-1")
+	client := dialWS(t, server, "cameraId=cam-1")
 
 	client.readTextJSON(2 * time.Second) // mode_change
 
@@ -1331,7 +1331,7 @@ func TestWSClient_LiveToRecordedTransition(t *testing.T) {
 	server := newWSTestServer(t, streams, withRecordingIndex(idx))
 
 	// 1. Start in live mode
-	client := dialWS(t, server, "camera_id=cam-1")
+	client := dialWS(t, server, "cameraId=cam-1")
 	msg := client.readTextJSON(2 * time.Second)
 	if msg["mode"] != "live" {
 		t.Fatalf("expected live mode, got %v", msg["mode"])
@@ -1373,7 +1373,7 @@ func TestWSClient_RecordedToLiveTransition(t *testing.T) {
 
 	// 1. Start in recorded mode
 	start := base.Add(10 * time.Second).Format(time.RFC3339)
-	client := dialWS(t, server, "camera_id=cam-1&start="+start)
+	client := dialWS(t, server, "cameraId=cam-1&start="+start)
 
 	msg := client.readTextJSON(2 * time.Second)
 	if msg["type"] != "playback_info" || msg["mode"] != "recorded" {
@@ -1413,7 +1413,7 @@ func TestWSClient_SeekAfterPause_Resumes(t *testing.T) {
 
 	server := newWSTestServer(t, streams, withRecordingIndex(idx))
 	start := base.Add(1 * time.Minute).Format(time.RFC3339)
-	client := dialWS(t, server, "camera_id=cam-1&start="+start)
+	client := dialWS(t, server, "cameraId=cam-1&start="+start)
 
 	client.readTextJSON(2 * time.Second)   // playback_info
 	client.sendCommand(wsCommand{Type: "mse"})
@@ -1457,7 +1457,7 @@ func TestWSClient_MultipleSeeksWithoutWaiting(t *testing.T) {
 	})
 
 	server := newWSTestServer(t, streams, withRecordingIndex(idx))
-	client := dialWS(t, server, "camera_id=cam-1")
+	client := dialWS(t, server, "cameraId=cam-1")
 	client.readTextJSON(2 * time.Second) // mode_change
 	client.sendCommand(wsCommand{Type: "mse"})
 	client.drainUntilText(5 * time.Second) // codec string
@@ -1486,7 +1486,7 @@ func TestWSClient_SeekedResponse_ContainsAllFields(t *testing.T) {
 
 	streams := testH264Streams(t)
 	server := newWSTestServer(t, streams)
-	client := dialWS(t, server, "camera_id=cam-1")
+	client := dialWS(t, server, "cameraId=cam-1")
 
 	client.readTextJSON(2 * time.Second) // mode_change
 	client.sendCommand(wsCommand{Type: "mse"})
@@ -1552,7 +1552,7 @@ func TestWSClient_AfterSeek_ReceivesCodecThenBinary(t *testing.T) {
 	})
 
 	server := newWSTestServer(t, streams, withRecordingIndex(idx))
-	client := dialWS(t, server, "camera_id=cam-1")
+	client := dialWS(t, server, "cameraId=cam-1")
 	client.readTextJSON(2 * time.Second) // mode_change
 	client.sendCommand(wsCommand{Type: "mse"})
 	client.drainUntilText(5 * time.Second) // initial codec string

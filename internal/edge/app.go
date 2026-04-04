@@ -2,491 +2,330 @@ package edge
 
 import (
 	"context"
+	"database/sql"
 	"errors"
 	"fmt"
 	"net/http"
-	"strings"
-	"sync"
+	"path/filepath"
 	"time"
 
+	"github.com/go-chi/chi/v5"
+	"github.com/go-chi/chi/v5/middleware"
+	"github.com/go-chi/cors"
+	_ "github.com/go-sql-driver/mysql" // register mysql driver
 	"github.com/rs/zerolog/log"
 	"github.com/vtpl1/vrtc-sdk/av"
-	"github.com/vtpl1/vrtc-sdk/av/format/llhls"
 	"github.com/vtpl1/vrtc-sdk/av/relayhub"
 	"github.com/vtpl1/vrtc/internal/avgrabber"
+	"github.com/vtpl1/vrtc/pkg/channel"
 	"github.com/vtpl1/vrtc/pkg/edgeview"
 	"github.com/vtpl1/vrtc/pkg/lifecycle"
-	"github.com/vtpl1/vrtc/pkg/pva"
+	"github.com/vtpl1/vrtc/pkg/metrics"
+	"github.com/vtpl1/vrtc/pkg/recorder"
+	"github.com/vtpl1/vrtc/pkg/schedule"
+	"go.mongodb.org/mongo-driver/v2/mongo"
+	"go.mongodb.org/mongo-driver/v2/mongo/options"
 )
 
-var errNoSupportedStreams = errors.New("streamFilterMuxer: no supported streams")
+const AppName = "edge"
 
-const (
-	// hlsPrefix is the URL path prefix for all LL-HLS endpoints.
-	hlsPrefix = "/hls/"
-
-	// consumerIdleTimeout is how long a consumer lives without any incoming
-	// request before it is automatically removed.
-	consumerIdleTimeout = 10 * time.Second
-
-	// idleSweepInterval controls how often the idle-sweep goroutine runs.
-	idleSweepInterval = 5 * time.Second
+var (
+	errChannelFilePathRequired  = errors.New("channel_source=file requires channel_file_path")
+	errScheduleFilePathRequired = errors.New("schedule_source=file requires schedule_file_path")
+	errIndexPathRequired        = errors.New("edge: recording_index_path is required")
 )
 
-// supportedCodecs are the codec types that the llhls/fmp4 muxer can handle.
-// All other codecs (G.711 µ-law/A-law, SPEEX, …) are silently dropped.
+// Run starts the live-recording service. It blocks until ctx is cancelled.
 //
-//nolint:gochecknoglobals
-var supportedCodecs = map[av.CodecType]bool{
-	av.H264: true,
-	av.H265: true,
-	av.AAC:  true,
-}
+//nolint:funlen // server-lifecycle wiring cannot be split cleanly
+func Run(appName string, cfg Config) error {
+	c := cfg.LiveRecordingConfig
 
-// streamFilterMuxer wraps an llhls.Muxer and silently drops streams/packets
-// whose codec is not in supportedCodecs. It remaps packet Idx values so that
-// the inner muxer always sees a contiguous, zero-based stream index.
-type streamFilterMuxer struct {
-	inner *llhls.Muxer
-	remap map[uint16]uint16 // outer Idx → inner Idx
-}
-
-func newStreamFilterMuxer(inner *llhls.Muxer) *streamFilterMuxer {
-	return &streamFilterMuxer{
-		inner: inner,
-		remap: make(map[uint16]uint16),
+	// Default values for new fields.
+	if c.APIListen == "" {
+		c.APIListen = ":8080"
 	}
-}
-
-func (f *streamFilterMuxer) WriteHeader(ctx context.Context, streams []av.Stream) error {
-	var filtered []av.Stream
-
-	for _, s := range streams {
-		if supportedCodecs[s.Codec.Type()] {
-			innerIdx := uint16(len(filtered))
-			f.remap[s.Idx] = innerIdx
-			s.Idx = innerIdx
-			filtered = append(filtered, s)
-		}
-	}
-
-	if len(filtered) == 0 {
-		return errNoSupportedStreams
-	}
-
-	return f.inner.WriteHeader(ctx, filtered)
-}
-
-func (f *streamFilterMuxer) WritePacket(ctx context.Context, pkt av.Packet) error {
-	innerIdx, ok := f.remap[pkt.Idx]
-	if !ok {
-		return nil // silently drop unsupported stream
-	}
-
-	pkt.Idx = innerIdx
-
-	return f.inner.WritePacket(ctx, pkt)
-}
-
-func (f *streamFilterMuxer) WriteTrailer(ctx context.Context, upstreamError error) error {
-	return f.inner.WriteTrailer(ctx, upstreamError)
-}
-
-func (f *streamFilterMuxer) WriteCodecChange(ctx context.Context, changed []av.Stream) error {
-	var filtered []av.Stream
-
-	for _, s := range changed {
-		if innerIdx, ok := f.remap[s.Idx]; ok {
-			s.Idx = innerIdx
-			filtered = append(filtered, s)
-		}
-	}
-
-	if len(filtered) == 0 {
-		return nil
-	}
-
-	return f.inner.WriteCodecChange(ctx, filtered)
-}
-
-func (f *streamFilterMuxer) Close() error {
-	return f.inner.Close()
-}
-
-// Handler delegates to the inner llhls.Muxer's HTTP handler.
-func (f *streamFilterMuxer) Handler(prefix string) http.Handler {
-	return f.inner.Handler(prefix)
-}
-
-// consumerEntry tracks one LL-HLS consumer that was auto-created on first request.
-type consumerEntry struct {
-	handle      av.ConsumerHandle
-	muxer       *streamFilterMuxer
-	mu          sync.Mutex
-	lastRequest time.Time
-}
-
-func (e *consumerEntry) touch() {
-	e.mu.Lock()
-	e.lastRequest = time.Now()
-	e.mu.Unlock()
-}
-
-func (e *consumerEntry) idleSince() time.Duration {
-	e.mu.Lock()
-	defer e.mu.Unlock()
-
-	return time.Since(e.lastRequest)
-}
-
-// Run starts the edge node and blocks until ctx is cancelled.
-//
-//nolint:maintidx,funlen // server-lifecycle wiring cannot be split cleanly
-func Run(appName, appMode string, cfg Config) error {
-	log.Info().Msgf("%+v", cfg)
 
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
 	errChan := make(chan error)
 
-	sourceID := cfg.Edge.StreamAddr
-
-	// ── LL-HLS muxer registry ─────────────────────────────────────────────────
-
-	var (
-		consumersMu sync.RWMutex
-		consumers   = make(map[string]*consumerEntry)
-	)
-
-	hlsCfg := llhls.DefaultConfig()
-
-	muxerFactory := av.MuxerFactory(
-		func(_ context.Context, consumerID string) (av.MuxCloser, error) {
-			mx := newStreamFilterMuxer(llhls.NewMuxer(hlsCfg))
-
-			consumersMu.Lock()
-			if e, ok := consumers[consumerID]; ok {
-				e.muxer = mx
-				e.touch()
-			}
-			consumersMu.Unlock()
-
-			log.Info().Str("consumer", consumerID).Msg("llhls muxer created")
-
-			return mx, nil
-		},
-	)
-
-	muxerRemover := av.MuxerRemover(func(_ context.Context, consumerID string) error {
-		consumersMu.Lock()
-		delete(consumers, consumerID)
-		consumersMu.Unlock()
-
-		log.Info().Str("consumer", consumerID).Msg("llhls muxer removed")
-
-		return nil
-	})
-
-	// ── demuxer factory: avgrabber RTSP ──────────────────────────────────────
-
-	avgrabber.Init()
-
-	defer avgrabber.Deinit()
-
-	proto := avgrabber.ProtoTCP
-	if cfg.Edge.RTSPProto == "udp" {
-		proto = avgrabber.ProtoUDP
+	if c.RecordingIndexPath == "" {
+		return errIndexPathRequired
 	}
 
-	rtspCfg := avgrabber.Config{
-		URL:      cfg.Edge.StreamAddr,
-		Username: cfg.Edge.RTSPUsername,
-		Password: cfg.Edge.RTSPPassword,
-		Protocol: int32(proto),
-		Audio:    true,
+	// -----------------------------------------------------------------------
+	// Providers
+	// -----------------------------------------------------------------------
+	chanProvider, err := newChannelProvider(ctx, c)
+	if err != nil {
+		return fmt.Errorf("edge: channel provider: %w", err)
 	}
+	defer chanProvider.Close()
+
+	schedProvider, err := newScheduleProvider(ctx, c)
+	if err != nil {
+		return fmt.Errorf("edge: schedule provider: %w", err)
+	}
+	defer schedProvider.Close()
+
+	recIndex := recorder.NewSQLiteIndex(c.RecordingIndexPath)
+	defer recIndex.Close()
+
+	var metricsCollector *metrics.Collector // set later; safe to capture in closure
 
 	demuxerFactory := av.DemuxerFactory(
-		func(_ context.Context, _ string) (av.DemuxCloser, error) {
-			dmx, err := avgrabber.NewDemuxer(rtspCfg)
+		func(ctx context.Context, sourceID string) (av.DemuxCloser, error) {
+			start := time.Now()
+
+			ch, err := chanProvider.GetChannel(ctx, sourceID)
 			if err != nil {
-				return nil, fmt.Errorf("avgrabber open %q: %w", rtspCfg.URL, err)
+				return nil, fmt.Errorf("edge: channel %q: %w", sourceID, err)
 			}
 
-			log.Info().Str("url", rtspCfg.URL).Msg("avgrabber demuxer opened")
+			d, err := avgrabber.NewDemuxer(avgrabber.Config{
+				URL:      ch.StreamURL,
+				Username: ch.Username,
+				Password: ch.Password,
+				Audio:    true,
+			})
+			if err != nil {
+				return nil, fmt.Errorf("edge: open stream %q: %w", ch.StreamURL, err)
+			}
 
-			return pva.NewMetadataMerger(dmx, pva.NilSource{}), nil
+			if metricsCollector != nil {
+				metricsCollector.RecordRTSPSessionSetup(time.Since(start), sourceID)
+			}
+
+			return d, nil
 		},
 	)
 
-	demuxerRemover := av.DemuxerRemover(func(_ context.Context, _ string) error {
-		log.Info().Str("url", rtspCfg.URL).Msg("avgrabber demuxer closed")
-
-		return nil
-	})
-
-	// ── stream manager ────────────────────────────────────────────────────────
-
-	sm := relayhub.New(demuxerFactory, demuxerRemover)
-
+	sm := relayhub.New(demuxerFactory, nil)
 	if err := sm.Start(ctx); err != nil {
-		return fmt.Errorf("stream manager start: %w", err)
+		return fmt.Errorf("edge: stream manager start: %w", err)
 	}
 
 	defer func() { _ = sm.Stop() }()
 
-	// ── idle consumer sweep ───────────────────────────────────────────────────
-
-	go func() {
-		ticker := time.NewTicker(idleSweepInterval)
-		defer ticker.Stop()
-
-		for {
-			select {
-			case <-ctx.Done():
-				return
-			case <-ticker.C:
-				consumersMu.RLock()
-
-				type idleConsumer struct {
-					id     string
-					handle av.ConsumerHandle
-				}
-
-				var idle []idleConsumer
-
-				for id, e := range consumers {
-					if e.idleSince() > consumerIdleTimeout {
-						idle = append(idle, idleConsumer{id: id, handle: e.handle})
-					}
-				}
-
-				consumersMu.RUnlock()
-
-				for _, entry := range idle {
-					if entry.handle == nil {
-						continue
-					}
-
-					log.Info().Str("consumer", entry.id).Msg("removing idle consumer")
-					_ = entry.handle.Close(ctx)
-				}
-			}
-		}
-	}()
-
-	// ── HTTP handler ──────────────────────────────────────────────────────────
-
-	// ensureConsumer returns the consumerEntry for consumerID, creating and
-	// registering it with the stream manager on the first call.
-	ensureConsumer := func(r *http.Request, consumerID string) (*consumerEntry, error) {
-		// Fast path: consumer already exists.
-		consumersMu.RLock()
-
-		e, ok := consumers[consumerID]
-
-		consumersMu.RUnlock()
-
-		if ok {
-			e.touch()
-
-			return e, nil
-		}
-
-		// Slow path: create a new entry and add it to the stream manager.
-		consumersMu.Lock()
-		// Re-check under write lock (another goroutine may have beaten us).
-		e, ok = consumers[consumerID]
-		if !ok {
-			e = &consumerEntry{lastRequest: time.Now()}
-			consumers[consumerID] = e
-		}
-		consumersMu.Unlock()
-
-		if ok {
-			// Already created by a concurrent request.
-			e.touch()
-
-			return e, nil
-		}
-
-		errCh := make(chan error, 1)
-
-		handle, err := sm.Consume(r.Context(), sourceID, av.ConsumeOptions{
-			ConsumerID:   consumerID,
-			MuxerFactory: muxerFactory,
-			MuxerRemover: muxerRemover,
-			ErrChan:      errCh,
-		})
-		if err != nil {
-			consumersMu.Lock()
-			delete(consumers, consumerID)
-			consumersMu.Unlock()
-
-			return nil, fmt.Errorf("consume %q: %w", consumerID, err)
-		}
-
-		consumersMu.Lock()
-		e.handle = handle
-		consumersMu.Unlock()
-
-		log.Info().Str("consumer", consumerID).Str("dir", sourceID).Msg("consumer added")
-
-		return e, nil
+	// -----------------------------------------------------------------------
+	// Recording manager
+	// -----------------------------------------------------------------------
+	rm := recorder.New(sm, schedProvider, recIndex, 30*time.Second,
+		recorder.WithDefaultRecording(
+			channelAdapter{chanProvider},
+			filepath.Dir(c.RecordingIndexPath),
+		),
+	)
+	if err := rm.Start(ctx); err != nil {
+		return fmt.Errorf("edge: recording manager start: %w", err)
 	}
 
-	mux := http.NewServeMux()
+	defer func() { _ = rm.Stop() }()
 
-	// corsMiddleware adds permissive CORS headers so browser-based players
-	// (e.g. hls.js on a different origin) can reach the HLS endpoints.
-	corsMiddleware := func(next http.Handler) http.Handler {
-		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			w.Header().Set("Access-Control-Allow-Origin", "*")
-			w.Header().Set("Access-Control-Allow-Methods", "GET, OPTIONS")
-			w.Header().Set("Access-Control-Allow-Headers", "Range")
+	// -----------------------------------------------------------------------
+	// Edge view service
+	// -----------------------------------------------------------------------
+	viewSvc := edgeview.NewService(log.Logger, sm, recIndex, nil,
+		edgeview.WithChannelWriter(chanProvider),
+		edgeview.WithRecordingProvider(rm),
+	)
 
-			if r.Method == http.MethodOptions {
-				w.WriteHeader(http.StatusNoContent)
-
-				return
-			}
-
-			next.ServeHTTP(w, r)
-		})
+	// Register channels as cameras for the camera listing endpoint.
+	if channels, chErr := chanProvider.ListChannels(ctx); chErr == nil {
+		for i := range channels {
+			viewSvc.RegisterCamera(&edgeview.CameraInfo{
+				CameraID: channels[i].ID,
+				Name:     channels[i].Name,
+				State:    "active",
+			})
+		}
 	}
 
-	// GET /hls/<consumerID>/index.m3u8   → playlist  (auto-creates consumer)
-	// GET /hls/<consumerID>/init.mp4     → init segment
-	// GET /hls/<consumerID>/part*.mp4    → LL-HLS parts
-	// GET /hls/<consumerID>/seg*.mp4     → complete segments
-	mux.HandleFunc(hlsPrefix, func(w http.ResponseWriter, r *http.Request) {
-		// Extract the consumerID (first path segment after /hls/).
-		rest := strings.TrimPrefix(r.URL.Path, hlsPrefix)
+	startTime := time.Now()
 
-		before, _, ok := strings.Cut(rest, "/")
-		if !ok {
-			http.NotFound(w, r)
+	// -----------------------------------------------------------------------
+	// KPI Metrics
+	// -----------------------------------------------------------------------
+	metricsDBPath := filepath.Join(filepath.Dir(c.RecordingIndexPath), "metrics.db")
 
-			return
-		}
+	metricsStore, err := metrics.New(metricsDBPath, 7*24*time.Hour, 500_000)
+	if err != nil {
+		log.Warn().Err(err).Msg("edge: metrics store disabled")
+	}
 
-		consumerID := before
-		if consumerID == "" {
-			http.NotFound(w, r)
+	if metricsStore != nil {
+		defer metricsStore.Close()
 
-			return
-		}
+		metricsCollector = metrics.NewCollector(metricsStore, sm, rm, viewSvc)
 
-		e, err := ensureConsumer(r, consumerID)
-		if err != nil {
-			log.Error().Str("consumer", consumerID).Err(err).Msg("ensureConsumer")
-			http.Error(w, "stream unavailable", http.StatusServiceUnavailable)
+		rm.SetMetricsCollector(metricsCollector)
+		defer metricsCollector.Stop()
+	}
 
-			return
-		}
+	// -----------------------------------------------------------------------
+	// Periodic health logging
+	// -----------------------------------------------------------------------
+	startHealthLogger(ctx, sm, rm, startTime, 60*time.Second)
 
-		// Wait briefly for the muxer to be assigned by the factory goroutine.
-		deadline := time.Now().Add(2 * time.Second)
+	// -----------------------------------------------------------------------
+	// HTTP / WebSocket API (Chi + Huma)
+	// -----------------------------------------------------------------------
+	router := chi.NewRouter()
+	router.Use(middleware.RequestID)
+	router.Use(middleware.RealIP)
+	router.Use(middleware.Recoverer)
+	router.Use(middleware.Timeout(60 * time.Second))
+	router.Use(cors.Handler(cors.Options{
+		AllowedOrigins:   []string{"https://*", "http://*"},
+		AllowedMethods:   []string{"GET", "POST", "PUT", "DELETE", "OPTIONS"},
+		AllowedHeaders:   []string{"Accept", "Authorization", "Content-Type", "X-CSRF-Token"},
+		ExposedHeaders:   []string{"Link"},
+		AllowCredentials: false,
+		MaxAge:           300,
+	}))
 
-		for {
-			consumersMu.RLock()
+	// All JSON, streaming, and WebSocket endpoints via edgeview (includes
+	// auto-generated OpenAPI spec at /openapi.json and docs UI at /docs).
+	handlerOpts := []edgeview.HTTPHandlerOption{
+		edgeview.WithSegmentCounter(rm),
+	}
+	if metricsCollector != nil {
+		handlerOpts = append(handlerOpts, edgeview.WithMetricsCollector(metricsCollector))
+	}
 
-			mx := e.muxer
-
-			consumersMu.RUnlock()
-
-			if mx != nil {
-				mx.Handler(hlsPrefix+consumerID).ServeHTTP(w, r)
-
-				return
-			}
-
-			if time.Now().After(deadline) {
-				http.Error(w, "stream not ready", http.StatusServiceUnavailable)
-
-				return
-			}
-
-			time.Sleep(50 * time.Millisecond)
-		}
-	})
-
-	// ── edgeview (live/playback/health endpoints) ────────────────────────
-
-	viewSvc := edgeview.NewService(log.Logger, sm, nil, nil)
-	viewHandler := edgeview.NewHTTPHandler(viewSvc, log.Logger, "")
-	chiRouter := viewHandler.Router()
-
-	// Compose: ServeMux handles /hls/; edgeview chi router
-	// handles /health, /api/cameras, and unified streaming endpoints. ServeMux returns
-	// 404 for unmatched patterns, so we wrap with a fallback.
-	httpHandler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		rec := &statusRecorder{ResponseWriter: w, status: http.StatusOK}
-		mux.ServeHTTP(rec, r)
-
-		if rec.status == http.StatusNotFound && !rec.written {
-			chiRouter.ServeHTTP(w, r)
-		}
-	})
-
-	addr := fmt.Sprintf(":%d", cfg.API.Listen)
-	log.Info().
-		Str("appName", appName).
-		Str("appMode", appMode).
-		Str("addr", addr).
-		Str("rtsp_url", sourceID).
-		Msg("edge node starting")
+	viewHandler := edgeview.NewHTTPHandler(viewSvc, log.Logger, c.AuthToken, handlerOpts...)
+	router.Mount("/", viewHandler.Router())
 
 	srv := &http.Server{
-		Addr:              addr,
-		Handler:           corsMiddleware(httpHandler),
+		Addr:              c.APIListen,
+		Handler:           router,
 		ReadHeaderTimeout: 10 * time.Second,
 	}
 
 	go func() {
 		<-ctx.Done()
 
-		shutCtx, shutCancel := context.WithTimeout(context.Background(), 5*time.Second)
+		shutCtx, shutCancel := context.WithTimeout(context.Background(), 10*time.Second)
 		defer shutCancel()
 
 		_ = srv.Shutdown(shutCtx) //nolint:contextcheck
 	}()
 
-	if err := srv.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
-		return fmt.Errorf("http server: %w", err)
-	}
+	log.Info().Str("appName", appName).Str("addr", c.APIListen).Msg("edge starting")
+
+	go func() {
+		if err := srv.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
+			errChan <- fmt.Errorf("http server: %w", err)
+		}
+	}()
 
 	lifecycle.WaitForTerminationRequest(errChan)
+	log.Info().Str("appName", appName).Msg("termination signal received, shutting down gracefully")
 	cancel()
+	log.Info().Str("appName", appName).Msg("shutdown complete")
 
 	return nil
 }
 
-// statusRecorder wraps http.ResponseWriter to capture the status code
-// without writing to the underlying writer when the status is 404.
-// This enables fallback routing from ServeMux to chi.
-type statusRecorder struct {
-	http.ResponseWriter
+// newChannelProvider constructs the ChannelWriter selected by cfg.ChannelSource.
+//
+//nolint:dupl // symmetric with newScheduleProvider by design
+func newChannelProvider(
+	ctx context.Context,
+	c LiveRecordingConfig,
+) (channel.ChannelWriter, error) {
+	switch c.ChannelSource {
+	case "mysql":
+		db, err := sql.Open("mysql", c.MySQLConfig.DSN(c.ChannelDB))
+		if err != nil {
+			return nil, fmt.Errorf("open mysql: %w", err)
+		}
 
-	status  int
-	written bool
-}
+		if err := db.PingContext(ctx); err != nil {
+			db.Close()
 
-func (r *statusRecorder) WriteHeader(code int) {
-	r.status = code
-	if code != http.StatusNotFound {
-		r.written = true
-		r.ResponseWriter.WriteHeader(code)
+			return nil, fmt.Errorf("ping mysql: %w", err)
+		}
+
+		return channel.NewMySQLProvider(db), nil
+
+	case "mongo":
+		client, err := mongo.Connect(options.Client().ApplyURI(c.MongoConfig.URI))
+		if err != nil {
+			return nil, fmt.Errorf("connect mongo: %w", err)
+		}
+
+		coll := client.Database(c.MongoConfig.Database).Collection("channels")
+
+		return channel.NewMongoProvider(coll), nil
+
+	default: // "file" or ""
+		if c.ChannelFilePath == "" {
+			return nil, errChannelFilePathRequired
+		}
+
+		return channel.NewFileProvider(c.ChannelFilePath), nil
 	}
 }
 
-func (r *statusRecorder) Write(b []byte) (int, error) {
-	if r.status == http.StatusNotFound && !r.written {
-		return len(b), nil // swallow 404 body from ServeMux
+// newScheduleProvider constructs the ScheduleProvider selected by cfg.ScheduleSource.
+//
+//nolint:dupl // symmetric with newChannelProvider by design
+func newScheduleProvider(
+	ctx context.Context,
+	c LiveRecordingConfig,
+) (schedule.ScheduleProvider, error) {
+	switch c.ScheduleSource {
+	case "mysql":
+		db, err := sql.Open("mysql", c.MySQLConfig.DSN(c.ScheduleDB))
+		if err != nil {
+			return nil, fmt.Errorf("open mysql: %w", err)
+		}
+
+		if err := db.PingContext(ctx); err != nil {
+			db.Close()
+
+			return nil, fmt.Errorf("ping mysql: %w", err)
+		}
+
+		return schedule.NewMySQLProvider(db), nil
+
+	case "mongo":
+		client, err := mongo.Connect(options.Client().ApplyURI(c.MongoConfig.URI))
+		if err != nil {
+			return nil, fmt.Errorf("connect mongo: %w", err)
+		}
+
+		coll := client.Database(c.MongoConfig.Database).Collection("recording_schedules")
+
+		return schedule.NewMongoProvider(coll), nil
+
+	default: // "file" or ""
+		if c.ScheduleFilePath == "" {
+			return nil, errScheduleFilePathRequired
+		}
+
+		return schedule.NewFileProvider(c.ScheduleFilePath), nil
+	}
+}
+
+// channelAdapter adapts channel.ChannelProvider to recorder.ChannelSource.
+type channelAdapter struct {
+	p channel.ChannelProvider
+}
+
+func (a channelAdapter) ListChannels(ctx context.Context) ([]recorder.Channel, error) {
+	chs, err := a.p.ListChannels(ctx)
+	if err != nil {
+		return nil, err
 	}
 
-	r.written = true
+	out := make([]recorder.Channel, len(chs))
+	for i, ch := range chs {
+		out[i] = recorder.Channel{ID: ch.ID}
+	}
 
-	return r.ResponseWriter.Write(b)
+	return out, nil
 }

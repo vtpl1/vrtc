@@ -1,6 +1,6 @@
 # KPI Targets
 
-Performance targets for the vrtc liverecservice. Measured via `cmd/loadtest/` and `/api/metrics`.
+Performance targets for the vrtc edge service. Measured via `cmd/loadtest/` and `/api/metrics`.
 
 ## Streaming & Latency
 

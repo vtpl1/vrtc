@@ -108,7 +108,7 @@ func TestWSStream_RequiresCameraID(t *testing.T) {
 	handler.ServeHTTP(rec, req)
 
 	if rec.Code != http.StatusBadRequest {
-		t.Fatalf("expected missing camera_id to return 400, got %d body=%q", rec.Code, rec.Body.String())
+		t.Fatalf("expected missing cameraId to return 400, got %d body=%q", rec.Code, rec.Body.String())
 	}
 }
 

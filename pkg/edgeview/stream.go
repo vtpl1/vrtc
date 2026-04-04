@@ -61,7 +61,7 @@ type Service struct {
 
 // CameraInfo describes a camera available on this relay.
 type CameraInfo struct {
-	CameraID   string `json:"camera_id"` //nolint:tagliatelle
+	CameraID   string `json:"cameraId"`
 	Name       string `json:"name"`
 	Codec      string `json:"codec"`
 	Resolution string `json:"resolution"`

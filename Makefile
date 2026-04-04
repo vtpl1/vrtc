@@ -13,8 +13,7 @@ HOST_ARCH := $(shell go env GOARCH)
 
 OUTPUT_DIR := bin
 APPS := \
-	edge \
-	liverecservice
+	edge
 
 
 PLATFORMS := \

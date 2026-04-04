@@ -14,8 +14,8 @@ import (
 // Example file format:
 //
 //	[
-//	  {"id":"cam-1","name":"Front Door","stream_url":"rtsp://10.0.0.1/main","site_id":1},
-//	  {"id":"cam-2","name":"Back Yard", "stream_url":"rtsp://10.0.0.2/main","site_id":1}
+//	  {"id":"cam-1","name":"Front Door","streamUrl":"rtsp://10.0.0.1/main","siteId":1},
+//	  {"id":"cam-2","name":"Back Yard", "streamUrl":"rtsp://10.0.0.2/main","siteId":1}
 //	]
 type fileProvider struct {
 	path string
