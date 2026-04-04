@@ -122,6 +122,33 @@ func (c *Collector) RecordRecordingGap(d time.Duration, channelID string) {
 	)
 }
 
+// RecordWriteThroughput records the recording write throughput in bits/sec.
+func (c *Collector) RecordWriteThroughput(bps float64, channelID string) {
+	c.store.RecordCounter(
+		MetricWriteThroughputBps,
+		bps,
+		map[string]string{"channel_id": channelID},
+	)
+}
+
+// RecordConsumerRotation records a consumer muxer rotation event.
+func (c *Collector) RecordConsumerRotation(channelID string) {
+	c.store.RecordCounter(
+		MetricConsumerRotationCount,
+		1,
+		map[string]string{"channel_id": channelID},
+	)
+}
+
+// RecordConsumerSkip records a consumer skip event (GOP skip or keyframe recovery).
+func (c *Collector) RecordConsumerSkip(channelID string) {
+	c.store.RecordCounter(
+		MetricConsumerSkipCount,
+		1,
+		map[string]string{"channel_id": channelID},
+	)
+}
+
 // Uptime returns the service uptime.
 func (c *Collector) Uptime() time.Duration {
 	return time.Since(c.startTime)

@@ -13,4 +13,8 @@ const (
 	MetricSegmentOpenMs     = "segment_open_ms"
 	MetricRecToLiveTransMs  = "rec_to_live_transition_ms"
 	MetricSeekLatencyMs     = "seek_latency_ms"
+
+	MetricWriteThroughputBps    = "write_throughput_bps"
+	MetricConsumerRotationCount = "consumer_rotation_count"
+	MetricConsumerSkipCount     = "consumer_skip_count"
 )

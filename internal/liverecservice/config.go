@@ -38,6 +38,7 @@ type LiveRecordingConfig struct {
 	ScheduleDB         string      `json:"schedule_db,omitempty"          mapstructure:"schedule_db"`          //nolint:tagliatelle
 	MongoConfig        MongoConfig `json:"mongo_config"                   mapstructure:"mongo_config"`         //nolint:tagliatelle
 	LogLevel           string      `json:"log_level,omitempty"            mapstructure:"log_level"`            //nolint:tagliatelle
+	AuthToken          string      `json:"auth_token,omitempty"           mapstructure:"auth_token"`           //nolint:tagliatelle
 }
 
 // MongoConfig holds connection parameters for a MongoDB deployment.

@@ -70,7 +70,7 @@ func Run(appName string, cfg Config) error {
 	}
 	defer schedProvider.Close()
 
-	recIndex := recorder.NewFileIndex(c.RecordingIndexPath)
+	recIndex := recorder.NewSQLiteIndex(c.RecordingIndexPath)
 	defer recIndex.Close()
 
 	var metricsCollector *metrics.Collector // set later; safe to capture in closure
@@ -159,6 +159,8 @@ func Run(appName string, cfg Config) error {
 		defer metricsStore.Close()
 
 		metricsCollector = metrics.NewCollector(metricsStore, sm, rm, viewSvc)
+
+		rm.SetMetricsCollector(metricsCollector)
 		defer metricsCollector.Stop()
 	}
 
@@ -193,7 +195,7 @@ func Run(appName string, cfg Config) error {
 		handlerOpts = append(handlerOpts, edgeview.WithMetricsCollector(metricsCollector))
 	}
 
-	viewHandler := edgeview.NewHTTPHandler(viewSvc, log.Logger, "", handlerOpts...)
+	viewHandler := edgeview.NewHTTPHandler(viewSvc, log.Logger, c.AuthToken, handlerOpts...)
 	router.Mount("/", viewHandler.Router())
 
 	srv := &http.Server{

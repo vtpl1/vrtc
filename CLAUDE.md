@@ -101,7 +101,6 @@ Manages fMP4 recording segments on disk with schedule-driven start/stop and auto
 | `recorder.go` | `RecordingManager` — poll loop, segment start/rotate/stop, retention enforcement |
 | `index.go` | `RecordingIndex` interface — `Insert`, `QueryByChannel`, `FirstAvailable`, `LastAvailable`, `Delete`, `SealInterrupted` |
 | `index_sqlite.go` | Per-channel SQLite implementation (WAL mode, LRU eviction at 100 DBs, composite indexes) |
-| `index_file.go` | NDJSON file-based implementation (lightweight alternative) |
 | `retention.go` | Multi-tier retention: continuous/motion/object days, storage cap, disk-free threshold |
 
 **Segment statuses**: `recording` → `complete` / `interrupted` / `corrupted` / `deleted`

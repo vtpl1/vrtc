@@ -63,10 +63,16 @@ type RecordingManager struct {
 	failedStart map[string]string              // key = scheduleID, value = error message (warn once)
 
 	lastRetention time.Time
+	collector     metricsCollector
 
 	stopOnce sync.Once
 	cancel   context.CancelFunc
 	done     chan struct{}
+}
+
+// metricsCollector is the subset of metrics.Collector needed by RecordingManager.
+type metricsCollector interface {
+	RecordWriteThroughput(bps float64, channelID string)
 }
 
 // Option configures optional RecordingManager behaviour.
@@ -80,6 +86,19 @@ func WithDefaultRecording(channels ChannelSource, storagePath string) Option {
 		rm.channels = channels
 		rm.defaultStoragePath = storagePath
 	}
+}
+
+// WithMetricsCollector sets the metrics collector for recording throughput.
+func WithMetricsCollector(c metricsCollector) Option {
+	return func(rm *RecordingManager) { rm.collector = c }
+}
+
+// SetMetricsCollector sets the metrics collector after construction (useful when
+// the collector is created after the RecordingManager).
+func (rm *RecordingManager) SetMetricsCollector(c metricsCollector) {
+	rm.mu.Lock()
+	rm.collector = c
+	rm.mu.Unlock()
 }
 
 // New creates a RecordingManager. Call Start to begin the poll loop.
@@ -424,6 +443,13 @@ func (rm *RecordingManager) makeOnCloseCallback(
 		if iErr := rm.index.Insert(context.Background(), entry); iErr != nil {
 			log.Error().Err(iErr).Msg("recorder: index insert complete")
 		}
+
+		if rm.collector != nil && entry.Status == StatusComplete && info.SizeBytes > 0 {
+			dur := info.End.Sub(info.Start).Seconds()
+			if dur > 0 {
+				rm.collector.RecordWriteThroughput(float64(info.SizeBytes)*8/dur, s.ChannelID)
+			}
+		}
 	}
 }
 
@@ -657,8 +683,12 @@ func (rm *RecordingManager) enforceRetention(
 
 	toDelete := EvaluateRetention(entries, policy, now)
 
-	// Batch limit: delete up to 10 per tick.
-	if len(toDelete) > 10 {
+	// When disk is critically low (below MinFreeGB), remove the batch limit
+	// to allow full cleanup in a single pass. Otherwise cap at 10 per tick.
+	diskCritical := s.MinFreeGB > 0 && diskFree > 0 &&
+		diskFree < int64(s.MinFreeGB*bytesPerGB)
+
+	if !diskCritical && len(toDelete) > 10 {
 		toDelete = toDelete[:10]
 	}
 
@@ -716,6 +746,19 @@ func (rm *RecordingManager) checkDiskSpace(
 
 		rm.enforceRetention(ctx, s, now)
 		rm.enforceRetention(ctx, s, now) // double pass for aggressive cleanup
+	}
+
+	// Emergency: when below MinFreeGB, trigger one more pass. The batch
+	// limit is removed by enforceRetention when MinFreeGB is breached,
+	// so all flagged segments are deleted in one go.
+	if s.MinFreeGB > 0 && avail < int64(s.MinFreeGB*bytesPerGB) {
+		log.Error().
+			Str("channel", s.ChannelID).
+			Float64("minFreeGb", s.MinFreeGB).
+			Int64("availBytes", avail).
+			Msg("recorder: disk CRITICALLY low, emergency retention pass")
+
+		rm.enforceRetention(ctx, s, now)
 	}
 }
 
