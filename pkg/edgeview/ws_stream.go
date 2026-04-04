@@ -141,6 +141,13 @@ func (h *HTTPHandler) wsStream(w http.ResponseWriter, r *http.Request) {
 						return
 					}
 
+					// Signal the client to reinitialise MSE before the new
+					// init segment arrives, preventing decode errors from
+					// stale codec state.
+					_ = wsjson.Write(ctx, wsConn, map[string]string{
+						"type": "reinit",
+					})
+
 					if serr := session.attachConsumer(ctx, errChan); serr != nil {
 						writeWSErrorResponse(ctx, wsConn, serr, "consume after seek failed")
 
@@ -293,16 +300,31 @@ func (s *streamSession) attachConsumer(ctx context.Context, errChan chan<- error
 	return nil
 }
 
+// wsWriteTimeout is the maximum duration for a single WebSocket write.
+// A stalled client that does not read will hit this deadline, causing the
+// consumer to be closed rather than leaking a goroutine indefinitely.
+const wsWriteTimeout = 10 * time.Second
+
 // buildMSEConsumer creates an MSE writer and ConsumeOptions for WebSocket delivery.
 func (s *streamSession) buildMSEConsumer(
 	ctx context.Context,
 	errChan chan<- error,
 ) (*mse.MSEWriter, av.ConsumeOptions, error) {
 	binaryFactory := func() (io.WriteCloser, error) {
-		return s.wsConn.Writer(ctx, websocket.MessageBinary)
+		writeCtx, cancel := context.WithTimeout(ctx, wsWriteTimeout)
+
+		return &cancelWriter{
+			WriteCloser: mustWriter(s.wsConn.Writer(writeCtx, websocket.MessageBinary)),
+			cancel:      cancel,
+		}, nil
 	}
 	textFactory := func() (io.WriteCloser, error) {
-		return s.wsConn.Writer(ctx, websocket.MessageText)
+		writeCtx, cancel := context.WithTimeout(ctx, wsWriteTimeout)
+
+		return &cancelWriter{
+			WriteCloser: mustWriter(s.wsConn.Writer(writeCtx, websocket.MessageText)),
+			cancel:      cancel,
+		}, nil
 	}
 
 	localMs, err := mse.NewFromFactories(binaryFactory, textFactory)
@@ -353,9 +375,10 @@ func (s *streamSession) pause(ctx context.Context) {
 	live := s.liveMode
 	s.mu.Unlock()
 
+	// Live mode: do NOT pause the shared relay — it would stop packets for
+	// all consumers (including the recorder). The client-side MSE player
+	// handles pause locally.
 	if live {
-		_ = s.handler.svc.Hub().PauseRelay(ctx, s.cameraID)
-
 		return
 	}
 
@@ -371,8 +394,6 @@ func (s *streamSession) resume(ctx context.Context) {
 	s.mu.Unlock()
 
 	if live {
-		_ = s.handler.svc.Hub().ResumeRelay(ctx, s.cameraID)
-
 		return
 	}
 
@@ -461,3 +482,34 @@ func parseWSOptionalTime(r *http.Request, key string) time.Time {
 
 	return t
 }
+
+// cancelWriter wraps an io.WriteCloser and cancels a context on Close.
+// Used to enforce per-write timeouts on WebSocket frames.
+type cancelWriter struct {
+	io.WriteCloser
+
+	cancel context.CancelFunc
+}
+
+func (cw *cancelWriter) Close() error {
+	err := cw.WriteCloser.Close()
+	cw.cancel()
+
+	return err
+}
+
+// mustWriter returns the writer as-is, wrapping any error into a no-op writer
+// so that the MSE layer sees a clean WriteCloser on every call.
+func mustWriter(w io.WriteCloser, err error) io.WriteCloser {
+	if err != nil {
+		return &errWriteCloser{err: err}
+	}
+
+	return w
+}
+
+// errWriteCloser is an io.WriteCloser that always returns a stored error.
+type errWriteCloser struct{ err error }
+
+func (e *errWriteCloser) Write([]byte) (int, error) { return 0, e.err }
+func (e *errWriteCloser) Close() error              { return nil }

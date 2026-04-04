@@ -299,9 +299,29 @@ func (s *Service) RecordedDemuxerFactory(channelID string, from, to time.Time) a
 			return nil, errNoRecordingsFound
 		}
 
-		first, err := openFMP4File(entries[0].FilePath)
-		if err != nil {
-			return nil, err
+		// Find the first openable segment, skipping those deleted by retention.
+		var first av.DemuxCloser
+
+		startIdx := 0
+
+		for i, e := range entries {
+			dmx, oerr := openFMP4File(e.FilePath)
+			if oerr != nil {
+				if os.IsNotExist(oerr) {
+					continue
+				}
+
+				return nil, oerr
+			}
+
+			first = dmx
+			startIdx = i + 1
+
+			break
+		}
+
+		if first == nil {
+			return nil, errNoRecordingsFound
 		}
 
 		seenIDs := make(map[string]struct{}, len(entries))
@@ -309,20 +329,14 @@ func (s *Service) RecordedDemuxerFactory(channelID string, from, to time.Time) a
 			seenIDs[e.ID] = struct{}{}
 		}
 
-		// Resolve the packet buffer for near-live tail.
-		var buf *packetbuf.Buffer
-		if follow && s.bufProv != nil {
-			buf = s.bufProv.PacketBuffer(channelID)
-		}
-
 		src := &indexSource{
 			entries:   entries,
-			idx:       1, // first entry already opened above
+			idx:       startIdx, // entries before this were already opened/skipped
 			seenIDs:   seenIDs,
 			follow:    follow,
 			recIndex:  s.recIndex,
 			channelID: channelID,
-			liveBuf:   buf,
+			bufProv:   s.bufProv, // resolved lazily in Next() when needed
 		}
 
 		return chain.NewChainingDemuxer(first, src), nil
@@ -340,17 +354,42 @@ type indexSource struct {
 	recIndex  recorder.RecordingIndex
 	channelID string
 	liveBuf   *packetbuf.Buffer // near-live tail; nil if not available
-	usedBuf   bool              // true once we've returned the buffer demuxer
+	bufProv   PacketBufferProvider
+	usedBuf   bool // true once we've returned the buffer demuxer
+
+	// Gap detection: track the end time of the last segment so the
+	// ChainingDemuxer can set IsDiscontinuity on the first packet when
+	// a wall-clock gap > gapThreshold is detected.
+	lastSegEnd time.Time
+	lastGap    time.Duration
 }
 
-const pollInterval = 1 * time.Second
+const (
+	pollInterval = 1 * time.Second
+	// gapThreshold is the minimum wall-clock gap between consecutive segments
+	// that triggers a discontinuity marker on the first packet.
+	gapThreshold = 5 * time.Second
+)
+
+// LastGap returns the wall-clock gap detected at the last segment transition.
+// Returns zero when there is no significant gap. Implements chain.GapDetector.
+func (s *indexSource) LastGap() time.Duration { return s.lastGap }
 
 func (s *indexSource) Next(ctx context.Context) (av.DemuxCloser, error) {
-	if s.idx < len(s.entries) {
+	for s.idx < len(s.entries) {
 		entry := s.entries[s.idx]
 		s.idx++
 
-		return openFMP4File(entry.FilePath)
+		dmx, err := s.openEntry(entry)
+		if err != nil {
+			if os.IsNotExist(err) {
+				continue // segment deleted by retention — skip
+			}
+
+			return nil, err
+		}
+
+		return dmx, nil
 	}
 
 	if !s.follow {
@@ -364,19 +403,49 @@ func (s *indexSource) Next(ctx context.Context) (av.DemuxCloser, error) {
 	}
 
 	// No new disk segments — transition to the packet buffer for near-live.
-	if s.liveBuf != nil && !s.usedBuf {
-		s.usedBuf = true
+	// Resolve lazily so that a camera that started recording after the
+	// factory was created is picked up.
+	if !s.usedBuf && s.bufProv != nil {
+		buf := s.bufProv.PacketBuffer(s.channelID)
+		if buf != nil {
+			s.liveBuf = buf
+			s.usedBuf = true
 
-		since := time.Now().Add(-30 * time.Second) // overlap generously
-		if len(s.entries) > 0 {
-			since = s.entries[len(s.entries)-1].EndTime
+			since := time.Now().Add(-30 * time.Second) // overlap generously
+			if len(s.entries) > 0 {
+				since = s.entries[len(s.entries)-1].EndTime
+			}
+
+			return s.liveBuf.Demuxer(since), nil
 		}
-
-		return s.liveBuf.Demuxer(since), nil
 	}
 
 	// No buffer available — keep polling disk.
 	return s.waitForNext(ctx)
+}
+
+// openEntry opens a segment and updates gap tracking. Returns the demuxer or
+// an error. Returns os.IsNotExist-matchable error if the file was deleted.
+func (s *indexSource) openEntry(entry recorder.RecordingEntry) (av.DemuxCloser, error) {
+	dmx, err := openFMP4File(entry.FilePath)
+	if err != nil {
+		return nil, err
+	}
+
+	// Detect wall-clock gap between this segment and the previous one.
+	s.lastGap = 0
+	if !s.lastSegEnd.IsZero() && !entry.StartTime.IsZero() {
+		gap := entry.StartTime.Sub(s.lastSegEnd)
+		if gap >= gapThreshold {
+			s.lastGap = gap
+		}
+	}
+
+	if !entry.EndTime.IsZero() {
+		s.lastSegEnd = entry.EndTime
+	}
+
+	return dmx, nil
 }
 
 // waitForNextWithTimeout does one quick poll for new segments and returns
@@ -400,11 +469,20 @@ func (s *indexSource) waitForNextWithTimeout(ctx context.Context) (av.DemuxClose
 		}
 	}
 
-	if s.idx < len(s.entries) {
+	for s.idx < len(s.entries) {
 		entry := s.entries[s.idx]
 		s.idx++
 
-		return openFMP4File(entry.FilePath)
+		dmx, err := s.openEntry(entry)
+		if err != nil {
+			if os.IsNotExist(err) {
+				continue
+			}
+
+			return nil, err
+		}
+
+		return dmx, nil
 	}
 
 	return nil, nil //nolint:nilnil // signals "no new segments; try buffer fallback"
@@ -417,11 +495,14 @@ func (s *indexSource) waitForNext(ctx context.Context) (av.DemuxCloser, error) {
 		afterTime = s.entries[len(s.entries)-1].EndTime
 	}
 
+	timer := time.NewTimer(pollInterval)
+	defer timer.Stop()
+
 	for {
 		select {
 		case <-ctx.Done():
 			return nil, ctx.Err()
-		case <-time.After(pollInterval):
+		case <-timer.C:
 		}
 
 		newEntries, err := s.recIndex.QueryByChannel(ctx, s.channelID, afterTime, time.Time{})
@@ -429,6 +510,8 @@ func (s *indexSource) waitForNext(ctx context.Context) (av.DemuxCloser, error) {
 			if ctx.Err() != nil {
 				return nil, ctx.Err()
 			}
+
+			timer.Reset(pollInterval)
 
 			continue
 		}
@@ -440,18 +523,29 @@ func (s *indexSource) waitForNext(ctx context.Context) (av.DemuxCloser, error) {
 			}
 		}
 
-		if s.idx < len(s.entries) {
+		for s.idx < len(s.entries) {
 			entry := s.entries[s.idx]
 			s.idx++
 
-			return openFMP4File(entry.FilePath)
+			dmx, err := s.openEntry(entry)
+			if err != nil {
+				if os.IsNotExist(err) {
+					continue
+				}
+
+				return nil, err
+			}
+
+			return dmx, nil
 		}
+
+		timer.Reset(pollInterval)
 	}
 }
 
 // openFMP4File opens a segment file and returns a DemuxCloser wrapping fmp4.Demuxer.
 func openFMP4File(path string) (av.DemuxCloser, error) {
-	f, err := os.Open(path) //nolint:gosec // path comes from trusted recording index
+	f, err := os.Open(path)
 	if err != nil {
 		return nil, err
 	}

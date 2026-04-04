@@ -164,6 +164,10 @@ func (idx *sqliteIndex) FirstAvailable(
 
 	e, err := scanSingleRow(row, channelID)
 	if err != nil {
+		if errors.Is(err, ErrNoRecordings) {
+			return RecordingEntry{}, idx.noRecordingsOrCorrupted(ctx, db, channelID)
+		}
+
 		return RecordingEntry{}, fmt.Errorf(
 			"recorder sqlite: first available for %q: %w",
 			channelID,
@@ -193,6 +197,10 @@ func (idx *sqliteIndex) LastAvailable(
 
 	e, err := scanSingleRow(row, channelID)
 	if err != nil {
+		if errors.Is(err, ErrNoRecordings) {
+			return RecordingEntry{}, idx.noRecordingsOrCorrupted(ctx, db, channelID)
+		}
+
 		return RecordingEntry{}, fmt.Errorf(
 			"recorder sqlite: last available for %q: %w",
 			channelID,
@@ -256,16 +264,49 @@ func (idx *sqliteIndex) Delete(ctx context.Context, id string) error {
 }
 
 func (idx *sqliteIndex) SealInterrupted(ctx context.Context) error {
-	idx.mu.RLock()
-	snapshot := make(map[string]*sql.DB, len(idx.dbs))
-	maps.Copy(snapshot, idx.dbs)
-	idx.mu.RUnlock()
+	// Scan baseDir for ALL channel subdirectories, not just those currently
+	// open in memory. This ensures channels evicted from the LRU cache or
+	// never accessed this session still get their StatusRecording entries
+	// sealed on startup.
+	dirs, err := os.ReadDir(idx.baseDir)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return nil // no recordings directory yet
+		}
+
+		return fmt.Errorf("recorder sqlite: scan base dir: %w", err)
+	}
 
 	const query = `UPDATE recordings SET status = ? WHERE status = ?`
 
-	for ch, db := range snapshot {
-		if _, err := db.ExecContext(ctx, query, StatusInterrupted, StatusRecording); err != nil {
-			return fmt.Errorf("recorder sqlite: seal interrupted for channel %q: %w", ch, err)
+	for _, d := range dirs {
+		if !d.IsDir() {
+			continue
+		}
+
+		channelID := d.Name()
+
+		// Check if the DB file actually exists before opening.
+		dbPath := filepath.Join(idx.baseDir, channelID, "index.db")
+		if _, serr := os.Stat(dbPath); serr != nil {
+			continue
+		}
+
+		db, gerr := idx.getDB(ctx, channelID)
+		if gerr != nil {
+			return fmt.Errorf(
+				"recorder sqlite: seal interrupted for channel %q: %w",
+				channelID,
+				gerr,
+			)
+		}
+
+		if _, eerr := db.ExecContext(ctx, query, StatusInterrupted, StatusRecording); eerr != nil {
+			return fmt.Errorf(
+				"recorder sqlite: seal interrupted for channel %q: %w",
+				channelID,
+				eerr,
+			)
 		}
 	}
 
@@ -373,6 +414,27 @@ func (idx *sqliteIndex) Vacuum(ctx context.Context, channelID string) error {
 	}
 
 	return nil
+}
+
+// noRecordingsOrCorrupted distinguishes between "no recordings at all" and
+// "all recordings are corrupted" when no playable entries are found.
+func (*sqliteIndex) noRecordingsOrCorrupted(
+	ctx context.Context,
+	db *sql.DB,
+	channelID string,
+) error {
+	const q = `SELECT COUNT(*) FROM recordings WHERE status NOT IN ('deleted')`
+
+	var count int
+	if err := db.QueryRowContext(ctx, q).Scan(&count); err != nil {
+		return fmt.Errorf("recorder sqlite: count for %q: %w", channelID, err)
+	}
+
+	if count > 0 {
+		return ErrAllCorrupted
+	}
+
+	return ErrNoRecordings
 }
 
 func (*sqliteIndex) initSchema(ctx context.Context, db *sql.DB) error {

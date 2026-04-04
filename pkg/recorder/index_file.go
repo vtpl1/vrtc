@@ -159,6 +159,7 @@ func (idx *fileIndex) FirstAvailable(_ context.Context, channelID string) (Recor
 
 	var (
 		found  bool
+		hasAny bool // true if any non-deleted entry exists for this channel
 		result RecordingEntry
 	)
 
@@ -167,7 +168,13 @@ func (idx *fileIndex) FirstAvailable(_ context.Context, channelID string) (Recor
 			continue
 		}
 
-		if e.Status == StatusRecording || e.Status == StatusDeleted || e.Status == StatusCorrupted {
+		if e.Status == StatusDeleted {
+			continue
+		}
+
+		hasAny = true
+
+		if e.Status == StatusRecording || e.Status == StatusCorrupted {
 			continue
 		}
 
@@ -178,6 +185,10 @@ func (idx *fileIndex) FirstAvailable(_ context.Context, channelID string) (Recor
 	}
 
 	if !found {
+		if hasAny {
+			return RecordingEntry{}, ErrAllCorrupted
+		}
+
 		return RecordingEntry{}, ErrNoRecordings
 	}
 
@@ -195,6 +206,7 @@ func (idx *fileIndex) LastAvailable(_ context.Context, channelID string) (Record
 
 	var (
 		found  bool
+		hasAny bool
 		result RecordingEntry
 	)
 
@@ -203,7 +215,13 @@ func (idx *fileIndex) LastAvailable(_ context.Context, channelID string) (Record
 			continue
 		}
 
-		if e.Status == StatusRecording || e.Status == StatusDeleted || e.Status == StatusCorrupted {
+		if e.Status == StatusDeleted {
+			continue
+		}
+
+		hasAny = true
+
+		if e.Status == StatusRecording || e.Status == StatusCorrupted {
 			continue
 		}
 
@@ -214,6 +232,10 @@ func (idx *fileIndex) LastAvailable(_ context.Context, channelID string) (Record
 	}
 
 	if !found {
+		if hasAny {
+			return RecordingEntry{}, ErrAllCorrupted
+		}
+
 		return RecordingEntry{}, ErrNoRecordings
 	}
 

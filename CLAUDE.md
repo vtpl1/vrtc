@@ -24,7 +24,7 @@ go test -race -count=1 ./pkg/av/format/fmp4/...
 go test -race -count=1 -run TestName ./path/to/package/...
 ```
 
-**Go module:** `github.com/vtpl1/vrtc` | **Go version:** 1.25
+**Go module:** `github.com/vtpl1/vrtc` | **Go version:** 1.26
 
 ## Architecture Overview
 
@@ -40,16 +40,16 @@ Three runnable binaries, each with a `cmd/<name>/main.go` entry point wired to a
 
 Services load `.env` via `godotenv`, then read their config via `pkg/configpath`.
 
-### Core AV Pipeline (`pkg/av/`)
+### Core AV Pipeline (`vrtc-sdk/av/`)
 
 The central data model: encoded frames flow as `av.Packet` in-memory.
 
 - **`av.Packet.Data`** for H.264/H.265 video is **AVCC format** (4-byte BE length prefix per NALU, ISO 14496-15). All demuxers produce AVCC; all muxers consume AVCC.
 - **`av.Packet.Analytics`** carries optional `*av.FrameAnalytics` (object detections, aggregate counts). Serialised as JSON in fMP4 emsg boxes (`urn:vtpl:analytics:1`).
 
-**Codec types** (`pkg/av/codec/`): H.264, H.265, AAC, OPUS, MJPEG, PCM — each with a dedicated parser for bitstream manipulation (SPS/PPS/VPS extraction, NALU handling).
+**Codec types** (`vrtc-sdk/av/codec/`): H.264, H.265, AAC, OPUS, MJPEG, PCM — each with a dedicated parser for bitstream manipulation (SPS/PPS/VPS extraction, NALU handling).
 
-**Format containers** (`pkg/av/format/`):
+**Format containers** (`vrtc-sdk/av/format/`):
 
 | Package | Read | Write | Notes |
 |---------|------|-------|-------|
@@ -57,9 +57,56 @@ The central data model: encoded frames flow as `av.Packet` in-memory.
 | `mp4` | `Demuxer` | `Muxer` | Standard MP4 |
 | `llhls` | — | `Muxer` | Low-Latency HLS |
 
-### RelayHub (`pkg/av/relayhub/`)
+### RelayHub (`vrtc-sdk/av/relayhub/`)
 
 The `RelayHub` coordinates relays (demuxers) and consumers (muxers). One relay per source (camera/RTSP URL) fans out packets to N consumers (HLS, MSE, recorder). Relays are created on-demand and reclaimed when idle.
+
+- **Delivery policy**: 1 consumer → blocking write (back-pressure); 2+ consumers → leaky write (slow consumers drop frames, resync on next keyframe).
+- **`WithMaxConsumers(n)`**: Limits consumers per relay. Used with `n=1` on recorded playback hubs to enforce single-consumer isolation (prevents leaky mode).
+- **Packet buffer**: 30-second GOP replay buffer per relay for seamless recorded-to-live transition and instant keyframe on consumer attach.
+
+### ChainingDemuxer (`vrtc-sdk/av/chain/`)
+
+Chains multiple fMP4 segment demuxers into a single monotonic `av.DemuxCloser` stream. DTS values are adjusted at each segment boundary. Supports:
+
+- **`SegmentSource`** interface: provides demuxers one at a time (live polling or fixed list).
+- **`GapDetector`** interface: optional; when implemented by a source, ChainingDemuxer sets `IsDiscontinuity` on the first packet after a wall-clock gap > threshold.
+- **`SeekableSegmentSource`** interface: optional; enables seek-to-timestamp within chained playback.
+
+### Edge View (`pkg/edgeview/`)
+
+Browser-facing HTTP/WebSocket server for live view and recorded playback. Key files:
+
+| File | Purpose |
+|------|---------|
+| `stream.go` | `Service` struct, `ResolvePlaybackStart`, `RecordedDemuxerFactory`, `indexSource` |
+| `ws_stream.go` | Unified `/ws/stream` WebSocket endpoint (live + recorded + seek) |
+| `http_handler.go` | HTTP routes, unified `/api/cameras/{camera_id}/stream` endpoint, Huma OpenAPI |
+| `http_cameras.go` | Camera CRUD + CSV import/export |
+| `timeline.go` | Recording timeline for timebar display |
+
+**Unified streaming endpoint**: A single `/ws/stream` (or `/api/cameras/{id}/stream` for HTTP) handles both live and recorded modes. Omit `start` param for live; provide `start` (RFC3339) for recorded. Seek commands switch modes transparently.
+
+**Playback resolution**: `ResolvePlaybackStart` determines the actual mode:
+- `recorded` — recordings exist in the requested range
+- `first_available` — no recordings in range, falls back to earliest available
+- `live` — requested time is beyond the latest recording
+
+### Recorder (`pkg/recorder/`)
+
+Manages fMP4 recording segments on disk with schedule-driven start/stop and automatic segment rotation.
+
+| File | Purpose |
+|------|---------|
+| `recorder.go` | `RecordingManager` — poll loop, segment start/rotate/stop, retention enforcement |
+| `index.go` | `RecordingIndex` interface — `Insert`, `QueryByChannel`, `FirstAvailable`, `LastAvailable`, `Delete`, `SealInterrupted` |
+| `index_sqlite.go` | Per-channel SQLite implementation (WAL mode, LRU eviction at 100 DBs, composite indexes) |
+| `index_file.go` | NDJSON file-based implementation (lightweight alternative) |
+| `retention.go` | Multi-tier retention: continuous/motion/object days, storage cap, disk-free threshold |
+
+**Segment statuses**: `recording` → `complete` / `interrupted` / `corrupted` / `deleted`
+
+**Scale design** (1000 cameras): per-channel SQLite with lazy init, `MaxOpenConns(2)`, LRU eviction when open DB count exceeds 100, `SealInterrupted` scans all channel subdirectories on startup.
 
 ### Terminology
 
@@ -73,7 +120,7 @@ These terms have distinct meanings — do not use them interchangeably:
 | **Stream** | Codec-level | A single audio/video track (index + codec config via `av.Stream`) |
 | **sourceID** | Identifier | The key that identifies a relay's demuxer source (e.g. RTSP URL, camera ID) |
 
-### Analytics Types (`pkg/av/pva.go`)
+### Analytics Types (`vrtc-sdk/av/pva.go`)
 
 | Type | Purpose |
 |------|---------|

@@ -6,9 +6,15 @@ import (
 	"time"
 )
 
-// ErrNoRecordings is returned by FirstAvailable and LastAvailable when no
-// playable recordings exist for the requested channel.
-var ErrNoRecordings = errors.New("no playable recordings found")
+var (
+	// ErrNoRecordings is returned by FirstAvailable and LastAvailable when no
+	// playable recordings exist for the requested channel.
+	ErrNoRecordings = errors.New("no playable recordings found")
+
+	// ErrAllCorrupted is returned by FirstAvailable and LastAvailable when
+	// recordings exist for the channel but all are corrupted or deleted.
+	ErrAllCorrupted = errors.New("all recordings are corrupted")
+)
 
 // Recording status values stored in RecordingEntry.Status.
 const (

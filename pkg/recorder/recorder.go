@@ -556,18 +556,24 @@ func (rm *RecordingManager) startSegment(ctx context.Context, s schedule.Schedul
 	rm.registerActiveSegment(ctx, s, consumerID, path, now, handle, muxerRef)
 
 	// Listen for async muxer errors (e.g. file creation failure, disk full).
+	// Select on ctx.Done() so this goroutine exits when the segment is closed
+	// during rotation, preventing a goroutine leak on the happy path.
 	go func() {
-		muxErr, ok := <-errChan
-		if !ok || muxErr == nil {
+		select {
+		case <-ctx.Done():
 			return
-		}
+		case muxErr, ok := <-errChan:
+			if !ok || muxErr == nil {
+				return
+			}
 
-		log.Warn().
-			Err(muxErr).
-			Str("schedule", s.ID).
-			Str("channel", s.ChannelID).
-			Str("consumer", consumerID).
-			Msg("recorder: muxer error during recording")
+			log.Warn().
+				Err(muxErr).
+				Str("schedule", s.ID).
+				Str("channel", s.ChannelID).
+				Str("consumer", consumerID).
+				Msg("recorder: muxer error during recording")
+		}
 	}()
 }
 
@@ -668,14 +674,18 @@ func (rm *RecordingManager) enforceRetention(
 }
 
 func (rm *RecordingManager) deleteSegment(ctx context.Context, e RecordingEntry) {
-	if err := os.Remove(e.FilePath); err != nil && !os.IsNotExist(err) {
-		log.Error().Err(err).Str("file", e.FilePath).Msg("recorder: delete segment file")
+	// Mark deleted in the index FIRST so that playback queries never return
+	// a segment whose file has already been removed. If the process crashes
+	// after the index update but before the file removal, the orphan file is
+	// harmless and will be cleaned up by the next retention pass.
+	if err := rm.index.Delete(ctx, e.ID); err != nil {
+		log.Error().Err(err).Str("id", e.ID).Msg("recorder: mark segment deleted")
 
 		return
 	}
 
-	if err := rm.index.Delete(ctx, e.ID); err != nil {
-		log.Error().Err(err).Str("id", e.ID).Msg("recorder: mark segment deleted")
+	if err := os.Remove(e.FilePath); err != nil && !os.IsNotExist(err) {
+		log.Error().Err(err).Str("file", e.FilePath).Msg("recorder: delete segment file")
 	}
 
 	log.Info().
