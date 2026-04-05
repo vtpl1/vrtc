@@ -34,16 +34,16 @@ var (
 
 // HealthSnapshot is the typed health response returned by /health.
 //
-//nolint:tagalign,golines // Huma/OpenAPI tags are easier to maintain without padded alignment.
+//nolint:tagalign // Huma/OpenAPI tags are easier to maintain without padded alignment.
 type HealthSnapshot struct {
 	Status         string       `example:"ok" json:"status"`
-	UptimeSeconds  int64        `json:"uptimeSeconds"`
-	Goroutines     int          `json:"goroutines"`
-	Memory         HealthMemory `json:"memory"`
-	ActiveRelays   int          `json:"activeRelays"`
-	ActiveViewers  int          `json:"activeViewers"`
-	ActiveSegments int          `json:"activeSegments"`
-	Timestamp      time.Time    `json:"timestamp"`
+	UptimeSeconds  int64        `             json:"uptimeSeconds"`
+	Goroutines     int          `             json:"goroutines"`
+	Memory         HealthMemory `             json:"memory"`
+	ActiveRelays   int          `             json:"activeRelays"`
+	ActiveViewers  int          `             json:"activeViewers"`
+	ActiveSegments int          `             json:"activeSegments"`
+	Timestamp      time.Time    `             json:"timestamp"`
 }
 
 // HealthMemory contains Go runtime memory counters.
@@ -477,10 +477,10 @@ func writeProblem(w http.ResponseWriter, status int, detail string) {
 
 // paginatedInput provides common pagination query params for list endpoints.
 //
-//nolint:golines // Huma tags are clearer on one line here.
+
 type paginatedInput struct {
 	Limit  int `doc:"Maximum items per page (default: 100, max: 1000)" maximum:"1000" minimum:"1" query:"limit"`
-	Offset int `doc:"Number of items to skip (default: 0)"             minimum:"0"    query:"offset"`
+	Offset int `doc:"Number of items to skip (default: 0)"                            minimum:"0" query:"offset"`
 }
 
 func (p paginatedInput) effectiveLimit() int {

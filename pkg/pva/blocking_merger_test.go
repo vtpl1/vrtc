@@ -34,7 +34,7 @@ func videoPacket(wallClock time.Time) av.Packet {
 func TestBlockingMergerFastPath(t *testing.T) {
 	t.Parallel()
 
-	wallClock := time.Date(2026, 4, 5, 12, 0, 0, 0, time.UTC)
+	wallClock := time.Now().UTC()
 	store := NewAnalyticsStore(time.Minute)
 	hub := NewAnalyticsHub()
 	want := &av.FrameAnalytics{PeopleCount: 5}
@@ -70,7 +70,7 @@ func TestBlockingMergerFastPath(t *testing.T) {
 func TestBlockingMergerSlowPathHubNotification(t *testing.T) {
 	t.Parallel()
 
-	wallClock := time.Date(2026, 4, 5, 12, 1, 0, 0, time.UTC)
+	wallClock := time.Now().UTC()
 	store := NewAnalyticsStore(time.Minute)
 	hub := NewAnalyticsHub()
 	want := &av.FrameAnalytics{PeopleCount: 3}
@@ -119,7 +119,7 @@ func TestBlockingMergerSlowPathHubNotification(t *testing.T) {
 func TestBlockingMergerTimeoutPassthrough(t *testing.T) {
 	t.Parallel()
 
-	wallClock := time.Date(2026, 4, 5, 12, 2, 0, 0, time.UTC)
+	wallClock := time.Now().UTC()
 	store := NewAnalyticsStore(time.Minute)
 	hub := NewAnalyticsHub()
 	maxWait := 50 * time.Millisecond
@@ -159,7 +159,7 @@ func TestBlockingMergerTimeoutPassthrough(t *testing.T) {
 func TestBlockingMergerAudioPassthrough(t *testing.T) {
 	t.Parallel()
 
-	wallClock := time.Date(2026, 4, 5, 12, 3, 0, 0, time.UTC)
+	wallClock := time.Now().UTC()
 	store := NewAnalyticsStore(time.Minute)
 	hub := NewAnalyticsHub()
 	maxWait := time.Second // long maxWait — audio should never wait
@@ -199,7 +199,7 @@ func TestBlockingMergerAudioPassthrough(t *testing.T) {
 func TestBlockingMergerContextCancellation(t *testing.T) {
 	t.Parallel()
 
-	wallClock := time.Date(2026, 4, 5, 12, 4, 0, 0, time.UTC)
+	wallClock := time.Now().UTC()
 	store := NewAnalyticsStore(time.Minute)
 	hub := NewAnalyticsHub()
 	maxWait := 5 * time.Second // long maxWait — context should cancel first
@@ -247,7 +247,7 @@ func TestBlockingMergerContextCancellation(t *testing.T) {
 func TestBlockingMergerCrashRecovery(t *testing.T) {
 	t.Parallel()
 
-	wallClock := time.Date(2026, 4, 5, 12, 5, 0, 0, time.UTC)
+	wallClock := time.Now().UTC()
 	store := NewAnalyticsStore(time.Minute)
 	hub := NewAnalyticsHub()
 	maxWait := 50 * time.Millisecond
@@ -325,7 +325,7 @@ func TestBlockingMergerCrashRecovery(t *testing.T) {
 func TestBlockingMergerHubChannelClosed(t *testing.T) {
 	t.Parallel()
 
-	wallClock := time.Date(2026, 4, 5, 12, 6, 0, 0, time.UTC)
+	wallClock := time.Now().UTC()
 	store := NewAnalyticsStore(time.Minute)
 	hub := NewAnalyticsHub()
 	maxWait := 2 * time.Second // long maxWait — closed channel should unblock first

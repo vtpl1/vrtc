@@ -10,11 +10,9 @@ type Config struct {
 }
 
 type LiveRecordingConfig struct {
-	MediaServerID             string      `json:"media_server_id,omitempty"              mapstructure:"media_server_id"`              //nolint:tagliatelle
 	SiteID                    int         `json:"site_id,omitempty"                      mapstructure:"site_id"`                      //nolint:tagliatelle
 	MaxChannels               int         `json:"max_channels,omitempty"                 mapstructure:"max_channels"`                 //nolint:tagliatelle
 	EnableMinorStreamGrabbing bool        `json:"enable_minor_stream_grabbing,omitempty" mapstructure:"enable_minor_stream_grabbing"` //nolint:tagliatelle
-	EnableTCPServer           bool        `json:"enable_tcp_server,omitempty"            mapstructure:"enable_tcp_server"`            //nolint:tagliatelle
 	EnableGRPCServer          bool        `json:"enable_grpc_server,omitempty"           mapstructure:"enable_grpc_server"`           //nolint:tagliatelle
 	NASPaths                  []string    `json:"nas_paths"                              mapstructure:"nas_paths"`                    //nolint:tagliatelle
 	EdgeEventManagerIP        string      `json:"edge_event_manager_ip,omitempty"        mapstructure:"edge_event_manager_ip"`        //nolint:tagliatelle
@@ -24,8 +22,6 @@ type LiveRecordingConfig struct {
 	MySQLConfig               MySQLConfig `json:"mysql_config"                           mapstructure:"mysql_config"`                 //nolint:tagliatelle
 	ClipDurationMins          int         `json:"clip_duration_mins,omitempty"           mapstructure:"clip_duration_mins"`           //nolint:tagliatelle
 	VMSIP                     string      `json:"vms_ip,omitempty"                       mapstructure:"vms_ip"`                       //nolint:tagliatelle
-
-	EnableAlternateStreamGrabbing bool `json:"enable_alternate_stream_grabbing,omitempty" mapstructure:"enable_alternate_stream_grabbing"` //nolint:tagliatelle
 
 	// Channel / schedule / recording / API
 	ChannelSource      string      `json:"channel_source,omitempty"       mapstructure:"channel_source"`       //nolint:tagliatelle

@@ -23,35 +23,6 @@ linters:
       replace-local: true
     lll:
       line-length: 180
-    varnamelen:
-      ignore-names:
-        - a
-        - b
-        - c
-        - c1
-        - br   # bit reader
-        - bw   # bit writer
-        - cf   # chroma format
-        - e
-        - i
-        - in
-        - j    # secondary loop index
-        - k    # scale factor
-        - m
-        - n    # loop counter and byte offset
-        - ok
-        - p    # byte-slice parameter
-        - r    # reader
-        - s    # struct receiver or writer
-        - sd
-        - sr   # sample-rate code byte
-        - t    # temporary bit value
-        - tt
-        - u
-        - U8
-        - v
-        - w
-        - _b   # byte buffer in NALU parser
     gocognit:
       min-complexity: 60
 

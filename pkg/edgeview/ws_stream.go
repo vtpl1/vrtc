@@ -16,6 +16,8 @@ import (
 	"github.com/vtpl1/vrtc-sdk/av/relayhub"
 )
 
+const cmdTypeMSE = "mse"
+
 var (
 	errCameraIDRequired  = errors.New("camera_id is required")
 	errNoPlaybackSession = errors.New("no playback session")
@@ -125,7 +127,7 @@ func (h *HTTPHandler) wsStream(w http.ResponseWriter, r *http.Request) {
 					return
 				}
 
-				if cmd.Type != "mse" {
+				if cmd.Type != cmdTypeMSE {
 					continue
 				}
 

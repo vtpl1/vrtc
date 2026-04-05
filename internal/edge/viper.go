@@ -38,14 +38,12 @@ func LoadConfig(cfgFile string) (*Config, error) {
 func SaveConfig(cfgFile string) error {
 	defaultCfg := Config{
 		LiveRecordingConfig: LiveRecordingConfig{
-			MediaServerID:             "",
 			IsTestMode:                false,
 			ClipDurationMins:          5,
 			VMSIP:                     "127.0.0.1",
 			SiteID:                    -1,
 			MaxChannels:               -1,
 			EnableMinorStreamGrabbing: true,
-			EnableTCPServer:           false,
 			EnableGRPCServer:          true,
 			NASPaths:                  []string{""},
 			EdgeEventManagerIP:        "127.0.0.1",
@@ -57,8 +55,6 @@ func SaveConfig(cfgFile string) error {
 				Username: "", // set via EDGE_MYSQL_CONFIG_USERNAME env var
 				Password: "", // set via EDGE_MYSQL_CONFIG_PASSWORD env var
 			},
-			EnableAlternateStreamGrabbing: false,
-
 			ChannelSource:      "file",
 			ScheduleSource:     "file",
 			ChannelFilePath:    "",
