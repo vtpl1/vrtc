@@ -83,7 +83,7 @@ linters:
           - contextcheck
         path: 'pkg/recorder/recorder\.go'
         text: 'makeOnCloseCallback'  # SegmentCloseInfo callback runs after ctx cancelled; context.Background() is intentional
-      # cmd/loadtest is a CLI tool — globals for flags, fmt.Print, and long functions are normal
+      # cmd/loadtest and cmd/analytics-tool are CLI tools — globals for flags and long runner functions are normal
       - linters:
           - gochecknoglobals
           - forbidigo
@@ -91,6 +91,12 @@ linters:
           - err113
           - errchkjson
         path: 'cmd/loadtest/'
+      - linters:
+          - gochecknoglobals
+          - funlen
+          - err113
+          - bodyclose
+        path: 'cmd/analytics-tool/'
 
 formatters:
   enable:

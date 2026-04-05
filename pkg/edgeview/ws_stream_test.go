@@ -153,7 +153,7 @@ func TestStreamSession_StartLiveSendsModeChange(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
 	defer cancel()
 
-	var resp map[string]string
+	var resp map[string]any
 	if err := wsjson.Read(ctx, client, &resp); err != nil {
 		t.Fatalf("Read: %v", err)
 	}

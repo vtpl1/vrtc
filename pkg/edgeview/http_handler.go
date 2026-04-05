@@ -19,6 +19,7 @@ import (
 	"github.com/vtpl1/vrtc-sdk/av/format/fmp4"
 	"github.com/vtpl1/vrtc-sdk/av/relayhub"
 	"github.com/vtpl1/vrtc/pkg/metrics"
+	"github.com/vtpl1/vrtc/pkg/pva"
 )
 
 var (
@@ -61,6 +62,7 @@ type HTTPHandler struct {
 	authToken      string
 	segmentCounter ActiveSegmentCounter
 	collector      *metrics.Collector
+	analyticsHub   *pva.AnalyticsHub
 	startTime      time.Time
 }
 
@@ -152,6 +154,7 @@ func (h *HTTPHandler) Router() http.Handler {
 	// ── Streaming endpoints (raw chi — not auto-documentable) ───────────
 	r.Get("/api/cameras/{cameraId}/stream", h.httpStream)
 	r.HandleFunc("/api/cameras/ws/stream", h.wsStream)
+	r.HandleFunc("/api/cameras/ws/analytics", h.wsAnalytics)
 
 	return r
 }

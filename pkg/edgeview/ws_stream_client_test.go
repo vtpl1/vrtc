@@ -186,13 +186,13 @@ func (m *mockRecordingIndex) LastAvailable(_ context.Context, channelID string) 
 	return recorder.RecordingEntry{}, recorder.ErrNoRecordings
 }
 
-func (m *mockRecordingIndex) Delete(context.Context, string) error                       { return nil }
+func (m *mockRecordingIndex) Delete(context.Context, string) error { return nil }
 func (m *mockRecordingIndex) QueryAllChannels(context.Context, time.Time, time.Time) ([]recorder.RecordingEntry, error) {
 	return nil, nil
 }
 
 func (m *mockRecordingIndex) SealInterrupted(context.Context) error { return nil }
-func (m *mockRecordingIndex) Close() error                         { return nil }
+func (m *mockRecordingIndex) Close() error                          { return nil }
 
 // ── Test segment file creation ──────────────────────────────────────────
 
@@ -1415,7 +1415,7 @@ func TestWSClient_SeekAfterPause_Resumes(t *testing.T) {
 	start := base.Add(1 * time.Minute).Format(time.RFC3339)
 	client := dialWS(t, server, "cameraId=cam-1&start="+start)
 
-	client.readTextJSON(2 * time.Second)   // playback_info
+	client.readTextJSON(2 * time.Second) // playback_info
 	client.sendCommand(wsCommand{Type: "mse"})
 	client.drainUntilText(5 * time.Second) // codec string
 

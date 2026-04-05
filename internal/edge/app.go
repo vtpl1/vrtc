@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"net"
 	"net/http"
 	"path/filepath"
 	"time"
@@ -14,17 +15,22 @@ import (
 	"github.com/go-chi/cors"
 	_ "github.com/go-sql-driver/mysql" // register mysql driver
 	"github.com/rs/zerolog/log"
+	"github.com/soheilhy/cmux"
 	"github.com/vtpl1/vrtc-sdk/av"
+	grpcserver "github.com/vtpl1/vrtc-sdk/av/format/grpc"
+	pb "github.com/vtpl1/vrtc-sdk/av/format/grpc/gen/avtransportv1"
 	"github.com/vtpl1/vrtc-sdk/av/relayhub"
 	"github.com/vtpl1/vrtc/internal/avgrabber"
 	"github.com/vtpl1/vrtc/pkg/channel"
 	"github.com/vtpl1/vrtc/pkg/edgeview"
 	"github.com/vtpl1/vrtc/pkg/lifecycle"
 	"github.com/vtpl1/vrtc/pkg/metrics"
+	"github.com/vtpl1/vrtc/pkg/pva"
 	"github.com/vtpl1/vrtc/pkg/recorder"
 	"github.com/vtpl1/vrtc/pkg/schedule"
 	"go.mongodb.org/mongo-driver/v2/mongo"
 	"go.mongodb.org/mongo-driver/v2/mongo/options"
+	"google.golang.org/grpc"
 )
 
 const AppName = "edge"
@@ -37,13 +43,21 @@ var (
 
 // Run starts the live-recording service. It blocks until ctx is cancelled.
 //
-//nolint:funlen // server-lifecycle wiring cannot be split cleanly
+//nolint:funlen,maintidx // server-lifecycle wiring cannot be split cleanly
 func Run(appName string, cfg Config) error {
 	c := cfg.LiveRecordingConfig
 
 	// Default values for new fields.
 	if c.APIListen == "" {
 		c.APIListen = ":8080"
+	}
+
+	analyticsSkew := time.Duration(0)
+
+	if c.AnalyticsSkew != "" {
+		if d, err := time.ParseDuration(c.AnalyticsSkew); err == nil {
+			analyticsSkew = d
+		}
 	}
 
 	ctx, cancel := context.WithCancel(context.Background())
@@ -73,6 +87,13 @@ func Run(appName string, cfg Config) error {
 	recIndex := recorder.NewSQLiteIndex(c.RecordingIndexPath)
 	defer recIndex.Close()
 
+	// -----------------------------------------------------------------------
+	// Analytics pipeline (store + hub + gRPC ingestion server)
+	// -----------------------------------------------------------------------
+	analyticsStore := pva.NewAnalyticsStore(30 * time.Second)
+	analyticsHub := pva.NewAnalyticsHub()
+	analyticsPipeline := pva.NewAnalyticsPipeline(analyticsStore, analyticsHub)
+
 	var metricsCollector *metrics.Collector // set later; safe to capture in closure
 
 	demuxerFactory := av.DemuxerFactory(
@@ -98,7 +119,9 @@ func Run(appName string, cfg Config) error {
 				metricsCollector.RecordRTSPSessionSetup(time.Since(start), sourceID)
 			}
 
-			return d, nil
+			// Wrap with MetadataMerger so analytics (and per-keyframe timing) are
+			// injected into av.Packet.Analytics before entering the relay hub.
+			return pva.NewMetadataMerger(d, analyticsStore.SourceFor(sourceID, analyticsSkew)), nil
 		},
 	)
 
@@ -190,6 +213,7 @@ func Run(appName string, cfg Config) error {
 	// auto-generated OpenAPI spec at /openapi.json and docs UI at /docs).
 	handlerOpts := []edgeview.HTTPHandlerOption{
 		edgeview.WithSegmentCounter(rm),
+		edgeview.WithAnalyticsHub(analyticsHub),
 	}
 	if metricsCollector != nil {
 		handlerOpts = append(handlerOpts, edgeview.WithMetricsCollector(metricsCollector))
@@ -199,13 +223,52 @@ func Run(appName string, cfg Config) error {
 	router.Mount("/", viewHandler.Router())
 
 	srv := &http.Server{
-		Addr:              c.APIListen,
 		Handler:           router,
 		ReadHeaderTimeout: 10 * time.Second,
 	}
 
+	// -----------------------------------------------------------------------
+	// cmux: multiplex HTTP/1.1 and gRPC (HTTP/2) on the same port.
+	// -----------------------------------------------------------------------
+	lis, lisErr := (&net.ListenConfig{}).Listen(ctx, "tcp", c.APIListen)
+	if lisErr != nil {
+		return fmt.Errorf("edge: listen %s: %w", c.APIListen, lisErr)
+	}
+
+	mx := cmux.New(lis)
+	grpcL := mx.MatchWithWriters(
+		cmux.HTTP2MatchHeaderFieldSendSettings("content-type", "application/grpc"),
+	)
+	httpL := mx.Match(cmux.Any())
+
+	// gRPC analytics ingestion server.
+	grpcSrv := grpc.NewServer()
+	pb.RegisterAnalyticsIngestionServiceServer(
+		grpcSrv,
+		grpcserver.NewAnalyticsIngestionServer(analyticsPipeline.Handle),
+	)
+
+	go func() {
+		if err := grpcSrv.Serve(grpcL); err != nil {
+			log.Error().Err(err).Msg("edge: analytics gRPC server error")
+		}
+	}()
+
+	go func() {
+		if err := srv.Serve(httpL); err != nil && !errors.Is(err, http.ErrServerClosed) {
+			errChan <- fmt.Errorf("http server: %w", err)
+		}
+	}()
+
+	go func() {
+		if err := mx.Serve(); err != nil && !errors.Is(err, net.ErrClosed) {
+			log.Error().Err(err).Msg("edge: cmux serve error")
+		}
+	}()
+
 	go func() {
 		<-ctx.Done()
+		grpcSrv.GracefulStop()
 
 		shutCtx, shutCancel := context.WithTimeout(context.Background(), 10*time.Second)
 		defer shutCancel()
@@ -214,12 +277,6 @@ func Run(appName string, cfg Config) error {
 	}()
 
 	log.Info().Str("appName", appName).Str("addr", c.APIListen).Msg("edge starting")
-
-	go func() {
-		if err := srv.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
-			errChan <- fmt.Errorf("http server: %w", err)
-		}
-	}()
 
 	lifecycle.WaitForTerminationRequest(errChan)
 	log.Info().Str("appName", appName).Msg("termination signal received, shutting down gracefully")

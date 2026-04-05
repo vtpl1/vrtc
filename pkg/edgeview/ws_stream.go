@@ -203,9 +203,10 @@ func (s *streamSession) start(ctx context.Context, from time.Time) error {
 
 // startLive sets up a pure live session (no recording index needed).
 func (s *streamSession) startLive(ctx context.Context) error {
-	_ = wsjson.Write(ctx, s.wsConn, map[string]string{
-		"type": "mode_change",
-		"mode": "live",
+	_ = wsjson.Write(ctx, s.wsConn, map[string]any{
+		"type":        "mode_change",
+		"mode":        "live",
+		"wallClockMs": time.Now().UnixMilli(),
 	})
 
 	s.mu.Lock()
@@ -237,16 +238,18 @@ func (s *streamSession) startResolved(ctx context.Context, from time.Time) error
 		return s.startLive(ctx)
 
 	case PlaybackModeFirstAvailable:
-		_ = wsjson.Write(ctx, s.wsConn, map[string]string{
+		_ = wsjson.Write(ctx, s.wsConn, map[string]any{
 			"type":        "playback_info",
 			"actualStart": resolvedFrom.UTC().Format(time.RFC3339),
+			"wallClockMs": resolvedFrom.UnixMilli(),
 			"mode":        "first_available",
 		})
 
 	case PlaybackModeRecorded:
-		_ = wsjson.Write(ctx, s.wsConn, map[string]string{
+		_ = wsjson.Write(ctx, s.wsConn, map[string]any{
 			"type":        "playback_info",
 			"actualStart": resolvedFrom.UTC().Format(time.RFC3339),
+			"wallClockMs": resolvedFrom.UnixMilli(),
 			"mode":        "recorded",
 		})
 	}

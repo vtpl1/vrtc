@@ -39,6 +39,11 @@ type LiveRecordingConfig struct {
 	MongoConfig        MongoConfig `json:"mongo_config"                   mapstructure:"mongo_config"`         //nolint:tagliatelle
 	LogLevel           string      `json:"log_level,omitempty"            mapstructure:"log_level"`            //nolint:tagliatelle
 	AuthToken          string      `json:"auth_token,omitempty"           mapstructure:"auth_token"`           //nolint:tagliatelle
+	// AnalyticsSkew is the expected latency between avgrabber capture and the
+	// analytics tool receiving the frame via WebSocket (e.g. "100ms").
+	// The analytics store uses this offset when matching stored results to
+	// MetadataMerger Fetch calls. Defaults to "0s".
+	AnalyticsSkew string `json:"analytics_skew,omitempty" mapstructure:"analytics_skew"` //nolint:tagliatelle
 }
 
 // MongoConfig holds connection parameters for a MongoDB deployment.
