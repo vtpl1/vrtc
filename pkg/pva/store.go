@@ -84,7 +84,7 @@ const matchTolerance = 200 * time.Millisecond
 // Returns nil if no entry is within tolerance.
 func (s *AnalyticsStore) lookup(sourceID string, target time.Time) *av.FrameAnalytics {
 	s.mu.RLock()
-	entries := s.data[sourceID]
+	entries := append([]entry(nil), s.data[sourceID]...)
 	s.mu.RUnlock()
 
 	if len(entries) == 0 {
