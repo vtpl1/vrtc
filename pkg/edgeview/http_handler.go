@@ -233,6 +233,11 @@ func (h *HTTPHandler) newRouter() (*chi.Mux, huma.API) {
 	r.HandleFunc("/api/cameras/ws/stream", h.wsStream)
 	r.HandleFunc("/api/cameras/ws/analytics", h.wsAnalytics)
 
+	// ── Embedded SPA (catch-all — must be last) ────────────────────────
+	if uiAvailable() {
+		r.NotFound(spaHandler().ServeHTTP)
+	}
+
 	return r, api
 }
 
@@ -519,10 +524,11 @@ func (h *HTTPHandler) streamCameraAnalyticsWSOperation() *huma.Operation {
 // authMiddleware validates the auth token for LAN access.
 func (h *HTTPHandler) authMiddleware(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		// Health check and docs are always allowed.
+		// Health check, docs, and embedded UI are always allowed.
 		if r.URL.Path == "/healthz" || r.URL.Path == "/health" ||
 			r.URL.Path == "/docs" || r.URL.Path == "/docs/" ||
-			r.URL.Path == "/openapi.json" || r.URL.Path == "/openapi.yaml" {
+			r.URL.Path == "/openapi.json" || r.URL.Path == "/openapi.yaml" ||
+			isUIPath(r.URL.Path) {
 			next.ServeHTTP(w, r)
 
 			return

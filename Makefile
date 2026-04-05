@@ -21,7 +21,10 @@ PLATFORMS := \
     linux/amd64 \
 	linux/arm64
 
-.PHONY: all prerequisite fmt lint update build test test-edge-cgo docker-build clean benchmark openapi
+FRONTEND_DIR := frontend/apps/playback-tester
+UI_EMBED_DIR := pkg/edgeview/ui/dist
+
+.PHONY: all prerequisite fmt lint update build test test-edge-cgo docker-build clean benchmark openapi ui
 
 all: fmt lint build
 
@@ -40,7 +43,14 @@ update:
 	go get -u ./...
 	go mod tidy
 
-build:
+ui:
+	@echo "Building frontend..."
+	cd $(FRONTEND_DIR) && npm ci --silent && npm run build
+	@rm -rf $(UI_EMBED_DIR)
+	@mkdir -p $(UI_EMBED_DIR)
+	cp -r $(FRONTEND_DIR)/dist/* $(UI_EMBED_DIR)/
+
+build: ui
 # 	mkdir -p $(OUTPUT_DIR)
 	$(foreach app, $(APPS), $(foreach platform, $(PLATFORMS), $(call build_platform, $(platform), $(app))))
 
@@ -95,3 +105,5 @@ openapi:
 
 clean:
 	rm -rf bin/ data/ hls/
+	rm -rf $(UI_EMBED_DIR)
+	mkdir -p $(UI_EMBED_DIR) && touch $(UI_EMBED_DIR)/.gitkeep
