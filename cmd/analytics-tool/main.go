@@ -1,8 +1,8 @@
 // analytics-tool is an analytics simulation tool that:
 //  1. Lists all cameras on a vrtc edge instance via GET /api/cameras.
 //  2. Subscribes to each camera's WebSocket stream (/api/cameras/ws/stream) to
-//     receive fMP4 fragments and extract the avgrabber wall-clock from analytics
-//     text frames (captureMs field set by the TimingSource in the edge pipeline).
+//     receive fMP4 fragments and extract the avgrabber wall-clock from timing
+//     text frames ({"type":"timing","wallClock":"..."}) emitted by the MSE muxer.
 //  3. Simulates an AI inference pipeline with a random 100ms–5s latency per frame.
 //  4. Pushes FrameAnalytics results back to edge over the gRPC
 //     AnalyticsIngestionService (muxed on the same port via cmux).
@@ -234,10 +234,11 @@ func subscribeStream(ctx context.Context, wsURL, cameraID string, work chan<- fr
 }
 
 // wsTextFrame is a partial parse of any text frame from the WS stream.
+// All timing frames (mode_change, playback_info, seeked, timing) carry
+// wallClock as an RFC3339 string with millisecond precision.
 type wsTextFrame struct {
-	Type        string `json:"type"`
-	WallClockMs int64  `json:"wallClockMs,omitempty"` // from mode_change / playback_info
-	CaptureMs   int64  `json:"captureMs,omitempty"`   // from analytics timing text frames
+	Type      string `json:"type"`
+	WallClock string `json:"wallClock,omitempty"` // RFC3339Milli — from mode_change / playback_info / seeked / timing
 }
 
 func connectAndRead(ctx context.Context, wsURL, cameraID string, work chan<- frameWork) error {
@@ -255,7 +256,7 @@ func connectAndRead(ctx context.Context, wsURL, cameraID string, work chan<- fra
 		return fmt.Errorf("send mse command: %w", err)
 	}
 
-	var latestCaptureMs int64 // updated from text frames
+	var latestWallClock time.Time // updated from text frames
 
 	for {
 		msgType, data, err := conn.Read(ctx)
@@ -270,40 +271,41 @@ func connectAndRead(ctx context.Context, wsURL, cameraID string, work chan<- fra
 				continue
 			}
 
-			var newMs int64
-
-			// mode_change / playback_info provide an initial wall-clock anchor.
-			if (frame.Type == "mode_change" || frame.Type == "playback_info") &&
-				frame.WallClockMs != 0 {
-				newMs = frame.WallClockMs
+			// All relevant frame types carry wallClock as RFC3339Milli.
+			if frame.WallClock == "" {
+				continue
 			}
 
-			// Analytics timing frames (from TimingSource) carry captureMs = avgrabber wallClock.
-			if frame.CaptureMs != 0 {
-				newMs = frame.CaptureMs
+			switch frame.Type {
+			case "mode_change", "playback_info", "seeked", "timing":
+			default:
+				continue
 			}
 
-			if newMs != 0 {
-				if latestCaptureMs != 0 && newMs < latestCaptureMs {
-					log.Warn().Str("cameraId", cameraID).
-						Int64("previous", latestCaptureMs).
-						Int64("received", newMs).
-						Msg("wall-clock went backwards, accepting new value")
-				}
-
-				latestCaptureMs = newMs
+			parsed, perr := time.Parse(av.RFC3339Milli, frame.WallClock)
+			if perr != nil {
+				continue
 			}
+
+			if !latestWallClock.IsZero() && parsed.Before(latestWallClock) {
+				log.Warn().Str("cameraId", cameraID).
+					Time("previous", latestWallClock).
+					Time("received", parsed).
+					Msg("wall-clock went backwards, accepting new value")
+			}
+
+			latestWallClock = parsed
 
 		case websocket.MessageBinary:
 			// Binary frame = fMP4 fragment. Enqueue with current wall-clock reference.
-			if latestCaptureMs == 0 {
+			if latestWallClock.IsZero() {
 				continue // no wall-clock yet; skip until first timing frame arrives
 			}
 
 			select {
 			case work <- frameWork{
 				sourceID:  cameraID,
-				wallClock: time.UnixMilli(latestCaptureMs),
+				wallClock: latestWallClock,
 			}:
 			default:
 				log.Debug().Str("cameraId", cameraID).Msg("work queue full, frame skipped")

@@ -518,8 +518,8 @@ func TestWSClient_RecordedMode_ReceivesPlaybackInfo(t *testing.T) {
 		t.Fatalf("expected mode=recorded, got %v", msg["mode"])
 	}
 
-	if _, ok := msg["actualStart"]; !ok {
-		t.Fatal("playback_info missing actualStart field")
+	if _, ok := msg["actualStartWallClock"]; !ok {
+		t.Fatal("playback_info missing actualStartWallClock field")
 	}
 }
 
@@ -557,19 +557,19 @@ func TestWSClient_EarlyStart_SnapsToFirstSegment(t *testing.T) {
 		t.Fatalf("expected mode=recorded (snapped to first segment), got %v", msg["mode"])
 	}
 
-	// actualStart should be snapped to the segment's start time.
-	actualStart, _ := msg["actualStart"].(string)
+	// actualStartWallClock should be snapped to the segment's start time.
+	actualStart, _ := msg["actualStartWallClock"].(string)
 	if actualStart == "" {
-		t.Fatal("missing actualStart in playback_info")
+		t.Fatal("missing actualStartWallClock in playback_info")
 	}
 
-	parsed, err := time.Parse(time.RFC3339, actualStart)
+	parsed, err := time.Parse(av.RFC3339Milli, actualStart)
 	if err != nil {
-		t.Fatalf("invalid actualStart %q: %v", actualStart, err)
+		t.Fatalf("invalid actualStartWallClock %q: %v", actualStart, err)
 	}
 
 	if parsed.Before(base) {
-		t.Fatalf("actualStart %v should be >= segment start %v", parsed, base)
+		t.Fatalf("actualStartWallClock %v should be >= segment start %v", parsed, base)
 	}
 }
 
@@ -1497,20 +1497,20 @@ func TestWSClient_SeekedResponse_ContainsAllFields(t *testing.T) {
 	seekedMsg := client.waitForMsgType("seeked", 5*time.Second)
 
 	// Validate all required fields from the protocol spec.
-	requiredFields := []string{"type", "time", "mode", "codecChanged", "seq"}
+	requiredFields := []string{"type", "wallClock", "mode", "codecChanged", "seq"}
 	for _, field := range requiredFields {
 		if _, ok := seekedMsg[field]; !ok {
 			t.Errorf("seeked response missing required field %q: %v", field, seekedMsg)
 		}
 	}
 
-	// "time" must be a valid RFC3339 string.
-	if timeStr, ok := seekedMsg["time"].(string); ok {
-		if _, err := time.Parse(time.RFC3339, timeStr); err != nil {
-			t.Errorf("seeked.time is not valid RFC3339: %q", timeStr)
+	// "wallClock" must be a valid RFC3339Milli string.
+	if wcStr, ok := seekedMsg["wallClock"].(string); ok {
+		if _, err := time.Parse(av.RFC3339Milli, wcStr); err != nil {
+			t.Errorf("seeked.wallClock is not valid RFC3339Milli: %q", wcStr)
 		}
 	} else {
-		t.Error("seeked.time is not a string")
+		t.Error("seeked.wallClock is not a string")
 	}
 
 	// "mode" must be one of the defined values.

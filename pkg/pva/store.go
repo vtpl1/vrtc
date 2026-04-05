@@ -71,9 +71,9 @@ func (s *AnalyticsStore) Put(sourceID string, wallClock time.Time, a *av.FrameAn
 // the analytics tool receiving and timestamping it. Fetch(frameID, avgrabberWC)
 // looks up stored analytics at avgrabberWC + skew within ±200 ms.
 //
-// When no analytics entry matches, the source falls back to TimingSource
-// (emits {captureMs: avgrabberWC}) so the MSE writer always emits a timing
-// text frame for WS subscribers to extract the wall-clock.
+// When no analytics entry matches, the source returns nil. The MSE writer
+// emits a separate {"type":"timing"} text frame for continuous wall-clock
+// delivery, independent of analytics.
 func (s *AnalyticsStore) SourceFor(sourceID string, skew time.Duration) Source {
 	return &sourcedStore{store: s, sourceID: sourceID, skew: skew}
 }
@@ -136,14 +136,8 @@ type sourcedStore struct {
 	skew     time.Duration
 }
 
-func (ss *sourcedStore) Fetch(frameID int64, wallClock time.Time) *FrameAnalytics {
-	if fa := ss.store.lookup(ss.sourceID, wallClock.Add(ss.skew)); fa != nil {
-		return fa
-	}
-
-	// Fallback: timing-only entry so the MSE writer can emit captureMs for
-	// the analytics tool to extract the avgrabber wall-clock.
-	return TimingSource{}.Fetch(frameID, wallClock)
+func (ss *sourcedStore) Fetch(_ int64, wallClock time.Time) *FrameAnalytics {
+	return ss.store.lookup(ss.sourceID, wallClock.Add(ss.skew))
 }
 
 // ─── AnalyticsHub ────────────────────────────────────────────────────────────

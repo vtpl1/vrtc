@@ -34,7 +34,7 @@ type wsCommand struct {
 // seekedResponse is sent to the client after a seek completes.
 type seekedResponse struct {
 	Type         string `json:"type"`             // always "seeked"
-	Time         string `json:"time"`             // actual wall-clock time landed on (RFC3339)
+	WallClock    string `json:"wallClock"`        // actual wall-clock time landed on (RFC3339Milli)
 	Mode         string `json:"mode"`             // "recorded", "live", "first_available"
 	CodecChanged bool   `json:"codecChanged"`     // true if codecs differ from previous position
 	Codecs       string `json:"codecs,omitempty"` // new MIME codec string (only when codecChanged)
@@ -204,9 +204,9 @@ func (s *streamSession) start(ctx context.Context, from time.Time) error {
 // startLive sets up a pure live session (no recording index needed).
 func (s *streamSession) startLive(ctx context.Context) error {
 	_ = wsjson.Write(ctx, s.wsConn, map[string]any{
-		"type":        "mode_change",
-		"mode":        "live",
-		"wallClockMs": time.Now().UnixMilli(),
+		"type":      "mode_change",
+		"mode":      "live",
+		"wallClock": time.Now().UTC().Format(av.RFC3339Milli),
 	})
 
 	s.mu.Lock()
@@ -239,18 +239,18 @@ func (s *streamSession) startResolved(ctx context.Context, from time.Time) error
 
 	case PlaybackModeFirstAvailable:
 		_ = wsjson.Write(ctx, s.wsConn, map[string]any{
-			"type":        "playback_info",
-			"actualStart": resolvedFrom.UTC().Format(time.RFC3339),
-			"wallClockMs": resolvedFrom.UnixMilli(),
-			"mode":        "first_available",
+			"type":                 "playback_info",
+			"actualStartWallClock": resolvedFrom.UTC().Format(av.RFC3339Milli),
+			"wallClock":            resolvedFrom.UTC().Format(av.RFC3339Milli),
+			"mode":                 "first_available",
 		})
 
 	case PlaybackModeRecorded:
 		_ = wsjson.Write(ctx, s.wsConn, map[string]any{
-			"type":        "playback_info",
-			"actualStart": resolvedFrom.UTC().Format(time.RFC3339),
-			"wallClockMs": resolvedFrom.UnixMilli(),
-			"mode":        "recorded",
+			"type":                 "playback_info",
+			"actualStartWallClock": resolvedFrom.UTC().Format(av.RFC3339Milli),
+			"wallClock":            resolvedFrom.UTC().Format(av.RFC3339Milli),
+			"mode":                 "recorded",
 		})
 	}
 
@@ -495,7 +495,7 @@ func (s *streamSession) handleSeek(ctx context.Context, cmd wsCommand, errChan c
 
 		_ = wsjson.Write(ctx, s.wsConn, seekedResponse{
 			Type:         "seeked",
-			Time:         time.Now().UTC().Format(time.RFC3339),
+			WallClock:    time.Now().UTC().Format(av.RFC3339Milli),
 			Mode:         PlaybackModeLive,
 			CodecChanged: false,
 			Seq:          cmd.Seq,
@@ -669,7 +669,7 @@ func (s *streamSession) sendSeekedResponse(
 
 	resp := seekedResponse{
 		Type:         "seeked",
-		Time:         actualTime.UTC().Format(time.RFC3339),
+		WallClock:    actualTime.UTC().Format(av.RFC3339Milli),
 		Mode:         mode,
 		CodecChanged: codecChanged,
 		Gap:          gap,

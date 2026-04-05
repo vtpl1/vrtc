@@ -27,18 +27,3 @@ type Source interface {
 type NilSource struct{}
 
 func (NilSource) Fetch(_ int64, _ time.Time) *FrameAnalytics { return nil }
-
-// TimingSource is a Source that injects minimal FrameAnalytics carrying only
-// CaptureMS (set to wallClock.UnixMilli()). It enables WS subscribers such as
-// the analytics tool to extract the avgrabber wall-clock from the analytics text
-// frame without adding new WebSocket protocol frame types.
-// Returns nil when wallClock is zero.
-type TimingSource struct{}
-
-func (TimingSource) Fetch(_ int64, wallClock time.Time) *FrameAnalytics {
-	if wallClock.IsZero() {
-		return nil
-	}
-
-	return &FrameAnalytics{CaptureMS: wallClock.UnixMilli()}
-}
