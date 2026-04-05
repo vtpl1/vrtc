@@ -201,20 +201,46 @@ func (h *AnalyticsHub) Broadcast(sourceID string, a *av.FrameAnalytics) {
 
 // ─── AnalyticsPipeline ───────────────────────────────────────────────────────
 
+// PersistenceWriter is the subset of persistence.Writer used by the pipeline.
+type PersistenceWriter interface {
+	Enqueue(channelID string, wallClock time.Time, a *av.FrameAnalytics)
+}
+
 // AnalyticsPipeline wires the AnalyticsStore and AnalyticsHub together as a
 // single handler called by the gRPC AnalyticsIngestionServer on every result.
+// An optional PersistenceWriter persists analytics to SQLite for historical
+// playback enrichment.
 type AnalyticsPipeline struct {
-	store *AnalyticsStore
-	hub   *AnalyticsHub
+	store  *AnalyticsStore
+	hub    *AnalyticsHub
+	writer PersistenceWriter // nil if persistence not configured
 }
 
 // NewAnalyticsPipeline creates a pipeline backed by store and hub.
-func NewAnalyticsPipeline(store *AnalyticsStore, hub *AnalyticsHub) *AnalyticsPipeline {
-	return &AnalyticsPipeline{store: store, hub: hub}
+func NewAnalyticsPipeline(
+	store *AnalyticsStore,
+	hub *AnalyticsHub,
+	opts ...PipelineOption,
+) *AnalyticsPipeline {
+	p := &AnalyticsPipeline{store: store, hub: hub}
+	for _, opt := range opts {
+		opt(p)
+	}
+
+	return p
+}
+
+// PipelineOption configures optional AnalyticsPipeline dependencies.
+type PipelineOption func(*AnalyticsPipeline)
+
+// WithPersistenceWriter enables analytics persistence to SQLite for
+// analytics-enriched recorded playback.
+func WithPersistenceWriter(w PersistenceWriter) PipelineOption {
+	return func(p *AnalyticsPipeline) { p.writer = w }
 }
 
 // Handle is the grpc.AnalyticsHandler callback. It stores analytics by
-// wall-clock and broadcasts to hub subscribers.
+// wall-clock, broadcasts to hub subscribers, and optionally persists to SQLite.
 func (p *AnalyticsPipeline) Handle(
 	sourceID string,
 	_ int64,
@@ -223,4 +249,8 @@ func (p *AnalyticsPipeline) Handle(
 ) {
 	p.store.Put(sourceID, wallClock, a)
 	p.hub.Broadcast(sourceID, a)
+
+	if p.writer != nil {
+		p.writer.Enqueue(sourceID, wallClock, a)
+	}
 }

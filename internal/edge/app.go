@@ -26,6 +26,7 @@ import (
 	"github.com/vtpl1/vrtc/pkg/lifecycle"
 	"github.com/vtpl1/vrtc/pkg/metrics"
 	"github.com/vtpl1/vrtc/pkg/pva"
+	"github.com/vtpl1/vrtc/pkg/pva/persistence"
 	"github.com/vtpl1/vrtc/pkg/recorder"
 	"github.com/vtpl1/vrtc/pkg/schedule"
 	"go.mongodb.org/mongo-driver/v2/mongo"
@@ -96,11 +97,26 @@ func Run(appName string, cfg Config) error {
 	defer recIndex.Close()
 
 	// -----------------------------------------------------------------------
-	// Analytics pipeline (store + hub + gRPC ingestion server)
+	// Analytics persistence (SQLite per-channel)
+	// -----------------------------------------------------------------------
+	analyticsDBDir := filepath.Join(filepath.Dir(c.RecordingIndexPath), "analytics")
+
+	analyticsDBM := persistence.NewDBManager(analyticsDBDir)
+	defer analyticsDBM.Close()
+
+	analyticsWriter := persistence.NewWriter(analyticsDBM, 7*24*time.Hour, 500_000)
+	defer analyticsWriter.Close()
+
+	analyticsReader := persistence.NewReader(analyticsDBM)
+
+	// -----------------------------------------------------------------------
+	// Analytics pipeline (store + hub + persistence + gRPC ingestion server)
 	// -----------------------------------------------------------------------
 	analyticsStore := pva.NewAnalyticsStore(30 * time.Second)
 	analyticsHub := pva.NewAnalyticsHub()
-	analyticsPipeline := pva.NewAnalyticsPipeline(analyticsStore, analyticsHub)
+	analyticsPipeline := pva.NewAnalyticsPipeline(analyticsStore, analyticsHub,
+		pva.WithPersistenceWriter(analyticsWriter),
+	)
 
 	var metricsCollector *metrics.Collector // set later; safe to capture in closure
 
@@ -161,6 +177,8 @@ func Run(appName string, cfg Config) error {
 	viewSvc := edgeview.NewService(log.Logger, sm, recIndex, sm,
 		edgeview.WithChannelWriter(chanProvider),
 		edgeview.WithRecordingProvider(rm),
+		edgeview.WithPersistenceReader(analyticsReader),
+		edgeview.WithLiveAnalyticsStore(analyticsStore),
 	)
 
 	// -----------------------------------------------------------------------
@@ -243,6 +261,7 @@ func Run(appName string, cfg Config) error {
 	handlerOpts := []edgeview.HTTPHandlerOption{
 		edgeview.WithSegmentCounter(rm),
 		edgeview.WithAnalyticsHub(analyticsHub),
+		edgeview.WithAnalyticsReader(analyticsReader),
 	}
 	if metricsCollector != nil {
 		handlerOpts = append(handlerOpts, edgeview.WithMetricsCollector(metricsCollector))

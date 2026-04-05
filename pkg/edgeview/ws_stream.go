@@ -212,7 +212,7 @@ func (s *streamSession) startResolved(ctx context.Context, from time.Time) error
 		})
 	}
 
-	factory := s.handler.svc.RecordedDemuxerFactory(s.cameraID, resolvedFrom, time.Time{})
+	factory := s.recordedFactory(resolvedFrom)
 	sm := relayhub.New(factory, nil, relayhub.WithMaxConsumers(1))
 
 	if err := sm.Start(ctx); err != nil {
@@ -718,7 +718,7 @@ func (s *streamSession) sendSeekedResponse(
 // startRecordedAt creates a recorded playback session starting at the given time.
 // Unlike startResolved, this skips the resolution step (caller already resolved).
 func (s *streamSession) startRecordedAt(ctx context.Context, from time.Time) error {
-	factory := s.handler.svc.RecordedDemuxerFactory(s.cameraID, from, time.Time{})
+	factory := s.recordedFactory(from)
 	sm := relayhub.New(factory, nil, relayhub.WithMaxConsumers(1))
 
 	if err := sm.Start(ctx); err != nil {
@@ -735,6 +735,25 @@ func (s *streamSession) startRecordedAt(ctx context.Context, from time.Time) err
 	s.mu.Unlock()
 
 	return nil
+}
+
+// recordedFactory returns the appropriate DemuxerFactory for the session.
+// When analyticsMode is enabled and the persistence reader is available,
+// it returns the analytics-enriched factory; otherwise the plain factory.
+func (s *streamSession) recordedFactory(from time.Time) av.DemuxerFactory {
+	svc := s.handler.svc
+
+	if s.analyticsMode && svc.PersistReader() != nil {
+		return svc.AnalyticsRecordedDemuxerFactory(
+			s.cameraID,
+			from,
+			time.Time{},
+			svc.PersistReader(),
+			svc.LiveAnalyticsSource(s.cameraID),
+		)
+	}
+
+	return svc.RecordedDemuxerFactory(s.cameraID, from, time.Time{})
 }
 
 // captureCodecStr returns the current MIME codec string from the MSE writer,

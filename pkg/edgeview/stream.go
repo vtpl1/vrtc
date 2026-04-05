@@ -17,6 +17,8 @@ import (
 	"github.com/vtpl1/vrtc-sdk/av/relayhub"
 	"github.com/vtpl1/vrtc/pkg/channel"
 	"github.com/vtpl1/vrtc/pkg/metrics"
+	"github.com/vtpl1/vrtc/pkg/pva"
+	"github.com/vtpl1/vrtc/pkg/pva/persistence"
 	"github.com/vtpl1/vrtc/pkg/recorder"
 )
 
@@ -52,6 +54,10 @@ type Service struct {
 	collector         *metrics.Collector      // nil if metrics not configured
 	cameras           map[string]*CameraInfo
 	analyticsRelayHub av.RelayHub // nil if analytics hub not configured
+
+	// Analytics-enriched recorded playback dependencies.
+	persistReader      *persistence.Reader // nil if analytics persistence not configured
+	liveAnalyticsStore *pva.AnalyticsStore // nil if analytics store not configured
 
 	mu sync.RWMutex
 
@@ -124,6 +130,18 @@ func WithAnalyticsRelayHub(hub av.RelayHub) ServiceOption {
 	return func(s *Service) { s.analyticsRelayHub = hub }
 }
 
+// WithPersistenceReader enables analytics-enriched recorded playback by
+// providing the SQLite persistence reader for historical analytics lookup.
+func WithPersistenceReader(r *persistence.Reader) ServiceOption {
+	return func(s *Service) { s.persistReader = r }
+}
+
+// WithLiveAnalyticsStore sets the in-memory analytics store used as a
+// fallback source during the recorded-to-live playback transition.
+func WithLiveAnalyticsStore(store *pva.AnalyticsStore) ServiceOption {
+	return func(s *Service) { s.liveAnalyticsStore = store }
+}
+
 // Hub returns the underlying relay hub for direct consumer attachment.
 func (s *Service) Hub() av.RelayHub {
 	return s.hub
@@ -144,6 +162,21 @@ func (s *Service) AnalyticsRelayHub() av.RelayHub {
 	defer s.mu.RUnlock()
 
 	return s.analyticsRelayHub
+}
+
+// PersistReader returns the persistence reader, or nil if not configured.
+func (s *Service) PersistReader() *persistence.Reader {
+	return s.persistReader
+}
+
+// LiveAnalyticsSource returns a pva.Source backed by the live analytics store
+// for the given channel. Returns nil if the live store is not configured.
+func (s *Service) LiveAnalyticsSource(channelID string) pva.Source {
+	if s.liveAnalyticsStore == nil {
+		return nil
+	}
+
+	return s.liveAnalyticsStore.SourceFor(channelID)
 }
 
 // RecIndex returns the recording index, or nil if unavailable.
@@ -327,7 +360,7 @@ func (s *Service) RecordedDemuxerFactory(channelID string, from, to time.Time) a
 			return nil, err
 		}
 
-		first, startIdx, err := openFirstSegment(entries)
+		first, startIdx, err := openFirstSegment(entries, false)
 		if err != nil {
 			return nil, err
 		}
@@ -360,6 +393,84 @@ func (s *Service) RecordedDemuxerFactory(channelID string, from, to time.Time) a
 	}
 }
 
+// AnalyticsRecordedDemuxerFactory returns a DemuxerFactory like
+// RecordedDemuxerFactory but with analytics enrichment: each segment's demuxer
+// is wrapped with WallClockStampingDemuxer (so packets gain a wall-clock time),
+// and the entire chain is wrapped with MetadataMerger using a CompositeSource
+// (PersistenceSource for historical data, live AnalyticsStore for the near-live
+// tail transition).
+func (s *Service) AnalyticsRecordedDemuxerFactory(
+	channelID string,
+	from, to time.Time,
+	reader *persistence.Reader,
+	liveSource pva.Source,
+) av.DemuxerFactory {
+	follow := to.IsZero()
+
+	return func(ctx context.Context, _ string) (av.DemuxCloser, error) {
+		if s.recIndex == nil {
+			return nil, errNoRecordingIndex
+		}
+
+		entries, err := s.recIndex.QueryByChannel(ctx, channelID, from, to)
+		if err != nil {
+			return nil, err
+		}
+
+		first, startIdx, err := openFirstSegment(entries, true)
+		if err != nil {
+			return nil, err
+		}
+
+		if first == nil {
+			if dmx := s.liveFallback(channelID, from, follow); dmx != nil {
+				return wrapWithAnalyticsMerger(dmx, reader, channelID, liveSource), nil
+			}
+
+			return nil, errNoRecordingsFound
+		}
+
+		seenIDs := make(map[string]struct{}, len(entries))
+		for _, e := range entries {
+			seenIDs[e.ID] = struct{}{}
+		}
+
+		src := &indexSource{
+			entries:        entries,
+			idx:            startIdx,
+			seenIDs:        seenIDs,
+			follow:         follow,
+			recIndex:       s.recIndex,
+			channelID:      channelID,
+			bufProv:        s.bufProv,
+			collector:      s.collector,
+			wallClockStamp: true,
+		}
+
+		dmx := chain.NewChainingDemuxer(first, src)
+
+		return wrapWithAnalyticsMerger(dmx, reader, channelID, liveSource), nil
+	}
+}
+
+// wrapWithAnalyticsMerger wraps a demuxer with MetadataMerger using a
+// CompositeSource (persistence primary, live fallback).
+func wrapWithAnalyticsMerger(
+	dmx av.DemuxCloser,
+	reader *persistence.Reader,
+	channelID string,
+	liveSource pva.Source,
+) av.DemuxCloser {
+	persistSource := pva.NewPersistenceSource(reader, channelID)
+
+	source := pva.Source(persistSource)
+	if liveSource != nil {
+		source = &pva.CompositeSource{Primary: persistSource, Fallback: liveSource}
+	}
+
+	return pva.NewMetadataMerger(dmx, source)
+}
+
 // liveFallback returns a buffer demuxer for near-live replay when no disk
 // segments are available. Returns nil if no buffer is available.
 func (s *Service) liveFallback(channelID string, from time.Time, follow bool) av.DemuxCloser {
@@ -377,7 +488,11 @@ func (s *Service) liveFallback(channelID string, from time.Time, follow bool) av
 // openFirstSegment finds the first openable segment in entries, skipping those
 // deleted by retention. Returns the demuxer, the next index, and any error.
 // Returns (nil, 0, nil) when no entries exist or all were deleted.
-func openFirstSegment(entries []recorder.RecordingEntry) (av.DemuxCloser, int, error) {
+// When wallClockStamp is true, wraps the demuxer with WallClockStampingDemuxer.
+func openFirstSegment(
+	entries []recorder.RecordingEntry,
+	wallClockStamp bool,
+) (av.DemuxCloser, int, error) {
 	for i, e := range entries {
 		dmx, err := openFMP4File(e.FilePath)
 		if err != nil {
@@ -386,6 +501,10 @@ func openFirstSegment(entries []recorder.RecordingEntry) (av.DemuxCloser, int, e
 			}
 
 			return nil, 0, err
+		}
+
+		if wallClockStamp && !e.StartTime.IsZero() {
+			dmx = pva.NewWallClockStampingDemuxer(dmx, e.StartTime)
 		}
 
 		return dmx, i + 1, nil
@@ -408,6 +527,11 @@ type indexSource struct {
 	bufProv   PacketBufferProvider
 	collector *metrics.Collector // nil if metrics not configured
 	usedBuf   bool               // true once we've returned the buffer demuxer
+
+	// wallClockStamp wraps each segment's demuxer with a WallClockStampingDemuxer
+	// so that recorded packets gain a WallClockTime. Required for analytics-
+	// enriched recorded playback (the PersistenceSource needs wall-clock to match).
+	wallClockStamp bool
 
 	// Gap detection: track the end time of the last segment so the
 	// ChainingDemuxer can set IsDiscontinuity on the first packet when
@@ -481,6 +605,10 @@ func (s *indexSource) OpenAt(ctx context.Context, ts time.Time) (av.DemuxCloser,
 
 		if !entry.EndTime.IsZero() {
 			s.lastSegEnd = entry.EndTime
+		}
+
+		if s.wallClockStamp && !entry.StartTime.IsZero() {
+			dmx = pva.NewWallClockStampingDemuxer(dmx, entry.StartTime)
 		}
 
 		return dmx, nil
@@ -584,6 +712,10 @@ func (s *indexSource) openEntry(entry recorder.RecordingEntry) (av.DemuxCloser, 
 
 	if !entry.EndTime.IsZero() {
 		s.lastSegEnd = entry.EndTime
+	}
+
+	if s.wallClockStamp && !entry.StartTime.IsZero() {
+		dmx = pva.NewWallClockStampingDemuxer(dmx, entry.StartTime)
 	}
 
 	return dmx, nil
