@@ -2,8 +2,8 @@ package main
 
 import (
 	"os"
+	"path/filepath"
 
-	_ "github.com/go-sql-driver/mysql"
 	"github.com/joho/godotenv"
 	"github.com/rs/zerolog/log"
 	"github.com/spf13/cobra"
@@ -31,6 +31,10 @@ func newRootCmd() *cobra.Command {
 				if err != nil {
 					return err
 				}
+
+				// Bootstrap empty seed files so file-backed providers work
+				// out of the box.
+				bootstrapSeedFiles(cfgFile)
 
 				cfg, err = edge.LoadConfig(cfgFile)
 				if err != nil {
@@ -66,6 +70,23 @@ func newRootCmd() *cobra.Command {
 
 			return edge.Run(edge.AppName, cfgGlobal)
 		},
+	}
+}
+
+// bootstrapSeedFiles creates empty JSON array files for channels and schedules
+// so the file-backed providers work immediately after generating a default config.
+func bootstrapSeedFiles(cfgFile string) {
+	cfgDir := filepath.Dir(cfgFile)
+
+	for _, name := range []string{"channels.json", "schedules.json"} {
+		p := filepath.Join(cfgDir, name)
+		if _, err := os.Stat(p); err == nil {
+			continue // already exists
+		}
+
+		if err := os.WriteFile(p, []byte("[]"), 0o644); err != nil { //nolint:gosec
+			log.Warn().Err(err).Str("path", p).Msg("failed to create seed file")
+		}
 	}
 }
 

@@ -1,41 +1,20 @@
 package edge
 
 import (
-	"github.com/spf13/viper"
+	"path/filepath"
+
 	"github.com/vtpl1/vrtc/internal/config"
 )
 
-// LoadConfig reads the JSON config file.
-// Credentials are injected via explicit environment variables:
-//
-//	EDGE_MYSQL_CONFIG_USERNAME
-//	EDGE_MYSQL_CONFIG_PASSWORD
 func LoadConfig(cfgFile string) (*Config, error) {
-	v := viper.New()
-	// BindEnv maps specific config keys to their env vars.
-	// AutomaticEnv cannot be used here because Viper uppercases the key
-	// before applying the replacer, making prefix-stripping unreliable.
-	_ = v.BindEnv("config.mysql_config.username", "EDGE_MYSQL_CONFIG_USERNAME")
-	_ = v.BindEnv("config.mysql_config.password", "EDGE_MYSQL_CONFIG_PASSWORD")
-	v.SetConfigFile(cfgFile)
-	v.SetConfigType("json")
-
-	err := v.ReadInConfig()
-	if err != nil {
-		return nil, err
-	}
-
-	var cfg Config
-
-	err = v.Unmarshal(&cfg)
-	if err != nil {
-		return nil, err
-	}
-
-	return &cfg, nil
+	return config.LoadConfigJSON[Config](cfgFile)
 }
 
 func SaveConfig(cfgFile string) error {
+	// Derive default data paths relative to the config file's directory so that
+	// the binary runs out of the box without any manual configuration.
+	cfgDir := filepath.Dir(cfgFile)
+
 	defaultCfg := Config{
 		LiveRecordingConfig: LiveRecordingConfig{
 			IsTestMode:                false,
@@ -49,25 +28,11 @@ func SaveConfig(cfgFile string) error {
 			EdgeEventManagerIP:        "127.0.0.1",
 			PreMotionDurSecs:          10,
 			PostMotionDurSecs:         10,
-			MySQLConfig: MySQLConfig{
-				Host:     "127.0.0.1",
-				Port:     3306,
-				Username: "", // set via EDGE_MYSQL_CONFIG_USERNAME env var
-				Password: "", // set via EDGE_MYSQL_CONFIG_PASSWORD env var
-			},
-			ChannelSource:      "file",
-			ScheduleSource:     "file",
-			ChannelFilePath:    "",
-			ScheduleFilePath:   "",
-			RecordingIndexPath: "",
-			APIListen:          ":8080",
-			ChannelDB:          "edge",
-			ScheduleDB:         "edge",
-			MongoConfig: MongoConfig{
-				URI:      "mongodb://localhost:27017",
-				Database: "edge",
-			},
-			LogLevel: "debug",
+			ChannelFilePath:           filepath.Join(cfgDir, "channels.json"),
+			ScheduleFilePath:          filepath.Join(cfgDir, "schedules.json"),
+			RecordingIndexPath:        filepath.Join(cfgDir, "recordings"),
+			APIListen:                 ":8080",
+			LogLevel:                  "debug",
 		},
 	}
 

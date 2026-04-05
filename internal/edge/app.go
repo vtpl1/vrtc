@@ -2,7 +2,6 @@ package edge
 
 import (
 	"context"
-	"database/sql"
 	"errors"
 	"fmt"
 	"net"
@@ -13,7 +12,6 @@ import (
 	"github.com/go-chi/chi/v5"
 	"github.com/go-chi/chi/v5/middleware"
 	"github.com/go-chi/cors"
-	_ "github.com/go-sql-driver/mysql" // register mysql driver
 	"github.com/rs/zerolog/log"
 	"github.com/soheilhy/cmux"
 	"github.com/vtpl1/vrtc-sdk/av"
@@ -29,8 +27,6 @@ import (
 	"github.com/vtpl1/vrtc/pkg/pva/persistence"
 	"github.com/vtpl1/vrtc/pkg/recorder"
 	"github.com/vtpl1/vrtc/pkg/schedule"
-	"go.mongodb.org/mongo-driver/v2/mongo"
-	"go.mongodb.org/mongo-driver/v2/mongo/options"
 	"google.golang.org/grpc"
 )
 
@@ -334,86 +330,26 @@ func Run(appName string, cfg Config) error {
 	return nil
 }
 
-// newChannelProvider constructs the ChannelWriter selected by cfg.ChannelSource.
-//
-//nolint:dupl // symmetric with newScheduleProvider by design
 func newChannelProvider(
-	ctx context.Context,
+	_ context.Context,
 	c LiveRecordingConfig,
 ) (channel.ChannelWriter, error) {
-	switch c.ChannelSource {
-	case "mysql":
-		db, err := sql.Open("mysql", c.MySQLConfig.DSN(c.ChannelDB))
-		if err != nil {
-			return nil, fmt.Errorf("open mysql: %w", err)
-		}
-
-		if err := db.PingContext(ctx); err != nil {
-			db.Close()
-
-			return nil, fmt.Errorf("ping mysql: %w", err)
-		}
-
-		return channel.NewMySQLProvider(db), nil
-
-	case "mongo":
-		client, err := mongo.Connect(options.Client().ApplyURI(c.MongoConfig.URI))
-		if err != nil {
-			return nil, fmt.Errorf("connect mongo: %w", err)
-		}
-
-		coll := client.Database(c.MongoConfig.Database).Collection("channels")
-
-		return channel.NewMongoProvider(coll), nil
-
-	default: // "file" or ""
-		if c.ChannelFilePath == "" {
-			return nil, errChannelFilePathRequired
-		}
-
-		return channel.NewFileProvider(c.ChannelFilePath), nil
+	if c.ChannelFilePath == "" {
+		return nil, errChannelFilePathRequired
 	}
+
+	return channel.NewFileProvider(c.ChannelFilePath), nil
 }
 
-// newScheduleProvider constructs the ScheduleProvider selected by cfg.ScheduleSource.
-//
-//nolint:dupl // symmetric with newChannelProvider by design
 func newScheduleProvider(
-	ctx context.Context,
+	_ context.Context,
 	c LiveRecordingConfig,
 ) (schedule.ScheduleProvider, error) {
-	switch c.ScheduleSource {
-	case "mysql":
-		db, err := sql.Open("mysql", c.MySQLConfig.DSN(c.ScheduleDB))
-		if err != nil {
-			return nil, fmt.Errorf("open mysql: %w", err)
-		}
-
-		if err := db.PingContext(ctx); err != nil {
-			db.Close()
-
-			return nil, fmt.Errorf("ping mysql: %w", err)
-		}
-
-		return schedule.NewMySQLProvider(db), nil
-
-	case "mongo":
-		client, err := mongo.Connect(options.Client().ApplyURI(c.MongoConfig.URI))
-		if err != nil {
-			return nil, fmt.Errorf("connect mongo: %w", err)
-		}
-
-		coll := client.Database(c.MongoConfig.Database).Collection("recording_schedules")
-
-		return schedule.NewMongoProvider(coll), nil
-
-	default: // "file" or ""
-		if c.ScheduleFilePath == "" {
-			return nil, errScheduleFilePathRequired
-		}
-
-		return schedule.NewFileProvider(c.ScheduleFilePath), nil
+	if c.ScheduleFilePath == "" {
+		return nil, errScheduleFilePathRequired
 	}
+
+	return schedule.NewFileProvider(c.ScheduleFilePath), nil
 }
 
 // channelAdapter adapts channel.ChannelProvider to recorder.ChannelSource.
