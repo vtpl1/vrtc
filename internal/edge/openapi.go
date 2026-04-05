@@ -9,11 +9,11 @@ import (
 
 	"github.com/rs/zerolog/log"
 	"github.com/vtpl1/vrtc-sdk/av"
+	"github.com/vtpl1/vrtc-sdk/av/pva"
+	"github.com/vtpl1/vrtc-sdk/av/pva/persistence"
 	"github.com/vtpl1/vrtc/pkg/channel"
 	"github.com/vtpl1/vrtc/pkg/edgeview"
 	"github.com/vtpl1/vrtc/pkg/metrics"
-	"github.com/vtpl1/vrtc-sdk/av/pva"
-	"github.com/vtpl1/vrtc-sdk/av/pva/persistence"
 )
 
 var errOpenAPIRelayConsume = errors.New("openapi relay stub does not support consumption")

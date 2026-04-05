@@ -15,4 +15,4 @@ type Schedule = sdkschedule.Schedule
 type ScheduleProvider = sdkschedule.ScheduleProvider
 
 // IsActive reports whether s should be recording at time now.
-var IsActive = sdkschedule.IsActive
+var IsActive = sdkschedule.IsActive //nolint:gochecknoglobals
