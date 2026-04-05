@@ -20,7 +20,12 @@ func (h *HTTPHandler) registerAnalyticsOps(api huma.API) {
 		Method:      "GET",
 		Path:        "/api/cameras/{cameraId}/analytics",
 		Summary:     "Query frame analytics by time range",
-		Tags:        []string{"Analytics"},
+		Description: "Returns paginated per-frame analytics within a time range. Each frame includes " +
+			"detections (bounding boxes, class IDs, confidence scores, track IDs), aggregate counts " +
+			"(people, vehicles, objects), and timing fields. " +
+			"Optionally filter by detection class ID and minimum confidence. " +
+			"Defaults to the last 24 hours if start/end are omitted.",
+		Tags: []string{"Analytics"},
 	}, h.humaGetAnalytics)
 
 	huma.Register(api, huma.Operation{
@@ -28,7 +33,11 @@ func (h *HTTPHandler) registerAnalyticsOps(api huma.API) {
 		Method:      "GET",
 		Path:        "/api/cameras/{cameraId}/analytics/counts",
 		Summary:     "Aggregated analytics counts bucketed by interval",
-		Tags:        []string{"Analytics"},
+		Description: "Returns time-bucketed aggregate counts (frame count, people, vehicles, objects, events) " +
+			"for a camera within a time range. Each bucket spans `interval` seconds (default: 60). " +
+			"Use this to render activity heatmaps or count charts. " +
+			"Defaults to the last 24 hours if start/end are omitted.",
+		Tags: []string{"Analytics"},
 	}, h.humaGetAnalyticsCounts)
 
 	huma.Register(api, huma.Operation{
@@ -36,7 +45,10 @@ func (h *HTTPHandler) registerAnalyticsOps(api huma.API) {
 		Method:      "GET",
 		Path:        "/api/cameras/{cameraId}/analytics/tracks/{trackId}",
 		Summary:     "Frames containing a tracked object",
-		Tags:        []string{"Analytics"},
+		Description: "Returns all frames where a specific tracked object (identified by track ID) was detected. " +
+			"Useful for object trajectory visualization and forensic review. " +
+			"Defaults to the last 24 hours if start/end are omitted.",
+		Tags: []string{"Analytics"},
 	}, h.humaGetAnalyticsTrack)
 
 	huma.Register(api, huma.Operation{
@@ -44,7 +56,10 @@ func (h *HTTPHandler) registerAnalyticsOps(api huma.API) {
 		Method:      "GET",
 		Path:        "/api/cameras/{cameraId}/analytics/events",
 		Summary:     "Event-flagged analytics frames",
-		Tags:        []string{"Analytics"},
+		Description: "Returns only frames that have been flagged as events (e.g., zone intrusion, " +
+			"line crossing, unusual activity). Subset of the full analytics stream filtered by `hasEvent=true`. " +
+			"Defaults to the last 24 hours if start/end are omitted.",
+		Tags: []string{"Analytics"},
 	}, h.humaGetAnalyticsEvents)
 }
 

@@ -36,22 +36,22 @@ var (
 //
 //nolint:tagalign // Huma/OpenAPI tags are easier to maintain without padded alignment.
 type HealthSnapshot struct {
-	Status         string       `example:"ok" json:"status"`
-	UptimeSeconds  int64        `             json:"uptimeSeconds"`
-	Goroutines     int          `             json:"goroutines"`
-	Memory         HealthMemory `             json:"memory"`
-	ActiveRelays   int          `             json:"activeRelays"`
-	ActiveViewers  int          `             json:"activeViewers"`
-	ActiveSegments int          `             json:"activeSegments"`
-	Timestamp      time.Time    `             json:"timestamp"`
+	Status         string       `doc:"Service status (always 'ok' when reachable)"          example:"ok" json:"status"`
+	UptimeSeconds  int64        `doc:"Seconds since service start"                                       json:"uptimeSeconds"`
+	Goroutines     int          `doc:"Current number of Go goroutines"                                   json:"goroutines"`
+	Memory         HealthMemory `doc:"Go runtime memory statistics"                                      json:"memory"`
+	ActiveRelays   int          `doc:"Number of active RTSP relay connections"                           json:"activeRelays"`
+	ActiveViewers  int          `doc:"Number of active live stream viewers"                              json:"activeViewers"`
+	ActiveSegments int          `doc:"Number of recording segments currently being written"              json:"activeSegments"`
+	Timestamp      time.Time    `doc:"Server wall-clock time (UTC)"                                      json:"timestamp"`
 }
 
 // HealthMemory contains Go runtime memory counters.
 type HealthMemory struct {
-	AllocMB   float64 `json:"allocMb"`
-	SysMB     float64 `json:"sysMb"`
-	HeapInuse float64 `json:"heapInuseMb"`
-	GCRuns    uint32  `json:"gcRuns"`
+	AllocMB   float64 `doc:"Allocated heap memory (MB)"             json:"allocMb"`
+	SysMB     float64 `doc:"Total memory obtained from the OS (MB)" json:"sysMb"`
+	HeapInuse float64 `doc:"Heap memory in use (MB)"                json:"heapInuseMb"`
+	GCRuns    uint32  `doc:"Number of completed GC cycles"          json:"gcRuns"`
 }
 
 // ActiveSegmentCounter returns the number of recording segments currently in
@@ -158,6 +158,7 @@ func (h *HTTPHandler) ExportOpenAPI(outputDir string) error {
 	return nil
 }
 
+//nolint:funlen // Huma route registration is inherently verbose.
 func (h *HTTPHandler) newRouter() (*chi.Mux, huma.API) {
 	r := chi.NewRouter()
 	r.Use(middleware.Recoverer)
@@ -170,7 +171,29 @@ func (h *HTTPHandler) newRouter() (*chi.Mux, huma.API) {
 
 	// ── Huma API (auto-generated OpenAPI + /docs UI) ────────────────────
 	cfg := huma.DefaultConfig("Edge View API", "1.0.0")
-	cfg.Info.Description = "LAN-accessible API for live view, recorded playback, and camera management."
+	cfg.Info.Description = "LAN-accessible API for live view, recorded playback, camera management, and analytics.\n\n" +
+		"## Architecture\n\n" +
+		"The edge service runs a dual-hub streaming architecture:\n\n" +
+		"- **Live Hub** — real-time, zero-delay fan-out from the RTSP source with a 30-second GOP replay buffer.\n" +
+		"- **Analytics Hub** — delayed by ~5 seconds; each video frame is enriched with object-detection analytics " +
+		"via a BlockingMerger that waits for inference results.\n\n" +
+		"## Streaming\n\n" +
+		"Two transports are available for video:\n\n" +
+		"- **WebSocket MSE** (`/api/cameras/ws/stream`) — bidirectional; supports live, recorded playback, " +
+		"seek/skip, pause/resume, and analytics-enriched mode. Send `{\"type\":\"mse\"}` after connect to start streaming.\n" +
+		"- **HTTP chunked fMP4** (`/api/cameras/{cameraId}/stream`) — unidirectional; live or recorded, no seek support.\n\n" +
+		"Omit the `start` query parameter for live mode; provide an RFC3339 timestamp for recorded playback.\n\n" +
+		"## WebSocket Protocol\n\n" +
+		"All client commands are JSON text frames with `\"type\": \"mse\"`. Supported values: " +
+		"start (`\"\"`), `\"pause\"`, `\"resume\"`, `\"seek\"` (with `time` + optional `seq`), " +
+		"`\"skip\"` (with `offset` + optional `seq`).\n\n" +
+		"Server sends text frames (`mse`, `seeked`, `mode_change`, `playback_info`, `timing`, `error`) " +
+		"and binary frames (fMP4 init segments + media fragments). " +
+		"All `wallClock` fields use RFC3339 with millisecond precision.\n\n" +
+		"## Analytics\n\n" +
+		"Object-detection analytics are ingested via gRPC and exposed through REST endpoints " +
+		"for historical queries, time-bucketed counts, event filtering, and per-track search. " +
+		"A pure JSON WebSocket stream (`/api/cameras/ws/analytics`) delivers real-time detections without video."
 	api := humachi.New(r, cfg)
 
 	// Define Bearer auth once; apply it globally so every operation
@@ -229,7 +252,9 @@ func (h *HTTPHandler) registerCameraViewOps(api huma.API) {
 		Method:      "GET",
 		Path:        "/api/cameras",
 		Summary:     "List all cameras on this edge device",
-		Tags:        []string{"Camera"},
+		Description: "Returns a paginated list of cameras with live status including codec, resolution, FPS, " +
+			"and whether recording and analytics are active. Use this to populate a camera grid or selector UI.",
+		Tags: []string{"Camera"},
 	}, h.humaListCameras)
 
 	huma.Register(api, huma.Operation{
@@ -237,7 +262,11 @@ func (h *HTTPHandler) registerCameraViewOps(api huma.API) {
 		Method:      "GET",
 		Path:        "/api/cameras/{cameraId}/timeline",
 		Summary:     "Get recording timeline for a camera",
-		Tags:        []string{"Camera"},
+		Description: "Returns a simplified timeline of recording availability within a time range. " +
+			"Each entry spans a contiguous recording period; gaps between entries represent periods " +
+			"with no recording. Use this to render a timebar/scrubber UI. " +
+			"Defaults to the last 24 hours if start/end are omitted.",
+		Tags: []string{"Camera"},
 	}, h.humaGetTimeline)
 
 	huma.Register(api, huma.Operation{
@@ -245,7 +274,12 @@ func (h *HTTPHandler) registerCameraViewOps(api huma.API) {
 		Method:      "GET",
 		Path:        "/api/cameras/{cameraId}/recordings",
 		Summary:     "Get recording segments for timebar display",
-		Tags:        []string{"Camera"},
+		Description: "Returns detailed recording segment entries including segment ID, size, status " +
+			"(`complete`, `interrupted`, `corrupted`), and motion/object flags. " +
+			"Gaps between entries represent periods with no recording and should be rendered " +
+			"as empty/grey regions on the timeline bar. " +
+			"Defaults to the last 24 hours if start/end are omitted.",
+		Tags: []string{"Camera"},
 	}, h.humaRecordingTimeline)
 }
 
@@ -255,7 +289,10 @@ func (h *HTTPHandler) registerStatsOps(api huma.API) {
 		Method:      "GET",
 		Path:        "/api/cameras/stats",
 		Summary:     "Per-camera stream ingestion metrics",
-		Tags:        []string{"Camera"},
+		Description: "Returns per-relay ingestion stats for every active camera: packets/bytes read, " +
+			"key frames, dropped packets, actual FPS, bitrate, consumer count, and stream codec info. " +
+			"Useful for monitoring ingestion health and diagnosing frame-loss issues.",
+		Tags: []string{"Camera"},
 	}, h.humaProducerStats)
 
 	huma.Register(api, huma.Operation{
@@ -263,7 +300,10 @@ func (h *HTTPHandler) registerStatsOps(api huma.API) {
 		Method:      "GET",
 		Path:        "/api/cameras/{cameraId}/stats",
 		Summary:     "Stream ingestion metrics for a single camera",
-		Tags:        []string{"Camera"},
+		Description: "Returns detailed relay stats for a specific camera including packets/bytes read, " +
+			"key frames, dropped packets, actual FPS, bitrate, rotation count, and per-stream codec info. " +
+			"Returns 404 if the camera is not currently streaming.",
+		Tags: []string{"Camera"},
 	}, h.humaCameraStatsByID)
 
 	huma.Register(api, huma.Operation{
@@ -271,7 +311,10 @@ func (h *HTTPHandler) registerStatsOps(api huma.API) {
 		Method:      "GET",
 		Path:        "/api/cameras/stats/summary",
 		Summary:     "Aggregated system-wide camera stats",
-		Tags:        []string{"Camera"},
+		Description: "Returns system-wide aggregates: total/streaming/recording camera counts, " +
+			"total packets/bytes/key frames/dropped, average FPS, total bitrate, " +
+			"active recording segments, and active live viewers.",
+		Tags: []string{"Camera"},
 	}, h.humaSystemStats)
 
 	if h.collector != nil {
@@ -280,7 +323,10 @@ func (h *HTTPHandler) registerStatsOps(api huma.API) {
 			Method:      "GET",
 			Path:        "/api/metrics",
 			Summary:     "KPI metrics with histograms and system snapshots",
-			Tags:        []string{"System"},
+			Description: "Returns KPI metrics including latency histograms (p50/p95/p99/max/avg), " +
+				"counters, periodic system snapshots (goroutines, heap, relay/viewer/segment counts, FPS, bitrate), " +
+				"and per-relay metrics. The `since` parameter controls the lookback window (default: 1h).",
+			Tags: []string{"System"},
 		}, h.humaMetrics)
 	}
 }
@@ -293,8 +339,10 @@ func (h *HTTPHandler) registerHealthOps(api huma.API) {
 		Method:      "GET",
 		Path:        "/healthz",
 		Summary:     "Basic health check",
-		Tags:        []string{"System"},
-		Security:    noAuth,
+		Description: "Lightweight liveness probe. Returns `{\"status\":\"ok\"}` when the service is running. " +
+			"No authentication required. Suitable for Kubernetes liveness probes and load-balancer health checks.",
+		Tags:     []string{"System"},
+		Security: noAuth,
 	}, h.humaHealthz)
 
 	huma.Register(api, huma.Operation{
@@ -302,8 +350,11 @@ func (h *HTTPHandler) registerHealthOps(api huma.API) {
 		Method:      "GET",
 		Path:        "/health",
 		Summary:     "System health stats",
-		Tags:        []string{"System"},
-		Security:    noAuth,
+		Description: "Returns a detailed health snapshot including uptime, goroutine count, " +
+			"Go runtime memory stats (alloc, sys, heap in-use, GC runs), active relay count, " +
+			"active live viewer count, and active recording segment count. No authentication required.",
+		Tags:     []string{"System"},
+		Security: noAuth,
 	}, h.humaHealth)
 }
 
@@ -326,20 +377,33 @@ func (h *HTTPHandler) streamCameraOperation() *huma.Operation {
 		Method:      "GET",
 		Path:        "/api/cameras/{cameraId}/stream",
 		Summary:     "fMP4 video stream (live + recorded)",
-		Description: "Unified HTTP chunked fMP4 stream. Omit start for live; provide start (RFC3339) for recorded playback.",
-		Tags:        []string{"Camera"},
+		Description: "Unified HTTP chunked fMP4 stream. Omit `start` for live; provide `start` (RFC3339) for recorded playback.\n\n" +
+			"**Live mode:** Attaches to the live relay hub with multi-consumer fan-out. " +
+			"A 30-second GOP replay buffer ensures an instant keyframe on connect.\n\n" +
+			"**Recorded mode:** Creates a per-session relay hub (`MaxConsumers=1`, blocking delivery — no frame drops). " +
+			"A ChainingDemuxer reads fMP4 segments from disk with monotonic DTS adjustment. " +
+			"When segments are exhausted, playback transitions seamlessly to the live packet buffer (follow mode).\n\n" +
+			"**Limitations:** HTTP streams are unidirectional — no seek, skip, pause/resume, or analytics enrichment. " +
+			"Use the WebSocket endpoint for interactive playback.",
+		Tags: []string{"Camera"},
 		Parameters: []*huma.Param{
-			{Name: "cameraId", In: "path", Required: true, Schema: &huma.Schema{Type: "string"}},
+			{
+				Name:     "cameraId",
+				In:       "path",
+				Required: true,
+				Schema:   &huma.Schema{Type: "string", Description: "Camera/channel identifier"},
+			},
 			{
 				Name:        "start",
 				In:          "query",
-				Description: "Start time (RFC3339). Omit for live mode.",
+				Description: "Playback start time (RFC3339). Omit for live mode. Example: `2026-04-04T14:00:00Z`",
 				Schema:      &huma.Schema{Type: "string", Format: "date-time"},
 			},
 		},
 		Responses: map[string]*huma.Response{
 			"200": {
-				Description: "fMP4 video stream (video/mp4)",
+				Description: "Chunked fMP4 video stream. The response is a continuous stream of fMP4 fragments " +
+					"(init segment followed by moof+mdat pairs) delivered as chunked transfer encoding.",
 				Content: map[string]*huma.MediaType{
 					"video/mp4": {},
 				},
@@ -348,31 +412,75 @@ func (h *HTTPHandler) streamCameraOperation() *huma.Operation {
 	}
 }
 
+//nolint:funlen // Huma OpenAPI operation with comprehensive protocol documentation.
 func (h *HTTPHandler) streamCameraWSOperation() *huma.Operation {
 	return &huma.Operation{
 		OperationID: "streamCameraWs",
 		Method:      "GET",
 		Path:        "/api/cameras/ws/stream",
 		Summary:     "WebSocket MSE stream (live + recorded)",
-		Description: "Unified WebSocket endpoint. Omit start for live; provide start (RFC3339) for recorded playback. " +
-			"Seek commands switch between modes transparently. Send {\"type\":\"mse\"} to start streaming.",
+		Description: "Unified WebSocket endpoint for live and recorded video playback using Media Source Extensions (MSE).\n\n" +
+			"## Connection\n\n" +
+			"Omit `start` for live mode; provide `start` (RFC3339) for recorded playback. " +
+			"After the WebSocket upgrade, the server sends an initial mode message " +
+			"(`mode_change` for live, `playback_info` for recorded). " +
+			"Send `{\"type\":\"mse\"}` to start media delivery.\n\n" +
+			"## Client Commands (JSON text frames, `type: \"mse\"`)\n\n" +
+			"| Value | Extra Fields | Description |\n" +
+			"|-------|-------------|-------------|\n" +
+			"| `\"\"` | — | Start streaming (required first command) |\n" +
+			"| `\"pause\"` | — | Pause recorded playback (no-op in live mode) |\n" +
+			"| `\"resume\"` | — | Resume recorded playback |\n" +
+			"| `\"seek\"` | `time` (RFC3339 or `\"now\"`), `seq` (int64, optional) | Absolute seek to wall-clock time |\n" +
+			"| `\"skip\"` | `offset` (Go duration, e.g. `\"-30s\"`), `seq` (int64, optional) | Relative seek from current position |\n\n" +
+			"## Server Messages (text frames)\n\n" +
+			"| `type` | Key Fields | Description |\n" +
+			"|--------|-----------|-------------|\n" +
+			"| `mse` | `value` (MIME codec string) | Codec negotiation — use with `addSourceBuffer` / `changeType` |\n" +
+			"| `seeked` | `wallClock`, `mode`, `codecChanged`, `codecs?`, `gap?`, `seq` | Seek completed |\n" +
+			"| `mode_change` | `mode`, `wallClock` | Initial mode (live) |\n" +
+			"| `playback_info` | `mode`, `actualStartWallClock`, `wallClock` | Initial mode (recorded/first_available) |\n" +
+			"| `timing` | `wallClock` | Continuous wall-clock sync on every fragment flush |\n" +
+			"| `error` | `error` | Error message |\n\n" +
+			"## Server Messages (binary frames)\n\n" +
+			"Binary frames contain fMP4 data: first an init segment (`ftyp` + `moov`), then continuous " +
+			"media fragments (`moof` + `mdat`). A new init segment is sent after every codec change.\n\n" +
+			"## Seek Behavior\n\n" +
+			"- **Into recorded footage:** Resolves to the nearest keyframe; `mode: \"recorded\"`.\n" +
+			"- **Into a gap:** Snaps to the next available segment; `gap: true`.\n" +
+			"- **Beyond recordings:** Switches to live; `mode: \"live\"`.\n" +
+			"- **`time: \"now\"`:** Switches to live immediately.\n" +
+			"- **Codec change:** `codecChanged: true` with new `codecs` string; client should call `changeType()`.\n" +
+			"- **Debouncing:** Use monotonically increasing `seq` values; the server discards stale seeks.\n\n" +
+			"All `wallClock` fields use RFC3339 with millisecond precision.",
 		Tags: []string{"Camera"},
 		Parameters: []*huma.Param{
 			{
-				Name:     "cameraId",
-				In:       "query",
-				Required: true,
-				Schema:   &huma.Schema{Type: "string"},
+				Name:        "cameraId",
+				In:          "query",
+				Required:    true,
+				Description: "Camera/channel identifier",
+				Schema:      &huma.Schema{Type: "string"},
 			},
 			{
 				Name:        "start",
 				In:          "query",
-				Description: "Start time (RFC3339). Omit for live mode.",
+				Description: "Playback start time (RFC3339). Omit for live mode. Example: `2026-04-04T14:00:00Z`",
 				Schema:      &huma.Schema{Type: "string", Format: "date-time"},
+			},
+			{
+				Name: "analytics",
+				In:   "query",
+				Description: "Set to `true` to receive analytics-enriched frames. " +
+					"In live mode, adds ~5 seconds of latency as each frame waits for detection results. " +
+					"In recorded mode, analytics are injected from persistent storage with negligible overhead.",
+				Schema: &huma.Schema{Type: "string", Enum: []any{"true", "false"}},
 			},
 		},
 		Responses: map[string]*huma.Response{
-			"101": {Description: "WebSocket upgrade for MSE streaming"},
+			"101": {
+				Description: "WebSocket upgrade successful. The server sends mode information followed by media data after the client sends the start command.",
+			},
 		},
 	}
 }
@@ -382,19 +490,28 @@ func (h *HTTPHandler) streamCameraAnalyticsWSOperation() *huma.Operation {
 		OperationID: "streamCameraAnalyticsWs",
 		Method:      "GET",
 		Path:        "/api/cameras/ws/analytics",
-		Summary:     "WebSocket analytics stream",
-		Description: "Streams analytics events as JSON text frames for a single camera.",
-		Tags:        []string{"Analytics"},
+		Summary:     "WebSocket analytics stream (JSON, no video)",
+		Description: "Pure analytics JSON stream — no video data. " +
+			"Subscribes to the AnalyticsHub pub/sub and receives `FrameAnalytics` JSON text frames " +
+			"as detections arrive in real-time.\n\n" +
+			"Each text frame contains a full analytics payload with detections (bounding boxes, class IDs, " +
+			"confidence scores, track IDs), aggregate counts (people, vehicles, objects), " +
+			"and timing fields (capture, inference timestamps as RFC3339 with milliseconds).\n\n" +
+			"**Delivery:** non-blocking — slow consumers drop frames. No binary frames are sent.",
+		Tags: []string{"Analytics"},
 		Parameters: []*huma.Param{
 			{
-				Name:     "cameraId",
-				In:       "query",
-				Required: true,
-				Schema:   &huma.Schema{Type: "string"},
+				Name:        "cameraId",
+				In:          "query",
+				Required:    true,
+				Description: "Camera/channel identifier",
+				Schema:      &huma.Schema{Type: "string"},
 			},
 		},
 		Responses: map[string]*huma.Response{
-			"101": {Description: "WebSocket upgrade for analytics streaming"},
+			"101": {
+				Description: "WebSocket upgrade successful. Analytics JSON text frames are sent as detections arrive.",
+			},
 		},
 	}
 }
@@ -521,10 +638,10 @@ type timelineInput struct {
 
 // timelineSummary is a simplified timeline entry for the /api/timeline response.
 type timelineSummary struct {
-	Start      time.Time `json:"start"`
-	End        time.Time `json:"end"`
-	DurationMs int64     `json:"durationMs"`
-	HasEvents  bool      `json:"hasEvents"`
+	Start      time.Time `doc:"Recording period start time (RFC3339)"                json:"start"`
+	End        time.Time `doc:"Recording period end time (RFC3339)"                  json:"end"`
+	DurationMs int64     `doc:"Recording period duration in milliseconds"            json:"durationMs"`
+	HasEvents  bool      `doc:"Whether analytics events occurred during this period" json:"hasEvents"`
 }
 
 // timelineOutput wraps the timeline entries for Huma.
@@ -779,17 +896,17 @@ type systemStatsOutput struct {
 
 // SystemStats aggregates metrics across all cameras.
 type SystemStats struct {
-	TotalCameras     int     `json:"totalCameras"`
-	StreamingCameras int     `json:"streamingCameras"`
-	RecordingCameras int     `json:"recordingCameras"`
-	TotalPacketsRead uint64  `json:"totalPacketsRead"`
-	TotalBytesRead   uint64  `json:"totalBytesRead"`
-	TotalKeyFrames   uint64  `json:"totalKeyFrames"`
-	TotalDropped     uint64  `json:"totalDropped"`
-	AvgFPS           float64 `json:"avgFps"`
-	TotalBitrateBps  float64 `json:"totalBitrateBps"`
-	ActiveSegments   int     `json:"activeSegments"`
-	ActiveViewers    int     `json:"activeViewers"`
+	TotalCameras     int     `doc:"Total number of registered cameras"                       json:"totalCameras"`
+	StreamingCameras int     `doc:"Cameras with an active RTSP relay"                        json:"streamingCameras"`
+	RecordingCameras int     `doc:"Cameras with recording enabled"                           json:"recordingCameras"`
+	TotalPacketsRead uint64  `doc:"Sum of packets read across all relays"                    json:"totalPacketsRead"`
+	TotalBytesRead   uint64  `doc:"Sum of bytes read across all relays"                      json:"totalBytesRead"`
+	TotalKeyFrames   uint64  `doc:"Sum of key frames received across all relays"             json:"totalKeyFrames"`
+	TotalDropped     uint64  `doc:"Sum of dropped packets across all relays (leaky fan-out)" json:"totalDropped"`
+	AvgFPS           float64 `doc:"Average actual FPS across all streaming cameras"          json:"avgFps"`
+	TotalBitrateBps  float64 `doc:"Sum of bitrate (bits/sec) across all relays"              json:"totalBitrateBps"`
+	ActiveSegments   int     `doc:"Recording segments currently being written"               json:"activeSegments"`
+	ActiveViewers    int     `doc:"Active live stream viewers"                               json:"activeViewers"`
 }
 
 func (h *HTTPHandler) humaSystemStats(

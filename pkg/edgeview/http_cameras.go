@@ -72,7 +72,11 @@ func (h *HTTPHandler) registerCameraOps(api huma.API) {
 		Method:      "GET",
 		Path:        "/api/cameras/config",
 		Summary:     "List all registered cameras with full details",
-		Tags:        []string{"Camera"},
+		Description: "Returns a paginated list of all registered camera channel configurations including " +
+			"stream URL, credentials, site ID, and extra metadata fields. " +
+			"Unlike the `/api/cameras` endpoint which returns live status, " +
+			"this returns the persisted configuration.",
+		Tags: []string{"Camera"},
 	}, func(ctx context.Context, input *listCameraConfigsInput) (*channelListOutput, error) {
 		channels, err := cw.ListChannels(ctx)
 		if err != nil {
@@ -103,7 +107,10 @@ func (h *HTTPHandler) registerCameraOps(api huma.API) {
 		Method:      "PUT",
 		Path:        "/api/cameras/{id}",
 		Summary:     "Create or update a camera",
-		Tags:        []string{"Camera"},
+		Description: "Creates a new camera channel or updates an existing one. The channel ID in the path " +
+			"is authoritative. A `streamUrl` (RTSP URL) is required. " +
+			"The response includes generated convenience URLs for the HTTP stream and WebSocket endpoints.",
+		Tags: []string{"Camera"},
 	}, func(ctx context.Context, input *saveChannelInput) (*channelOutput, error) {
 		ch := input.Body
 		ch.ID = input.ID
@@ -131,7 +138,9 @@ func (h *HTTPHandler) registerCameraOps(api huma.API) {
 		Method:      "GET",
 		Path:        "/api/cameras/{id}",
 		Summary:     "Get a camera by ID",
-		Tags:        []string{"Camera"},
+		Description: "Returns the full channel configuration for a single camera including stream URL, " +
+			"credentials, site ID, extra metadata, and generated convenience URLs.",
+		Tags: []string{"Camera"},
 	}, func(ctx context.Context, input *channelIDInput) (*channelOutput, error) {
 		ch, err := cw.GetChannel(ctx, input.ID)
 		if err != nil {
@@ -146,10 +155,12 @@ func (h *HTTPHandler) registerCameraOps(api huma.API) {
 	})
 
 	huma.Register(api, huma.Operation{
-		OperationID:   "deleteCamera",
-		Method:        "DELETE",
-		Path:          "/api/cameras/{id}",
-		Summary:       "Delete a camera",
+		OperationID: "deleteCamera",
+		Method:      "DELETE",
+		Path:        "/api/cameras/{id}",
+		Summary:     "Delete a camera",
+		Description: "Deletes a camera channel configuration. The camera is also removed from the " +
+			"in-memory camera list. Returns 204 on success, 404 if the camera does not exist.",
 		Tags:          []string{"Camera"},
 		DefaultStatus: 204,
 	}, func(ctx context.Context, input *channelIDInput) (*struct{}, error) {
@@ -209,7 +220,9 @@ func (h *HTTPHandler) registerCameraCSVDocs(api huma.API) {
 		Method:      "GET",
 		Path:        "/api/cameras/export.csv",
 		Summary:     "Export camera configuration as CSV",
-		Tags:        []string{"Camera"},
+		Description: "Downloads all camera channel configurations as a CSV file. " +
+			"Columns: id, name, ip_address, manufacturer, model, username, password, rtsp_main, rtsp_sub.",
+		Tags: []string{"Camera"},
 		Responses: map[string]*huma.Response{
 			"200": {
 				Description: "Camera configuration CSV export",
@@ -227,7 +240,10 @@ func (h *HTTPHandler) registerCameraCSVDocs(api huma.API) {
 		Method:      "POST",
 		Path:        "/api/cameras/import.csv",
 		Summary:     "Import camera configuration from CSV",
-		Tags:        []string{"Camera"},
+		Description: "Bulk-imports camera channel configurations from a CSV file. " +
+			"Expected columns: id, name, ip_address, manufacturer, model, username, password, rtsp_main, rtsp_sub. " +
+			"Existing cameras with matching IDs are updated; new IDs are created.",
+		Tags: []string{"Camera"},
 		RequestBody: &huma.RequestBody{
 			Required: true,
 			Content: map[string]*huma.MediaType{

@@ -68,14 +68,14 @@ type Service struct {
 
 // CameraInfo describes a camera available on this relay.
 type CameraInfo struct {
-	CameraID   string `json:"cameraId"`
-	Name       string `json:"name"`
-	Codec      string `json:"codec"`
-	Resolution string `json:"resolution"`
-	FPS        int    `json:"fps"`
-	Recording  bool   `json:"recording"`
-	Analytics  bool   `json:"analytics"`
-	State      string `json:"state"`
+	CameraID   string `doc:"Unique camera/channel identifier"            json:"cameraId"`
+	Name       string `doc:"Human-readable camera name"                  json:"name"`
+	Codec      string `doc:"Active video codec (e.g. H264, H265)"        json:"codec"`
+	Resolution string `doc:"Video resolution (e.g. 1920x1080)"           json:"resolution"`
+	FPS        int    `doc:"Configured frame rate"                       json:"fps"`
+	Recording  bool   `doc:"Whether recording is active for this camera" json:"recording"`
+	Analytics  bool   `doc:"Whether analytics processing is active"      json:"analytics"`
+	State      string `doc:"Camera state (e.g. active, offline)"         json:"state"`
 }
 
 // NewService creates a view service attached to a media relay hub.

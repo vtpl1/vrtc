@@ -116,21 +116,29 @@ components:
       additionalProperties: false
       properties:
         analytics:
+          description: Whether analytics processing is active
           type: boolean
         cameraId:
+          description: Unique camera/channel identifier
           type: string
         codec:
+          description: Active video codec (e.g. H264, H265)
           type: string
         fps:
+          description: Configured frame rate
           format: int64
           type: integer
         name:
+          description: Human-readable camera name
           type: string
         recording:
+          description: Whether recording is active for this camera
           type: boolean
         resolution:
+          description: Video resolution (e.g. 1920x1080)
           type: string
         state:
+          description: Camera state (e.g. active, offline)
           type: string
       required:
         - cameraId
@@ -432,16 +440,20 @@ components:
       additionalProperties: false
       properties:
         allocMb:
+          description: Allocated heap memory (MB)
           format: double
           type: number
         gcRuns:
+          description: Number of completed GC cycles
           format: int32
           minimum: 0
           type: integer
         heapInuseMb:
+          description: Heap memory in use (MB)
           format: double
           type: number
         sysMb:
+          description: Total memory obtained from the OS (MB)
           format: double
           type: number
       required:
@@ -461,27 +473,35 @@ components:
           readOnly: true
           type: string
         activeRelays:
+          description: Number of active RTSP relay connections
           format: int64
           type: integer
         activeSegments:
+          description: Number of recording segments currently being written
           format: int64
           type: integer
         activeViewers:
+          description: Number of active live stream viewers
           format: int64
           type: integer
         goroutines:
+          description: Current number of Go goroutines
           format: int64
           type: integer
         memory:
           $ref: "#/components/schemas/HealthMemory"
+          description: Go runtime memory statistics
         status:
+          description: Service status (always 'ok' when reachable)
           examples:
             - ok
           type: string
         timestamp:
+          description: Server wall-clock time (UTC)
           format: date-time
           type: string
         uptimeSeconds:
+          description: Seconds since service start
           format: int64
           type: integer
       required:
@@ -865,39 +885,50 @@ components:
           readOnly: true
           type: string
         activeSegments:
+          description: Recording segments currently being written
           format: int64
           type: integer
         activeViewers:
+          description: Active live stream viewers
           format: int64
           type: integer
         avgFps:
+          description: Average actual FPS across all streaming cameras
           format: double
           type: number
         recordingCameras:
+          description: Cameras with recording enabled
           format: int64
           type: integer
         streamingCameras:
+          description: Cameras with an active RTSP relay
           format: int64
           type: integer
         totalBitrateBps:
+          description: Sum of bitrate (bits/sec) across all relays
           format: double
           type: number
         totalBytesRead:
+          description: Sum of bytes read across all relays
           format: int64
           minimum: 0
           type: integer
         totalCameras:
+          description: Total number of registered cameras
           format: int64
           type: integer
         totalDropped:
+          description: Sum of dropped packets across all relays (leaky fan-out)
           format: int64
           minimum: 0
           type: integer
         totalKeyFrames:
+          description: Sum of key frames received across all relays
           format: int64
           minimum: 0
           type: integer
         totalPacketsRead:
+          description: Sum of packets read across all relays
           format: int64
           minimum: 0
           type: integer
@@ -918,24 +949,32 @@ components:
       additionalProperties: false
       properties:
         durationMs:
+          description: Segment duration in milliseconds
           format: int64
           type: integer
         end:
+          description: Segment end time (RFC3339)
           format: date-time
           type: string
         hasMotion:
+          description: Whether motion was detected during this segment
           type: boolean
         hasObjects:
+          description: Whether objects were detected during this segment
           type: boolean
         id:
+          description: Recording segment identifier
           type: string
         sizeBytes:
+          description: Segment file size in bytes
           format: int64
           type: integer
         start:
+          description: Segment start time (RFC3339)
           format: date-time
           type: string
         status:
+          description: "Segment status: complete, interrupted, corrupted, or deleted"
           type: string
       required:
         - id
@@ -982,14 +1021,18 @@ components:
       additionalProperties: false
       properties:
         durationMs:
+          description: Recording period duration in milliseconds
           format: int64
           type: integer
         end:
+          description: Recording period end time (RFC3339)
           format: date-time
           type: string
         hasEvents:
+          description: Whether analytics events occurred during this period
           type: boolean
         start:
+          description: Recording period start time (RFC3339)
           format: date-time
           type: string
       required:
@@ -1003,13 +1046,41 @@ components:
       scheme: bearer
       type: http
 info:
-  description: LAN-accessible API for live view, recorded playback, and camera management.
+  description: |-
+    LAN-accessible API for live view, recorded playback, camera management, and analytics.
+
+    ## Architecture
+
+    The edge service runs a dual-hub streaming architecture:
+
+    - **Live Hub** — real-time, zero-delay fan-out from the RTSP source with a 30-second GOP replay buffer.
+    - **Analytics Hub** — delayed by ~5 seconds; each video frame is enriched with object-detection analytics via a BlockingMerger that waits for inference results.
+
+    ## Streaming
+
+    Two transports are available for video:
+
+    - **WebSocket MSE** (`/api/cameras/ws/stream`) — bidirectional; supports live, recorded playback, seek/skip, pause/resume, and analytics-enriched mode. Send `{"type":"mse"}` after connect to start streaming.
+    - **HTTP chunked fMP4** (`/api/cameras/{cameraId}/stream`) — unidirectional; live or recorded, no seek support.
+
+    Omit the `start` query parameter for live mode; provide an RFC3339 timestamp for recorded playback.
+
+    ## WebSocket Protocol
+
+    All client commands are JSON text frames with `"type": "mse"`. Supported values: start (`""`), `"pause"`, `"resume"`, `"seek"` (with `time` + optional `seq`), `"skip"` (with `offset` + optional `seq`).
+
+    Server sends text frames (`mse`, `seeked`, `mode_change`, `playback_info`, `timing`, `error`) and binary frames (fMP4 init segments + media fragments). All `wallClock` fields use RFC3339 with millisecond precision.
+
+    ## Analytics
+
+    Object-detection analytics are ingested via gRPC and exposed through REST endpoints for historical queries, time-bucketed counts, event filtering, and per-track search. A pure JSON WebSocket stream (`/api/cameras/ws/analytics`) delivers real-time detections without video.
   title: Edge View API
   version: 1.0.0
 openapi: 3.1.0
 paths:
   /api/cameras:
     get:
+      description: Returns a paginated list of cameras with live status including codec, resolution, FPS, and whether recording and analytics are active. Use this to populate a camera grid or selector UI.
       operationId: listCameras
       responses:
         "200":
@@ -1029,6 +1100,7 @@ paths:
         - Camera
   /api/cameras/config:
     get:
+      description: Returns a paginated list of all registered camera channel configurations including stream URL, credentials, site ID, and extra metadata fields. Unlike the `/api/cameras` endpoint which returns live status, this returns the persisted configuration.
       operationId: listCameraConfigs
       responses:
         "200":
@@ -1048,6 +1120,7 @@ paths:
         - Camera
   /api/cameras/export.csv:
     get:
+      description: "Downloads all camera channel configurations as a CSV file. Columns: id, name, ip_address, manufacturer, model, username, password, rtsp_main, rtsp_sub."
       operationId: exportCamerasCSV
       responses:
         "200":
@@ -1063,6 +1136,7 @@ paths:
         - Camera
   /api/cameras/import.csv:
     post:
+      description: "Bulk-imports camera channel configurations from a CSV file. Expected columns: id, name, ip_address, manufacturer, model, username, password, rtsp_main, rtsp_sub. Existing cameras with matching IDs are updated; new IDs are created."
       operationId: importCamerasCSV
       requestBody:
         content:
@@ -1089,6 +1163,7 @@ paths:
         - Camera
   /api/cameras/stats:
     get:
+      description: "Returns per-relay ingestion stats for every active camera: packets/bytes read, key frames, dropped packets, actual FPS, bitrate, consumer count, and stream codec info. Useful for monitoring ingestion health and diagnosing frame-loss issues."
       operationId: listCameraStats
       responses:
         "200":
@@ -1108,6 +1183,7 @@ paths:
         - Camera
   /api/cameras/stats/summary:
     get:
+      description: "Returns system-wide aggregates: total/streaming/recording camera counts, total packets/bytes/key frames/dropped, average FPS, total bitrate, active recording segments, and active live viewers."
       operationId: getSystemStats
       responses:
         "200":
@@ -1127,44 +1203,101 @@ paths:
         - Camera
   /api/cameras/ws/analytics:
     get:
-      description: Streams analytics events as JSON text frames for a single camera.
+      description: |-
+        Pure analytics JSON stream — no video data. Subscribes to the AnalyticsHub pub/sub and receives `FrameAnalytics` JSON text frames as detections arrive in real-time.
+
+        Each text frame contains a full analytics payload with detections (bounding boxes, class IDs, confidence scores, track IDs), aggregate counts (people, vehicles, objects), and timing fields (capture, inference timestamps as RFC3339 with milliseconds).
+
+        **Delivery:** non-blocking — slow consumers drop frames. No binary frames are sent.
       operationId: streamCameraAnalyticsWs
       parameters:
-        - in: query
+        - description: Camera/channel identifier
+          in: query
           name: cameraId
           required: true
           schema:
             type: string
       responses:
         "101":
-          description: WebSocket upgrade for analytics streaming
-      summary: WebSocket analytics stream
+          description: WebSocket upgrade successful. Analytics JSON text frames are sent as detections arrive.
+      summary: WebSocket analytics stream (JSON, no video)
       tags:
         - Analytics
   /api/cameras/ws/stream:
     get:
-      description: Unified WebSocket endpoint. Omit start for live; provide start (RFC3339) for recorded playback. Seek commands switch between modes transparently. Send {"type":"mse"} to start streaming.
+      description: |-
+        Unified WebSocket endpoint for live and recorded video playback using Media Source Extensions (MSE).
+
+        ## Connection
+
+        Omit `start` for live mode; provide `start` (RFC3339) for recorded playback. After the WebSocket upgrade, the server sends an initial mode message (`mode_change` for live, `playback_info` for recorded). Send `{"type":"mse"}` to start media delivery.
+
+        ## Client Commands (JSON text frames, `type: "mse"`)
+
+        | Value | Extra Fields | Description |
+        |-------|-------------|-------------|
+        | `""` | — | Start streaming (required first command) |
+        | `"pause"` | — | Pause recorded playback (no-op in live mode) |
+        | `"resume"` | — | Resume recorded playback |
+        | `"seek"` | `time` (RFC3339 or `"now"`), `seq` (int64, optional) | Absolute seek to wall-clock time |
+        | `"skip"` | `offset` (Go duration, e.g. `"-30s"`), `seq` (int64, optional) | Relative seek from current position |
+
+        ## Server Messages (text frames)
+
+        | `type` | Key Fields | Description |
+        |--------|-----------|-------------|
+        | `mse` | `value` (MIME codec string) | Codec negotiation — use with `addSourceBuffer` / `changeType` |
+        | `seeked` | `wallClock`, `mode`, `codecChanged`, `codecs?`, `gap?`, `seq` | Seek completed |
+        | `mode_change` | `mode`, `wallClock` | Initial mode (live) |
+        | `playback_info` | `mode`, `actualStartWallClock`, `wallClock` | Initial mode (recorded/first_available) |
+        | `timing` | `wallClock` | Continuous wall-clock sync on every fragment flush |
+        | `error` | `error` | Error message |
+
+        ## Server Messages (binary frames)
+
+        Binary frames contain fMP4 data: first an init segment (`ftyp` + `moov`), then continuous media fragments (`moof` + `mdat`). A new init segment is sent after every codec change.
+
+        ## Seek Behavior
+
+        - **Into recorded footage:** Resolves to the nearest keyframe; `mode: "recorded"`.
+        - **Into a gap:** Snaps to the next available segment; `gap: true`.
+        - **Beyond recordings:** Switches to live; `mode: "live"`.
+        - **`time: "now"`:** Switches to live immediately.
+        - **Codec change:** `codecChanged: true` with new `codecs` string; client should call `changeType()`.
+        - **Debouncing:** Use monotonically increasing `seq` values; the server discards stale seeks.
+
+        All `wallClock` fields use RFC3339 with millisecond precision.
       operationId: streamCameraWs
       parameters:
-        - in: query
+        - description: Camera/channel identifier
+          in: query
           name: cameraId
           required: true
           schema:
             type: string
-        - description: Start time (RFC3339). Omit for live mode.
+        - description: "Playback start time (RFC3339). Omit for live mode. Example: `2026-04-04T14:00:00Z`"
           in: query
           name: start
           schema:
             format: date-time
             type: string
+        - description: Set to `true` to receive analytics-enriched frames. In live mode, adds ~5 seconds of latency as each frame waits for detection results. In recorded mode, analytics are injected from persistent storage with negligible overhead.
+          in: query
+          name: analytics
+          schema:
+            enum:
+              - "true"
+              - "false"
+            type: string
       responses:
         "101":
-          description: WebSocket upgrade for MSE streaming
+          description: WebSocket upgrade successful. The server sends mode information followed by media data after the client sends the start command.
       summary: WebSocket MSE stream (live + recorded)
       tags:
         - Camera
   /api/cameras/{cameraId}/analytics:
     get:
+      description: Returns paginated per-frame analytics within a time range. Each frame includes detections (bounding boxes, class IDs, confidence scores, track IDs), aggregate counts (people, vehicles, objects), and timing fields. Optionally filter by detection class ID and minimum confidence. Defaults to the last 24 hours if start/end are omitted.
       operationId: getCameraAnalytics
       parameters:
         - description: Camera identifier
@@ -1220,6 +1353,7 @@ paths:
         - Analytics
   /api/cameras/{cameraId}/analytics/counts:
     get:
+      description: "Returns time-bucketed aggregate counts (frame count, people, vehicles, objects, events) for a camera within a time range. Each bucket spans `interval` seconds (default: 60). Use this to render activity heatmaps or count charts. Defaults to the last 24 hours if start/end are omitted."
       operationId: getCameraAnalyticsCounts
       parameters:
         - description: Camera identifier
@@ -1269,6 +1403,7 @@ paths:
         - Analytics
   /api/cameras/{cameraId}/analytics/events:
     get:
+      description: Returns only frames that have been flagged as events (e.g., zone intrusion, line crossing, unusual activity). Subset of the full analytics stream filtered by `hasEvent=true`. Defaults to the last 24 hours if start/end are omitted.
       operationId: getCameraAnalyticsEvents
       parameters:
         - description: Camera identifier
@@ -1310,6 +1445,7 @@ paths:
         - Analytics
   /api/cameras/{cameraId}/analytics/tracks/{trackId}:
     get:
+      description: Returns all frames where a specific tracked object (identified by track ID) was detected. Useful for object trajectory visualization and forensic review. Defaults to the last 24 hours if start/end are omitted.
       operationId: getCameraAnalyticsTrack
       parameters:
         - description: Camera identifier
@@ -1359,6 +1495,7 @@ paths:
         - Analytics
   /api/cameras/{cameraId}/recordings:
     get:
+      description: Returns detailed recording segment entries including segment ID, size, status (`complete`, `interrupted`, `corrupted`), and motion/object flags. Gaps between entries represent periods with no recording and should be rendered as empty/grey regions on the timeline bar. Defaults to the last 24 hours if start/end are omitted.
       operationId: getCameraRecordings
       parameters:
         - description: Camera identifier
@@ -1400,6 +1537,7 @@ paths:
         - Camera
   /api/cameras/{cameraId}/stats:
     get:
+      description: Returns detailed relay stats for a specific camera including packets/bytes read, key frames, dropped packets, actual FPS, bitrate, rotation count, and per-stream codec info. Returns 404 if the camera is not currently streaming.
       operationId: getCameraStats
       parameters:
         - description: Camera identifier
@@ -1427,15 +1565,23 @@ paths:
         - Camera
   /api/cameras/{cameraId}/stream:
     get:
-      description: Unified HTTP chunked fMP4 stream. Omit start for live; provide start (RFC3339) for recorded playback.
+      description: |-
+        Unified HTTP chunked fMP4 stream. Omit `start` for live; provide `start` (RFC3339) for recorded playback.
+
+        **Live mode:** Attaches to the live relay hub with multi-consumer fan-out. A 30-second GOP replay buffer ensures an instant keyframe on connect.
+
+        **Recorded mode:** Creates a per-session relay hub (`MaxConsumers=1`, blocking delivery — no frame drops). A ChainingDemuxer reads fMP4 segments from disk with monotonic DTS adjustment. When segments are exhausted, playback transitions seamlessly to the live packet buffer (follow mode).
+
+        **Limitations:** HTTP streams are unidirectional — no seek, skip, pause/resume, or analytics enrichment. Use the WebSocket endpoint for interactive playback.
       operationId: streamCamera
       parameters:
         - in: path
           name: cameraId
           required: true
           schema:
+            description: Camera/channel identifier
             type: string
-        - description: Start time (RFC3339). Omit for live mode.
+        - description: "Playback start time (RFC3339). Omit for live mode. Example: `2026-04-04T14:00:00Z`"
           in: query
           name: start
           schema:
@@ -1445,12 +1591,13 @@ paths:
         "200":
           content:
             video/mp4: {}
-          description: fMP4 video stream (video/mp4)
+          description: Chunked fMP4 video stream. The response is a continuous stream of fMP4 fragments (init segment followed by moof+mdat pairs) delivered as chunked transfer encoding.
       summary: fMP4 video stream (live + recorded)
       tags:
         - Camera
   /api/cameras/{cameraId}/timeline:
     get:
+      description: Returns a simplified timeline of recording availability within a time range. Each entry spans a contiguous recording period; gaps between entries represent periods with no recording. Use this to render a timebar/scrubber UI. Defaults to the last 24 hours if start/end are omitted.
       operationId: getCameraTimeline
       parameters:
         - description: Camera identifier
@@ -1492,6 +1639,7 @@ paths:
         - Camera
   /api/cameras/{id}:
     delete:
+      description: Deletes a camera channel configuration. The camera is also removed from the in-memory camera list. Returns 204 on success, 404 if the camera does not exist.
       operationId: deleteCamera
       parameters:
         - description: Channel identifier
@@ -1514,6 +1662,7 @@ paths:
       tags:
         - Camera
     get:
+      description: Returns the full channel configuration for a single camera including stream URL, credentials, site ID, extra metadata, and generated convenience URLs.
       operationId: getCameraConfig
       parameters:
         - description: Channel identifier
@@ -1540,6 +1689,7 @@ paths:
       tags:
         - Camera
     put:
+      description: Creates a new camera channel or updates an existing one. The channel ID in the path is authoritative. A `streamUrl` (RTSP URL) is required. The response includes generated convenience URLs for the HTTP stream and WebSocket endpoints.
       operationId: upsertCamera
       parameters:
         - description: Channel identifier
@@ -1573,6 +1723,7 @@ paths:
         - Camera
   /api/metrics:
     get:
+      description: "Returns KPI metrics including latency histograms (p50/p95/p99/max/avg), counters, periodic system snapshots (goroutines, heap, relay/viewer/segment counts, FPS, bitrate), and per-relay metrics. The `since` parameter controls the lookback window (default: 1h)."
       operationId: getMetrics
       parameters:
         - description: "Lookback duration (e.g. 1h, 30m). Default: 1h"
@@ -1600,6 +1751,7 @@ paths:
         - System
   /health:
     get:
+      description: Returns a detailed health snapshot including uptime, goroutine count, Go runtime memory stats (alloc, sys, heap in-use, GC runs), active relay count, active live viewer count, and active recording segment count. No authentication required.
       operationId: getHealth
       responses:
         "200":
@@ -1621,6 +1773,7 @@ paths:
         - System
   /healthz:
     get:
+      description: Lightweight liveness probe. Returns `{"status":"ok"}` when the service is running. No authentication required. Suitable for Kubernetes liveness probes and load-balancer health checks.
       operationId: getHealthz
       responses:
         "200":
