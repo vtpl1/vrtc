@@ -85,10 +85,13 @@ func (h *HTTPHandler) wsStream(w http.ResponseWriter, r *http.Request) {
 
 	ctx := r.Context()
 
+	analyticsMode := r.URL.Query().Get("analytics") == "true"
+
 	session := &streamSession{
-		handler:  h,
-		wsConn:   wsConn,
-		cameraID: cameraID,
+		handler:       h,
+		wsConn:        wsConn,
+		cameraID:      cameraID,
+		analyticsMode: analyticsMode,
 	}
 
 	if err := session.start(ctx, start); err != nil {
@@ -183,6 +186,8 @@ type streamSession struct {
 	liveMode   bool              // true when attached to the live hub
 	liveHandle av.ConsumerHandle // non-nil when in live mode
 	untrack    func()            // decrements viewer count; non-nil when live
+
+	analyticsMode bool // true when consuming from the analytics relay hub
 
 	// Seek state.
 	lastSeqSeen  int64     // highest seq received; used to discard stale seeks
@@ -376,7 +381,12 @@ func (s *streamSession) attachLiveConsumer(
 	localMs *mse.MSEWriter,
 	opts av.ConsumeOptions,
 ) error {
-	handle, cerr := s.handler.svc.Hub().Consume(ctx, s.cameraID, opts)
+	hub := s.handler.svc.Hub()
+	if s.analyticsMode && s.handler.svc.analyticsRelayHub != nil {
+		hub = s.handler.svc.analyticsRelayHub
+	}
+
+	handle, cerr := hub.Consume(ctx, s.cameraID, opts)
 	if cerr != nil {
 		_ = localMs.Close()
 

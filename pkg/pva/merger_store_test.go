@@ -119,16 +119,16 @@ func TestMetadataMergerPropagatesReadErrorWithoutFetching(t *testing.T) {
 	}
 }
 
-func TestAnalyticsStoreSourceForAppliesSkew(t *testing.T) {
+func TestAnalyticsStoreSourceForMatchesWallClock(t *testing.T) {
 	t.Parallel()
 
 	store := NewAnalyticsStore(time.Minute)
 	base := time.Date(2026, 4, 5, 10, 0, 0, 0, time.UTC)
 	want := &av.FrameAnalytics{PeopleCount: 7}
 
-	store.Put("cam-1", base.Add(150*time.Millisecond), want)
+	store.Put("cam-1", base, want)
 
-	got := store.SourceFor("cam-1", 150*time.Millisecond).Fetch(99, base)
+	got := store.SourceFor("cam-1").Fetch(99, base)
 	if got != want {
 		t.Fatalf("Fetch: got %#v, want %#v", got, want)
 	}
@@ -145,7 +145,7 @@ func TestAnalyticsStoreSourceForReturnsNearestMatchWithinTolerance(t *testing.T)
 	store.Put("cam-1", base.Add(-80*time.Millisecond), farther)
 	store.Put("cam-1", base.Add(20*time.Millisecond), nearer)
 
-	got := store.SourceFor("cam-1", 0).Fetch(123, base)
+	got := store.SourceFor("cam-1").Fetch(123, base)
 	if got != nearer {
 		t.Fatalf("Fetch: got %#v, want nearest %#v", got, nearer)
 	}
@@ -159,7 +159,7 @@ func TestAnalyticsStoreSourceForReturnsNilOutsideTolerance(t *testing.T) {
 
 	store.Put("cam-1", base.Add(matchTolerance+time.Millisecond), &av.FrameAnalytics{PeopleCount: 4})
 
-	got := store.SourceFor("cam-1", 0).Fetch(5, base)
+	got := store.SourceFor("cam-1").Fetch(5, base)
 	if got != nil {
 		t.Fatalf("Fetch: got %#v, want nil", got)
 	}
@@ -177,7 +177,7 @@ func TestAnalyticsStorePutEvictsExpiredEntries(t *testing.T) {
 	store.Put("cam-1", oldWallClock, oldAnalytics)
 	store.Put("cam-1", newWallClock, newAnalytics)
 
-	source := store.SourceFor("cam-1", 0)
+	source := store.SourceFor("cam-1")
 
 	if got := source.Fetch(1, oldWallClock); got != nil {
 		t.Fatalf("expired Fetch: got %#v, want nil", got)
@@ -190,7 +190,7 @@ func TestAnalyticsStorePutEvictsExpiredEntries(t *testing.T) {
 
 func TestAnalyticsStoreConcurrentPutAndFetch(t *testing.T) {
 	store := NewAnalyticsStore(time.Minute)
-	source := store.SourceFor("cam-1", 0)
+	source := store.SourceFor("cam-1")
 	base := time.Now().UTC()
 
 	var wg sync.WaitGroup

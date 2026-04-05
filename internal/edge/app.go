@@ -52,11 +52,19 @@ func Run(appName string, cfg Config) error {
 		c.APIListen = ":8080"
 	}
 
-	analyticsSkew := time.Duration(0)
+	analyticsDelay := 5 * time.Second
 
-	if c.AnalyticsSkew != "" {
-		if d, err := time.ParseDuration(c.AnalyticsSkew); err == nil {
-			analyticsSkew = d
+	if c.AnalyticsDelay != "" {
+		if d, err := time.ParseDuration(c.AnalyticsDelay); err == nil {
+			analyticsDelay = d
+		}
+	}
+
+	analyticsMaxWait := 7 * time.Second
+
+	if c.AnalyticsMaxWait != "" {
+		if d, err := time.ParseDuration(c.AnalyticsMaxWait); err == nil {
+			analyticsMaxWait = d
 		}
 	}
 
@@ -119,9 +127,9 @@ func Run(appName string, cfg Config) error {
 				metricsCollector.RecordRTSPSessionSetup(time.Since(start), sourceID)
 			}
 
-			// Wrap with MetadataMerger so analytics (and per-keyframe timing) are
-			// injected into av.Packet.Analytics before entering the relay hub.
-			return pva.NewMetadataMerger(d, analyticsStore.SourceFor(sourceID, analyticsSkew)), nil
+			// Return the raw demuxer — analytics injection is handled by the
+			// analytics relay hub via BlockingMerger, not on the live path.
+			return d, nil
 		},
 	)
 
@@ -150,10 +158,31 @@ func Run(appName string, cfg Config) error {
 	// -----------------------------------------------------------------------
 	// Edge view service
 	// -----------------------------------------------------------------------
-	viewSvc := edgeview.NewService(log.Logger, sm, recIndex, nil,
+	viewSvc := edgeview.NewService(log.Logger, sm, recIndex, sm,
 		edgeview.WithChannelWriter(chanProvider),
 		edgeview.WithRecordingProvider(rm),
 	)
+
+	// -----------------------------------------------------------------------
+	// Analytics relay hub (delayed, analytics-enriched)
+	// -----------------------------------------------------------------------
+	analyticsDemuxerFactory := pva.NewAnalyticsDemuxerFactory(
+		viewSvc.RecordedDemuxerFactory,
+		sm,
+		analyticsStore,
+		analyticsHub,
+		analyticsDelay,
+		analyticsMaxWait,
+	)
+
+	analyticsRelayHub := relayhub.New(analyticsDemuxerFactory, nil)
+	if err := analyticsRelayHub.Start(ctx); err != nil {
+		return fmt.Errorf("edge: analytics relay hub start: %w", err)
+	}
+
+	defer func() { _ = analyticsRelayHub.Stop() }()
+
+	viewSvc.SetAnalyticsRelayHub(analyticsRelayHub)
 
 	// Register channels as cameras for the camera listing endpoint.
 	if channels, chErr := chanProvider.ListChannels(ctx); chErr == nil {

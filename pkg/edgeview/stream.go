@@ -43,14 +43,15 @@ type PacketBufferProvider interface {
 // fmp4/mse/chain packages. Live and recorded HTTP/WS handlers attach consumers
 // directly to the hub rather than maintaining per-viewer frame channels.
 type Service struct {
-	log       zerolog.Logger
-	hub       av.RelayHub
-	recIndex  recorder.RecordingIndex // nil if no recording available
-	bufProv   PacketBufferProvider    // nil if no recording available
-	chanW     channel.ChannelWriter   // nil if no channel CRUD available
-	recProv   ActiveRecordingProvider // nil if no recording manager
-	collector *metrics.Collector      // nil if metrics not configured
-	cameras   map[string]*CameraInfo
+	log               zerolog.Logger
+	hub               av.RelayHub
+	recIndex          recorder.RecordingIndex // nil if no recording available
+	bufProv           PacketBufferProvider    // nil if no recording available
+	chanW             channel.ChannelWriter   // nil if no channel CRUD available
+	recProv           ActiveRecordingProvider // nil if no recording manager
+	collector         *metrics.Collector      // nil if metrics not configured
+	cameras           map[string]*CameraInfo
+	analyticsRelayHub av.RelayHub // nil if analytics hub not configured
 
 	mu sync.RWMutex
 
@@ -117,9 +118,22 @@ func WithCollector(c *metrics.Collector) ServiceOption {
 	return func(s *Service) { s.collector = c }
 }
 
+// WithAnalyticsRelayHub sets the analytics relay hub for delayed,
+// analytics-enriched streaming.
+func WithAnalyticsRelayHub(hub av.RelayHub) ServiceOption {
+	return func(s *Service) { s.analyticsRelayHub = hub }
+}
+
 // Hub returns the underlying relay hub for direct consumer attachment.
 func (s *Service) Hub() av.RelayHub {
 	return s.hub
+}
+
+// SetAnalyticsRelayHub sets the analytics relay hub after construction.
+// This is a setter rather than an option because the analytics hub depends
+// on viewSvc.RecordedDemuxerFactory, creating a circular init dependency.
+func (s *Service) SetAnalyticsRelayHub(hub av.RelayHub) {
+	s.analyticsRelayHub = hub
 }
 
 // RecIndex returns the recording index, or nil if unavailable.
@@ -288,7 +302,8 @@ func (s *Service) TrackConsumer() func() {
 
 // RecordedDemuxerFactory returns a DemuxerFactory that plays all fMP4 segments
 // matching the given channel and time range. When to is zero, it enters follow
-// mode and polls the index for new segments.
+// mode and polls the index for new segments. In follow mode, if no segments
+// exist, it falls back to the live packet buffer for near-live replay.
 func (s *Service) RecordedDemuxerFactory(channelID string, from, to time.Time) av.DemuxerFactory {
 	follow := to.IsZero()
 
@@ -302,32 +317,16 @@ func (s *Service) RecordedDemuxerFactory(channelID string, from, to time.Time) a
 			return nil, err
 		}
 
-		if len(entries) == 0 {
-			return nil, errNoRecordingsFound
-		}
-
-		// Find the first openable segment, skipping those deleted by retention.
-		var first av.DemuxCloser
-
-		startIdx := 0
-
-		for i, e := range entries {
-			dmx, oerr := openFMP4File(e.FilePath)
-			if oerr != nil {
-				if os.IsNotExist(oerr) {
-					continue
-				}
-
-				return nil, oerr
-			}
-
-			first = dmx
-			startIdx = i + 1
-
-			break
+		first, startIdx, err := openFirstSegment(entries)
+		if err != nil {
+			return nil, err
 		}
 
 		if first == nil {
+			if dmx := s.liveFallback(channelID, from, follow); dmx != nil {
+				return dmx, nil
+			}
+
 			return nil, errNoRecordingsFound
 		}
 
@@ -338,17 +337,51 @@ func (s *Service) RecordedDemuxerFactory(channelID string, from, to time.Time) a
 
 		src := &indexSource{
 			entries:   entries,
-			idx:       startIdx, // entries before this were already opened/skipped
+			idx:       startIdx,
 			seenIDs:   seenIDs,
 			follow:    follow,
 			recIndex:  s.recIndex,
 			channelID: channelID,
-			bufProv:   s.bufProv, // resolved lazily in Next() when needed
+			bufProv:   s.bufProv,
 			collector: s.collector,
 		}
 
 		return chain.NewChainingDemuxer(first, src), nil
 	}
+}
+
+// liveFallback returns a buffer demuxer for near-live replay when no disk
+// segments are available. Returns nil if no buffer is available.
+func (s *Service) liveFallback(channelID string, from time.Time, follow bool) av.DemuxCloser {
+	if !follow || s.bufProv == nil {
+		return nil
+	}
+
+	if buf := s.bufProv.PacketBuffer(channelID); buf != nil {
+		return buf.Demuxer(from)
+	}
+
+	return nil
+}
+
+// openFirstSegment finds the first openable segment in entries, skipping those
+// deleted by retention. Returns the demuxer, the next index, and any error.
+// Returns (nil, 0, nil) when no entries exist or all were deleted.
+func openFirstSegment(entries []recorder.RecordingEntry) (av.DemuxCloser, int, error) {
+	for i, e := range entries {
+		dmx, err := openFMP4File(e.FilePath)
+		if err != nil {
+			if os.IsNotExist(err) {
+				continue
+			}
+
+			return nil, 0, err
+		}
+
+		return dmx, i + 1, nil
+	}
+
+	return nil, 0, nil
 }
 
 // indexSource implements chain.SegmentSource for the edge recording index.

@@ -39,11 +39,14 @@ type LiveRecordingConfig struct {
 	MongoConfig        MongoConfig `json:"mongo_config"                   mapstructure:"mongo_config"`         //nolint:tagliatelle
 	LogLevel           string      `json:"log_level,omitempty"            mapstructure:"log_level"`            //nolint:tagliatelle
 	AuthToken          string      `json:"auth_token,omitempty"           mapstructure:"auth_token"`           //nolint:tagliatelle
-	// AnalyticsSkew is the expected latency between avgrabber capture and the
-	// analytics tool receiving the frame via WebSocket (e.g. "100ms").
-	// The analytics store uses this offset when matching stored results to
-	// MetadataMerger Fetch calls. Defaults to "0s".
-	AnalyticsSkew string `json:"analytics_skew,omitempty" mapstructure:"analytics_skew"` //nolint:tagliatelle
+	// AnalyticsDelay is how far behind live the analytics hub reads packets
+	// (e.g. "5s"). This gives analytics time to arrive in the store before
+	// the blocking merger processes each frame. Defaults to "5s".
+	AnalyticsDelay string `json:"analytics_delay,omitempty" mapstructure:"analytics_delay"` //nolint:tagliatelle
+	// AnalyticsMaxWait is the maximum time the blocking merger will wait for
+	// analytics per video packet (e.g. "7s"). If analytics do not arrive
+	// within this window, the packet passes through without them. Defaults to "7s".
+	AnalyticsMaxWait string `json:"analytics_max_wait,omitempty" mapstructure:"analytics_max_wait"` //nolint:tagliatelle
 }
 
 // MongoConfig holds connection parameters for a MongoDB deployment.

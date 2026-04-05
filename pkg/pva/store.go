@@ -65,17 +65,14 @@ func (s *AnalyticsStore) Put(sourceID string, wallClock time.Time, a *av.FrameAn
 	s.data[sourceID] = entries
 }
 
-// SourceFor returns a pva.Source for the given camera sourceID and skew.
-//
-// The skew compensates for the latency between avgrabber capturing a frame and
-// the analytics tool receiving and timestamping it. Fetch(frameID, avgrabberWC)
-// looks up stored analytics at avgrabberWC + skew within ±200 ms.
+// SourceFor returns a pva.Source for the given camera sourceID.
+// Fetch(frameID, wallClock) looks up stored analytics at wallClock within ±200 ms.
 //
 // When no analytics entry matches, the source returns nil. The MSE writer
 // emits a separate {"type":"timing"} text frame for continuous wall-clock
 // delivery, independent of analytics.
-func (s *AnalyticsStore) SourceFor(sourceID string, skew time.Duration) Source {
-	return &sourcedStore{store: s, sourceID: sourceID, skew: skew}
+func (s *AnalyticsStore) SourceFor(sourceID string) Source {
+	return &sourcedStore{store: s, sourceID: sourceID}
 }
 
 const matchTolerance = 200 * time.Millisecond
@@ -133,11 +130,10 @@ func diff(a, b time.Time) time.Duration {
 type sourcedStore struct {
 	store    *AnalyticsStore
 	sourceID string
-	skew     time.Duration
 }
 
 func (ss *sourcedStore) Fetch(_ int64, wallClock time.Time) *FrameAnalytics {
-	return ss.store.lookup(ss.sourceID, wallClock.Add(ss.skew))
+	return ss.store.lookup(ss.sourceID, wallClock)
 }
 
 // ─── AnalyticsHub ────────────────────────────────────────────────────────────
