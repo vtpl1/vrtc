@@ -21,8 +21,8 @@ import (
 	"github.com/vtpl1/vrtc-sdk/av/format/fmp4"
 	"github.com/vtpl1/vrtc-sdk/av/relayhub"
 	"github.com/vtpl1/vrtc/pkg/metrics"
-	"github.com/vtpl1/vrtc/pkg/pva"
-	"github.com/vtpl1/vrtc/pkg/pva/persistence"
+	"github.com/vtpl1/vrtc-sdk/av/pva"
+	"github.com/vtpl1/vrtc-sdk/av/pva/persistence"
 )
 
 var (

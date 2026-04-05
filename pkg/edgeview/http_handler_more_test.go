@@ -11,8 +11,8 @@ import (
 	"github.com/rs/zerolog/log"
 	"github.com/vtpl1/vrtc-sdk/av"
 	"github.com/vtpl1/vrtc/pkg/metrics"
-	"github.com/vtpl1/vrtc/pkg/pva"
-	"github.com/vtpl1/vrtc/pkg/pva/persistence"
+	"github.com/vtpl1/vrtc-sdk/av/pva"
+	"github.com/vtpl1/vrtc-sdk/av/pva/persistence"
 	"github.com/vtpl1/vrtc/pkg/recorder"
 )
 

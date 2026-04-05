@@ -6,7 +6,7 @@ import (
 	"strconv"
 
 	"github.com/danielgtaylor/huma/v2"
-	"github.com/vtpl1/vrtc/pkg/pva/persistence"
+	"github.com/vtpl1/vrtc-sdk/av/pva/persistence"
 )
 
 // WithAnalyticsReader sets the persistence reader for historical analytics endpoints.

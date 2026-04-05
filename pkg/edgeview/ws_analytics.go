@@ -5,7 +5,7 @@ import (
 	"net/http"
 
 	"github.com/coder/websocket"
-	"github.com/vtpl1/vrtc/pkg/pva"
+	"github.com/vtpl1/vrtc-sdk/av/pva"
 )
 
 // wsAnalytics handles the /api/cameras/ws/analytics WebSocket endpoint.
