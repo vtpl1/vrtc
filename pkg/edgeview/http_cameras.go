@@ -199,6 +199,62 @@ func (h *HTTPHandler) registerCameraCSVRoutes(r chi.Router) {
 	r.Post("/api/cameras/import.csv", h.importCSV)
 }
 
+func (h *HTTPHandler) registerCameraCSVDocs(api huma.API) {
+	if h.svc.ChannelWriter() == nil {
+		return
+	}
+
+	api.OpenAPI().AddOperation(&huma.Operation{
+		OperationID: "exportCamerasCSV",
+		Method:      "GET",
+		Path:        "/api/cameras/export.csv",
+		Summary:     "Export camera configuration as CSV",
+		Tags:        []string{"Camera"},
+		Responses: map[string]*huma.Response{
+			"200": {
+				Description: "Camera configuration CSV export",
+				Content: map[string]*huma.MediaType{
+					"text/csv": {
+						Schema: &huma.Schema{Type: "string", Format: "binary"},
+					},
+				},
+			},
+		},
+	})
+
+	api.OpenAPI().AddOperation(&huma.Operation{
+		OperationID: "importCamerasCSV",
+		Method:      "POST",
+		Path:        "/api/cameras/import.csv",
+		Summary:     "Import camera configuration from CSV",
+		Tags:        []string{"Camera"},
+		RequestBody: &huma.RequestBody{
+			Required: true,
+			Content: map[string]*huma.MediaType{
+				"text/csv": {
+					Schema: &huma.Schema{Type: "string", Format: "binary"},
+				},
+			},
+		},
+		Responses: map[string]*huma.Response{
+			"200": {
+				Description: "Import summary",
+				Content: map[string]*huma.MediaType{
+					"application/json": {
+						Schema: &huma.Schema{
+							Type: "object",
+							Properties: map[string]*huma.Schema{
+								"imported": {Type: "integer"},
+							},
+							Required: []string{"imported"},
+						},
+					},
+				},
+			},
+		},
+	})
+}
+
 // exportCSV writes all channels as a CSV file.
 func (h *HTTPHandler) exportCSV(w http.ResponseWriter, r *http.Request) {
 	cw := h.svc.ChannelWriter()

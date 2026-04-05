@@ -6,6 +6,8 @@ import (
 	"errors"
 	"io"
 	"net/http"
+	"os"
+	"path/filepath"
 	"runtime"
 	"strings"
 	"time"
@@ -20,24 +22,28 @@ import (
 	"github.com/vtpl1/vrtc-sdk/av/relayhub"
 	"github.com/vtpl1/vrtc/pkg/metrics"
 	"github.com/vtpl1/vrtc/pkg/pva"
+	"github.com/vtpl1/vrtc/pkg/pva/persistence"
 )
 
 var (
 	errInvalidTimeRange    = errors.New("end must be greater than or equal to start")
 	errInvalidStartRFC3339 = errors.New("invalid start, expected RFC3339")
 	errInvalidEndRFC3339   = errors.New("invalid end, expected RFC3339")
+	errOpenAPIOutputDir    = errors.New("openapi output directory is required")
 )
 
 // HealthSnapshot is the typed health response returned by /health.
+//
+//nolint:tagalign,golines // Huma/OpenAPI tags are easier to maintain without padded alignment.
 type HealthSnapshot struct {
 	Status         string       `example:"ok" json:"status"`
-	UptimeSeconds  int64        `             json:"uptimeSeconds"`
-	Goroutines     int          `             json:"goroutines"`
-	Memory         HealthMemory `             json:"memory"`
-	ActiveRelays   int          `             json:"activeRelays"`
-	ActiveViewers  int          `             json:"activeViewers"`
-	ActiveSegments int          `             json:"activeSegments"`
-	Timestamp      time.Time    `             json:"timestamp"`
+	UptimeSeconds  int64        `json:"uptimeSeconds"`
+	Goroutines     int          `json:"goroutines"`
+	Memory         HealthMemory `json:"memory"`
+	ActiveRelays   int          `json:"activeRelays"`
+	ActiveViewers  int          `json:"activeViewers"`
+	ActiveSegments int          `json:"activeSegments"`
+	Timestamp      time.Time    `json:"timestamp"`
 }
 
 // HealthMemory contains Go runtime memory counters.
@@ -57,13 +63,14 @@ type ActiveSegmentCounter interface {
 // HTTPHandler provides an HTTP server for browser-based live view and playback.
 // Works on any media relay instance -- edge or cloud.
 type HTTPHandler struct {
-	svc            *Service
-	log            zerolog.Logger
-	authToken      string
-	segmentCounter ActiveSegmentCounter
-	collector      *metrics.Collector
-	analyticsHub   *pva.AnalyticsHub
-	startTime      time.Time
+	svc             *Service
+	log             zerolog.Logger
+	authToken       string
+	segmentCounter  ActiveSegmentCounter
+	collector       *metrics.Collector
+	analyticsHub    *pva.AnalyticsHub
+	analyticsReader *persistence.Reader
+	startTime       time.Time
 }
 
 // NewHTTPHandler creates the HTTP handler for a media relay.
@@ -106,6 +113,52 @@ func WithMetricsCollector(c *metrics.Collector) HTTPHandlerOption {
 //
 
 func (h *HTTPHandler) Router() http.Handler {
+	r, _ := h.newRouter()
+
+	return r
+}
+
+// OpenAPI returns the generated OpenAPI specification for this handler.
+func (h *HTTPHandler) OpenAPI() *huma.OpenAPI {
+	_, api := h.newRouter()
+
+	return api.OpenAPI()
+}
+
+// ExportOpenAPI writes the generated OpenAPI spec to outputDir as JSON and YAML.
+func (h *HTTPHandler) ExportOpenAPI(outputDir string) error {
+	if outputDir == "" {
+		return errOpenAPIOutputDir
+	}
+
+	if err := os.MkdirAll(outputDir, 0o750); err != nil {
+		return err
+	}
+
+	spec := h.OpenAPI()
+
+	jsonSpec, err := json.MarshalIndent(spec, "", "  ")
+	if err != nil {
+		return err
+	}
+
+	yamlSpec, err := spec.YAML()
+	if err != nil {
+		return err
+	}
+
+	if err := os.WriteFile(filepath.Join(outputDir, "openapi.json"), jsonSpec, 0o600); err != nil {
+		return err
+	}
+
+	if err := os.WriteFile(filepath.Join(outputDir, "openapi.yaml"), yamlSpec, 0o600); err != nil {
+		return err
+	}
+
+	return nil
+}
+
+func (h *HTTPHandler) newRouter() (*chi.Mux, huma.API) {
 	r := chi.NewRouter()
 	r.Use(middleware.Recoverer)
 	r.Use(middleware.RealIP)
@@ -144,6 +197,7 @@ func (h *HTTPHandler) Router() http.Handler {
 
 	// CSV import/export (raw chi handlers — binary content, not JSON).
 	h.registerCameraCSVRoutes(r)
+	h.registerCameraCSVDocs(api)
 
 	// Document streaming endpoints in OpenAPI (handled by raw chi handlers below).
 	h.registerStreamingDocs(api)
@@ -156,13 +210,17 @@ func (h *HTTPHandler) Router() http.Handler {
 	r.HandleFunc("/api/cameras/ws/stream", h.wsStream)
 	r.HandleFunc("/api/cameras/ws/analytics", h.wsAnalytics)
 
-	return r
+	return r, api
 }
 
 func (h *HTTPHandler) registerJSONOps(api huma.API) {
 	h.registerCameraViewOps(api)
 	h.registerStatsOps(api)
 	h.registerHealthOps(api)
+
+	if h.analyticsReader != nil {
+		h.registerAnalyticsOps(api)
+	}
 }
 
 func (h *HTTPHandler) registerCameraViewOps(api huma.API) {
@@ -254,19 +312,16 @@ func (h *HTTPHandler) registerHealthOps(api huma.API) {
 //
 
 func (h *HTTPHandler) registerStreamingDocs(api huma.API) {
-	streamResp := map[string]*huma.Response{
-		"200": {
-			Description: "fMP4 video stream (video/mp4)",
-			Content: map[string]*huma.MediaType{
-				"video/mp4": {},
-			},
-		},
-	}
-	wsResp := map[string]*huma.Response{
-		"101": {Description: "WebSocket upgrade for MSE streaming"},
-	}
+	api.OpenAPI().AddOperation(h.streamCameraOperation())
+	api.OpenAPI().AddOperation(h.streamCameraWSOperation())
 
-	api.OpenAPI().AddOperation(&huma.Operation{
+	if h.analyticsHub != nil {
+		api.OpenAPI().AddOperation(h.streamCameraAnalyticsWSOperation())
+	}
+}
+
+func (h *HTTPHandler) streamCameraOperation() *huma.Operation {
+	return &huma.Operation{
 		OperationID: "streamCamera",
 		Method:      "GET",
 		Path:        "/api/cameras/{cameraId}/stream",
@@ -282,10 +337,19 @@ func (h *HTTPHandler) registerStreamingDocs(api huma.API) {
 				Schema:      &huma.Schema{Type: "string", Format: "date-time"},
 			},
 		},
-		Responses: streamResp,
-	})
+		Responses: map[string]*huma.Response{
+			"200": {
+				Description: "fMP4 video stream (video/mp4)",
+				Content: map[string]*huma.MediaType{
+					"video/mp4": {},
+				},
+			},
+		},
+	}
+}
 
-	api.OpenAPI().AddOperation(&huma.Operation{
+func (h *HTTPHandler) streamCameraWSOperation() *huma.Operation {
+	return &huma.Operation{
 		OperationID: "streamCameraWs",
 		Method:      "GET",
 		Path:        "/api/cameras/ws/stream",
@@ -294,7 +358,12 @@ func (h *HTTPHandler) registerStreamingDocs(api huma.API) {
 			"Seek commands switch between modes transparently. Send {\"type\":\"mse\"} to start streaming.",
 		Tags: []string{"Camera"},
 		Parameters: []*huma.Param{
-			{Name: "cameraId", In: "query", Required: true, Schema: &huma.Schema{Type: "string"}},
+			{
+				Name:     "cameraId",
+				In:       "query",
+				Required: true,
+				Schema:   &huma.Schema{Type: "string"},
+			},
 			{
 				Name:        "start",
 				In:          "query",
@@ -302,8 +371,32 @@ func (h *HTTPHandler) registerStreamingDocs(api huma.API) {
 				Schema:      &huma.Schema{Type: "string", Format: "date-time"},
 			},
 		},
-		Responses: wsResp,
-	})
+		Responses: map[string]*huma.Response{
+			"101": {Description: "WebSocket upgrade for MSE streaming"},
+		},
+	}
+}
+
+func (h *HTTPHandler) streamCameraAnalyticsWSOperation() *huma.Operation {
+	return &huma.Operation{
+		OperationID: "streamCameraAnalyticsWs",
+		Method:      "GET",
+		Path:        "/api/cameras/ws/analytics",
+		Summary:     "WebSocket analytics stream",
+		Description: "Streams analytics events as JSON text frames for a single camera.",
+		Tags:        []string{"Analytics"},
+		Parameters: []*huma.Param{
+			{
+				Name:     "cameraId",
+				In:       "query",
+				Required: true,
+				Schema:   &huma.Schema{Type: "string"},
+			},
+		},
+		Responses: map[string]*huma.Response{
+			"101": {Description: "WebSocket upgrade for analytics streaming"},
+		},
+	}
 }
 
 // authMiddleware validates the auth token for LAN access.
@@ -383,9 +476,11 @@ func writeProblem(w http.ResponseWriter, status int, detail string) {
 // ── Huma I/O types ──────────────────────────────────────────────────────────
 
 // paginatedInput provides common pagination query params for list endpoints.
+//
+//nolint:golines // Huma tags are clearer on one line here.
 type paginatedInput struct {
 	Limit  int `doc:"Maximum items per page (default: 100, max: 1000)" maximum:"1000" minimum:"1" query:"limit"`
-	Offset int `doc:"Number of items to skip (default: 0)"                            minimum:"0" query:"offset"`
+	Offset int `doc:"Number of items to skip (default: 0)"             minimum:"0"    query:"offset"`
 }
 
 func (p paginatedInput) effectiveLimit() int {

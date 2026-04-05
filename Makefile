@@ -21,7 +21,7 @@ PLATFORMS := \
     linux/amd64 \
 	linux/arm64
 
-.PHONY: all prerequisite fmt lint update build test test-edge-cgo docker-build clean benchmark
+.PHONY: all prerequisite fmt lint update build test test-edge-cgo docker-build clean benchmark openapi
 
 all: fmt lint build
 
@@ -82,9 +82,7 @@ else
 endif
 
 docker-build:
-	docker build --build-arg NODE_TYPE=edge   -t $(BINARY):edge-$(VERSION) .
-	docker build --build-arg NODE_TYPE=proxy  -t $(BINARY):proxy-$(VERSION) .
-	docker build --build-arg NODE_TYPE=cloud  -t $(BINARY):cloud-$(VERSION) .
+	docker build -t $(BINARY):edge-$(VERSION) .
 
 benchmark:
 	@echo "Building loadtest tool..."
@@ -92,10 +90,8 @@ benchmark:
 	@echo "Binary: $(OUTPUT_DIR)/loadtest_$(HOST_OS)_$(HOST_ARCH)"
 	@echo "Usage:  ./$(OUTPUT_DIR)/loadtest_$(HOST_OS)_$(HOST_ARCH) --help"
 
+openapi:
+	go run ./cmd/openapi -out ./docs/openapi
+
 clean:
 	rm -rf bin/ data/ hls/
-
-test-hosting:
-	go tool grpcurl -plaintext 172.16.1.144:8083 list
-	go tool grpcurl -plaintext 172.16.1.144:8083 describe central_service_frs.CentralService
-	go tool grpcurl -plaintext 172.16.1.144:8083 describe stream_service_frs.StreamService

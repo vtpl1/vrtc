@@ -2,13 +2,17 @@ package edgeview
 
 import (
 	"context"
+	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
 	"github.com/rs/zerolog/log"
 	"github.com/vtpl1/vrtc-sdk/av"
 	"github.com/vtpl1/vrtc/pkg/metrics"
+	"github.com/vtpl1/vrtc/pkg/pva"
+	"github.com/vtpl1/vrtc/pkg/pva/persistence"
 	"github.com/vtpl1/vrtc/pkg/recorder"
 )
 
@@ -190,6 +194,53 @@ func TestHumaRecordingTimeline_MapsFields(t *testing.T) {
 
 	if out.Body.Items[0].ID != "seg-1" || out.Body.Items[0].DurationMs != 120000 {
 		t.Fatalf("unexpected recording timeline output: %+v", out.Body.Items[0])
+	}
+}
+
+func TestExportOpenAPI_WritesJSONAndYAML(t *testing.T) {
+	t.Parallel()
+
+	store := newEdgeviewMetricsStore(t)
+	dbm := persistence.NewDBManager(filepath.Join(t.TempDir(), "analytics"))
+	t.Cleanup(func() { _ = dbm.Close() })
+
+	svc := NewService(log.Logger, serviceTestRelayHub{}, nil, nil, WithChannelWriter(newFakeChannelWriter()))
+	collector := metrics.NewCollector(store, serviceTestRelayHub{}, edgeviewTestSegments{}, edgeviewTestViewers{})
+	defer collector.Stop()
+
+	handler := NewHTTPHandler(
+		svc,
+		log.Logger,
+		"",
+		WithMetricsCollector(collector),
+		WithAnalyticsHub(pva.NewAnalyticsHub()),
+		WithAnalyticsReader(persistence.NewReader(dbm)),
+	)
+
+	outDir := filepath.Join(t.TempDir(), "openapi")
+	if err := handler.ExportOpenAPI(outDir); err != nil {
+		t.Fatalf("ExportOpenAPI: %v", err)
+	}
+
+	jsonSpec, err := os.ReadFile(filepath.Join(outDir, "openapi.json"))
+	if err != nil {
+		t.Fatalf("ReadFile(json): %v", err)
+	}
+
+	jsonBody := string(jsonSpec)
+	for _, want := range []string{`"/api/cameras/ws/analytics"`, `"/api/cameras/import.csv"`, `"/api/metrics"`} {
+		if !strings.Contains(jsonBody, want) {
+			t.Fatalf("expected exported JSON spec to contain %s", want)
+		}
+	}
+
+	yamlSpec, err := os.ReadFile(filepath.Join(outDir, "openapi.yaml"))
+	if err != nil {
+		t.Fatalf("ReadFile(yaml): %v", err)
+	}
+
+	if !strings.Contains(string(yamlSpec), "/api/cameras/export.csv:") {
+		t.Fatal("expected exported YAML spec to contain CSV export endpoint")
 	}
 }
 

@@ -1,0 +1,1644 @@
+components:
+  schemas:
+    AnalyticsCountsOutputBody:
+      additionalProperties: false
+      properties:
+        $schema:
+          description: A URL to the JSON Schema for this object.
+          examples:
+            - https://example.com/schemas/AnalyticsCountsOutputBody.json
+          format: uri
+          readOnly: true
+          type: string
+        items:
+          items:
+            $ref: "#/components/schemas/CountBucket"
+          type:
+            - array
+            - "null"
+      required:
+        - items
+      type: object
+    AnalyticsEventsOutputBody:
+      additionalProperties: false
+      properties:
+        $schema:
+          description: A URL to the JSON Schema for this object.
+          examples:
+            - https://example.com/schemas/AnalyticsEventsOutputBody.json
+          format: uri
+          readOnly: true
+          type: string
+        items:
+          items:
+            $ref: "#/components/schemas/FrameWithDetections"
+          type:
+            - array
+            - "null"
+        limit:
+          format: int64
+          type: integer
+        offset:
+          format: int64
+          type: integer
+        totalCount:
+          format: int64
+          type: integer
+      required:
+        - items
+        - totalCount
+        - limit
+        - offset
+      type: object
+    AnalyticsOutputBody:
+      additionalProperties: false
+      properties:
+        $schema:
+          description: A URL to the JSON Schema for this object.
+          examples:
+            - https://example.com/schemas/AnalyticsOutputBody.json
+          format: uri
+          readOnly: true
+          type: string
+        items:
+          items:
+            $ref: "#/components/schemas/FrameWithDetections"
+          type:
+            - array
+            - "null"
+        limit:
+          format: int64
+          type: integer
+        offset:
+          format: int64
+          type: integer
+        totalCount:
+          format: int64
+          type: integer
+      required:
+        - items
+        - totalCount
+        - limit
+        - offset
+      type: object
+    AnalyticsTrackOutputBody:
+      additionalProperties: false
+      properties:
+        $schema:
+          description: A URL to the JSON Schema for this object.
+          examples:
+            - https://example.com/schemas/AnalyticsTrackOutputBody.json
+          format: uri
+          readOnly: true
+          type: string
+        items:
+          items:
+            $ref: "#/components/schemas/FrameWithDetections"
+          type:
+            - array
+            - "null"
+        limit:
+          format: int64
+          type: integer
+        offset:
+          format: int64
+          type: integer
+        totalCount:
+          format: int64
+          type: integer
+      required:
+        - items
+        - totalCount
+        - limit
+        - offset
+      type: object
+    CameraInfo:
+      additionalProperties: false
+      properties:
+        analytics:
+          type: boolean
+        cameraId:
+          type: string
+        codec:
+          type: string
+        fps:
+          format: int64
+          type: integer
+        name:
+          type: string
+        recording:
+          type: boolean
+        resolution:
+          type: string
+        state:
+          type: string
+      required:
+        - cameraId
+        - name
+        - codec
+        - resolution
+        - fps
+        - recording
+        - analytics
+        - state
+      type: object
+    CamerasOutputBody:
+      additionalProperties: false
+      properties:
+        $schema:
+          description: A URL to the JSON Schema for this object.
+          examples:
+            - https://example.com/schemas/CamerasOutputBody.json
+          format: uri
+          readOnly: true
+          type: string
+        items:
+          items:
+            $ref: "#/components/schemas/CameraInfo"
+          type:
+            - array
+            - "null"
+        limit:
+          format: int64
+          type: integer
+        offset:
+          format: int64
+          type: integer
+        totalCount:
+          format: int64
+          type: integer
+      required:
+        - items
+        - totalCount
+        - limit
+        - offset
+      type: object
+    Channel:
+      additionalProperties: false
+      properties:
+        $schema:
+          description: A URL to the JSON Schema for this object.
+          examples:
+            - https://example.com/schemas/Channel.json
+          format: uri
+          readOnly: true
+          type: string
+        extra:
+          additionalProperties:
+            type: string
+          type: object
+        id:
+          type: string
+        name:
+          type: string
+        password:
+          type: string
+        siteId:
+          format: int64
+          type: integer
+        streamUrl:
+          type: string
+        username:
+          type: string
+      required:
+        - id
+        - name
+        - streamUrl
+        - siteId
+      type: object
+    ChannelListOutputBody:
+      additionalProperties: false
+      properties:
+        $schema:
+          description: A URL to the JSON Schema for this object.
+          examples:
+            - https://example.com/schemas/ChannelListOutputBody.json
+          format: uri
+          readOnly: true
+          type: string
+        items:
+          items:
+            $ref: "#/components/schemas/Channel"
+          type:
+            - array
+            - "null"
+        limit:
+          format: int64
+          type: integer
+        offset:
+          format: int64
+          type: integer
+        totalCount:
+          format: int64
+          type: integer
+      required:
+        - items
+        - totalCount
+        - limit
+        - offset
+      type: object
+    ChannelResponse:
+      additionalProperties: false
+      properties:
+        $schema:
+          description: A URL to the JSON Schema for this object.
+          examples:
+            - https://example.com/schemas/ChannelResponse.json
+          format: uri
+          readOnly: true
+          type: string
+        extra:
+          additionalProperties:
+            type: string
+          type: object
+        id:
+          type: string
+        name:
+          type: string
+        password:
+          type: string
+        siteId:
+          format: int64
+          type: integer
+        streamUrl:
+          type: string
+        username:
+          type: string
+        wsUrl:
+          type: string
+      required:
+        - streamUrl
+        - wsUrl
+        - id
+        - name
+        - siteId
+      type: object
+    CountBucket:
+      additionalProperties: false
+      properties:
+        bucketMs:
+          format: int64
+          type: integer
+        eventCount:
+          format: int64
+          type: integer
+        frameCount:
+          format: int64
+          type: integer
+        objectCount:
+          format: int64
+          type: integer
+        peopleCount:
+          format: int64
+          type: integer
+        vehicleCount:
+          format: int64
+          type: integer
+      required:
+        - bucketMs
+        - frameCount
+        - vehicleCount
+        - peopleCount
+        - objectCount
+        - eventCount
+      type: object
+    ErrorDetail:
+      additionalProperties: false
+      properties:
+        location:
+          description: Where the error occurred, e.g. 'body.items[3].tags' or 'path.thing-id'
+          type: string
+        message:
+          description: Error message text
+          type: string
+        value:
+          description: The value at the given location
+      type: object
+    ErrorModel:
+      additionalProperties: false
+      properties:
+        $schema:
+          description: A URL to the JSON Schema for this object.
+          examples:
+            - https://example.com/schemas/ErrorModel.json
+          format: uri
+          readOnly: true
+          type: string
+        detail:
+          description: A human-readable explanation specific to this occurrence of the problem.
+          examples:
+            - Property foo is required but is missing.
+          type: string
+        errors:
+          description: Optional list of individual error details
+          items:
+            $ref: "#/components/schemas/ErrorDetail"
+          type:
+            - array
+            - "null"
+        instance:
+          description: A URI reference that identifies the specific occurrence of the problem.
+          examples:
+            - https://example.com/error-log/abc123
+          format: uri
+          type: string
+        status:
+          description: HTTP status code
+          examples:
+            - 400
+          format: int64
+          type: integer
+        title:
+          description: A short, human-readable summary of the problem type. This value should not change between occurrences of the error.
+          examples:
+            - Bad Request
+          type: string
+        type:
+          default: about:blank
+          description: A URI reference to human-readable documentation for the error.
+          examples:
+            - https://example.com/errors/example
+          format: uri
+          type: string
+      type: object
+    FrameWithDetections:
+      additionalProperties: false
+      properties:
+        captureEndMs:
+          format: int64
+          type: integer
+        captureMs:
+          format: int64
+          type: integer
+        channelId:
+          format: int32
+          type: integer
+        detections:
+          items:
+            $ref: "#/components/schemas/StoredDetection"
+          type:
+            - array
+            - "null"
+        framePts:
+          format: int64
+          type: integer
+        hasEvent:
+          type: boolean
+        id:
+          format: int64
+          type: integer
+        inferenceMs:
+          format: int64
+          type: integer
+        objectCount:
+          format: int64
+          type: integer
+        peopleCount:
+          format: int32
+          type: integer
+        refHeight:
+          format: int32
+          type: integer
+        refWidth:
+          format: int32
+          type: integer
+        siteId:
+          format: int32
+          type: integer
+        timestamp:
+          format: date-time
+          type: string
+        vehicleCount:
+          format: int32
+          type: integer
+      required:
+        - detections
+        - id
+        - siteId
+        - channelId
+        - framePts
+        - captureMs
+        - captureEndMs
+        - inferenceMs
+        - refWidth
+        - refHeight
+        - vehicleCount
+        - peopleCount
+        - objectCount
+        - hasEvent
+        - timestamp
+      type: object
+    HealthMemory:
+      additionalProperties: false
+      properties:
+        allocMb:
+          format: double
+          type: number
+        gcRuns:
+          format: int32
+          minimum: 0
+          type: integer
+        heapInuseMb:
+          format: double
+          type: number
+        sysMb:
+          format: double
+          type: number
+      required:
+        - allocMb
+        - sysMb
+        - heapInuseMb
+        - gcRuns
+      type: object
+    HealthSnapshot:
+      additionalProperties: false
+      properties:
+        $schema:
+          description: A URL to the JSON Schema for this object.
+          examples:
+            - https://example.com/schemas/HealthSnapshot.json
+          format: uri
+          readOnly: true
+          type: string
+        activeRelays:
+          format: int64
+          type: integer
+        activeSegments:
+          format: int64
+          type: integer
+        activeViewers:
+          format: int64
+          type: integer
+        goroutines:
+          format: int64
+          type: integer
+        memory:
+          $ref: "#/components/schemas/HealthMemory"
+        status:
+          examples:
+            - ok
+          type: string
+        timestamp:
+          format: date-time
+          type: string
+        uptimeSeconds:
+          format: int64
+          type: integer
+      required:
+        - status
+        - uptimeSeconds
+        - goroutines
+        - memory
+        - activeRelays
+        - activeViewers
+        - activeSegments
+        - timestamp
+      type: object
+    HealthzOutputBody:
+      additionalProperties: false
+      properties:
+        $schema:
+          description: A URL to the JSON Schema for this object.
+          examples:
+            - https://example.com/schemas/HealthzOutputBody.json
+          format: uri
+          readOnly: true
+          type: string
+        status:
+          examples:
+            - ok
+          type: string
+      required:
+        - status
+      type: object
+    Histogram:
+      additionalProperties: false
+      properties:
+        avg:
+          format: double
+          type: number
+        count:
+          format: int64
+          type: integer
+        max:
+          format: double
+          type: number
+        p50:
+          format: double
+          type: number
+        p95:
+          format: double
+          type: number
+        p99:
+          format: double
+          type: number
+      required:
+        - count
+        - p50
+        - p95
+        - p99
+        - max
+        - avg
+      type: object
+    MetricsResponse:
+      additionalProperties: false
+      properties:
+        $schema:
+          description: A URL to the JSON Schema for this object.
+          examples:
+            - https://example.com/schemas/MetricsResponse.json
+          format: uri
+          readOnly: true
+          type: string
+        counters:
+          additionalProperties:
+            format: double
+            type: number
+          type: object
+        generatedAt:
+          format: date-time
+          type: string
+        latencies:
+          additionalProperties:
+            $ref: "#/components/schemas/Histogram"
+          type: object
+        relays:
+          items:
+            $ref: "#/components/schemas/RelayMetrics"
+          type:
+            - array
+            - "null"
+        snapshots:
+          items:
+            $ref: "#/components/schemas/Snapshot"
+          type:
+            - array
+            - "null"
+        uptime:
+          type: string
+      required:
+        - generatedAt
+        - uptime
+        - latencies
+        - counters
+        - snapshots
+        - relays
+      type: object
+    ProducerStatsOutputBody:
+      additionalProperties: false
+      properties:
+        $schema:
+          description: A URL to the JSON Schema for this object.
+          examples:
+            - https://example.com/schemas/ProducerStatsOutputBody.json
+          format: uri
+          readOnly: true
+          type: string
+        items:
+          items:
+            $ref: "#/components/schemas/RelayStats"
+          type:
+            - array
+            - "null"
+        totalCount:
+          format: int64
+          type: integer
+      required:
+        - items
+        - totalCount
+      type: object
+    RecordingTimelineOutputBody:
+      additionalProperties: false
+      properties:
+        $schema:
+          description: A URL to the JSON Schema for this object.
+          examples:
+            - https://example.com/schemas/RecordingTimelineOutputBody.json
+          format: uri
+          readOnly: true
+          type: string
+        items:
+          items:
+            $ref: "#/components/schemas/TimelineEntry"
+          type:
+            - array
+            - "null"
+        limit:
+          format: int64
+          type: integer
+        offset:
+          format: int64
+          type: integer
+        totalCount:
+          format: int64
+          type: integer
+      required:
+        - items
+        - totalCount
+        - limit
+        - offset
+      type: object
+    RelayMetrics:
+      additionalProperties: false
+      properties:
+        actualFps:
+          format: double
+          type: number
+        bitrateBps:
+          format: double
+          type: number
+        consumerCount:
+          format: int64
+          type: integer
+        frameLossRate:
+          format: double
+          type: number
+        sourceId:
+          type: string
+        uptimeSeconds:
+          format: double
+          type: number
+      required:
+        - sourceId
+        - frameLossRate
+        - actualFps
+        - bitrateBps
+        - consumerCount
+        - uptimeSeconds
+      type: object
+    RelayStats:
+      additionalProperties: false
+      properties:
+        $schema:
+          description: A URL to the JSON Schema for this object.
+          examples:
+            - https://example.com/schemas/RelayStats.json
+          format: uri
+          readOnly: true
+          type: string
+        actualFps:
+          format: double
+          type: number
+        bitrateBps:
+          format: double
+          type: number
+        bytesRead:
+          format: int64
+          minimum: 0
+          type: integer
+        consumerCount:
+          format: int64
+          type: integer
+        droppedPackets:
+          format: int64
+          minimum: 0
+          type: integer
+        id:
+          type: string
+        keyFrames:
+          format: int64
+          minimum: 0
+          type: integer
+        lastError:
+          type: string
+        lastPacketAt:
+          format: date-time
+          type: string
+        packetsRead:
+          format: int64
+          minimum: 0
+          type: integer
+        rotations:
+          format: int64
+          minimum: 0
+          type: integer
+        skips:
+          format: int64
+          minimum: 0
+          type: integer
+        startedAt:
+          format: date-time
+          type: string
+        streams:
+          items:
+            $ref: "#/components/schemas/StreamInfo"
+          type:
+            - array
+            - "null"
+      required:
+        - id
+        - consumerCount
+        - packetsRead
+        - bytesRead
+        - keyFrames
+        - droppedPackets
+        - startedAt
+        - lastPacketAt
+        - actualFps
+        - bitrateBps
+        - rotations
+        - skips
+      type: object
+    Snapshot:
+      additionalProperties: false
+      properties:
+        activeRelays:
+          format: int64
+          type: integer
+        activeSegments:
+          format: int64
+          type: integer
+        activeViewers:
+          format: int64
+          type: integer
+        avgFps:
+          format: double
+          type: number
+        goroutines:
+          format: int64
+          type: integer
+        heapAllocMb:
+          format: double
+          type: number
+        timestamp:
+          format: date-time
+          type: string
+        totalBitrateBps:
+          format: double
+          type: number
+        totalDropped:
+          format: int64
+          minimum: 0
+          type: integer
+        totalPackets:
+          format: int64
+          minimum: 0
+          type: integer
+      required:
+        - timestamp
+        - goroutines
+        - heapAllocMb
+        - activeRelays
+        - activeViewers
+        - activeSegments
+        - totalPackets
+        - totalDropped
+        - avgFps
+        - totalBitrateBps
+      type: object
+    StoredDetection:
+      additionalProperties: false
+      properties:
+        classId:
+          format: int64
+          type: integer
+        confidence:
+          format: int64
+          type: integer
+        frameId:
+          format: int64
+          type: integer
+        h:
+          format: int64
+          type: integer
+        id:
+          format: int64
+          type: integer
+        isEvent:
+          type: boolean
+        trackId:
+          format: int64
+          type: integer
+        w:
+          format: int64
+          type: integer
+        x:
+          format: int64
+          type: integer
+        "y":
+          format: int64
+          type: integer
+      required:
+        - id
+        - frameId
+        - x
+        - "y"
+        - w
+        - h
+        - classId
+        - confidence
+        - trackId
+        - isEvent
+      type: object
+    StreamInfo:
+      additionalProperties: false
+      properties:
+        codecType:
+          format: int32
+          minimum: 0
+          type: integer
+        height:
+          format: int64
+          type: integer
+        idx:
+          format: int32
+          minimum: 0
+          type: integer
+        sampleRate:
+          format: int64
+          type: integer
+        width:
+          format: int64
+          type: integer
+      required:
+        - idx
+        - codecType
+      type: object
+    SystemStats:
+      additionalProperties: false
+      properties:
+        $schema:
+          description: A URL to the JSON Schema for this object.
+          examples:
+            - https://example.com/schemas/SystemStats.json
+          format: uri
+          readOnly: true
+          type: string
+        activeSegments:
+          format: int64
+          type: integer
+        activeViewers:
+          format: int64
+          type: integer
+        avgFps:
+          format: double
+          type: number
+        recordingCameras:
+          format: int64
+          type: integer
+        streamingCameras:
+          format: int64
+          type: integer
+        totalBitrateBps:
+          format: double
+          type: number
+        totalBytesRead:
+          format: int64
+          minimum: 0
+          type: integer
+        totalCameras:
+          format: int64
+          type: integer
+        totalDropped:
+          format: int64
+          minimum: 0
+          type: integer
+        totalKeyFrames:
+          format: int64
+          minimum: 0
+          type: integer
+        totalPacketsRead:
+          format: int64
+          minimum: 0
+          type: integer
+      required:
+        - totalCameras
+        - streamingCameras
+        - recordingCameras
+        - totalPacketsRead
+        - totalBytesRead
+        - totalKeyFrames
+        - totalDropped
+        - avgFps
+        - totalBitrateBps
+        - activeSegments
+        - activeViewers
+      type: object
+    TimelineEntry:
+      additionalProperties: false
+      properties:
+        durationMs:
+          format: int64
+          type: integer
+        end:
+          format: date-time
+          type: string
+        hasMotion:
+          type: boolean
+        hasObjects:
+          type: boolean
+        id:
+          type: string
+        sizeBytes:
+          format: int64
+          type: integer
+        start:
+          format: date-time
+          type: string
+        status:
+          type: string
+      required:
+        - id
+        - start
+        - end
+        - durationMs
+        - sizeBytes
+        - status
+        - hasMotion
+        - hasObjects
+      type: object
+    TimelineOutputBody:
+      additionalProperties: false
+      properties:
+        $schema:
+          description: A URL to the JSON Schema for this object.
+          examples:
+            - https://example.com/schemas/TimelineOutputBody.json
+          format: uri
+          readOnly: true
+          type: string
+        items:
+          items:
+            $ref: "#/components/schemas/TimelineSummary"
+          type:
+            - array
+            - "null"
+        limit:
+          format: int64
+          type: integer
+        offset:
+          format: int64
+          type: integer
+        totalCount:
+          format: int64
+          type: integer
+      required:
+        - items
+        - totalCount
+        - limit
+        - offset
+      type: object
+    TimelineSummary:
+      additionalProperties: false
+      properties:
+        durationMs:
+          format: int64
+          type: integer
+        end:
+          format: date-time
+          type: string
+        hasEvents:
+          type: boolean
+        start:
+          format: date-time
+          type: string
+      required:
+        - start
+        - end
+        - durationMs
+        - hasEvents
+      type: object
+  securitySchemes:
+    bearerAuth:
+      scheme: bearer
+      type: http
+info:
+  description: LAN-accessible API for live view, recorded playback, and camera management.
+  title: Edge View API
+  version: 1.0.0
+openapi: 3.1.0
+paths:
+  /api/cameras:
+    get:
+      operationId: listCameras
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/CamerasOutputBody"
+          description: OK
+        default:
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/ErrorModel"
+          description: Error
+      summary: List all cameras on this edge device
+      tags:
+        - Camera
+  /api/cameras/config:
+    get:
+      operationId: listCameraConfigs
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ChannelListOutputBody"
+          description: OK
+        default:
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/ErrorModel"
+          description: Error
+      summary: List all registered cameras with full details
+      tags:
+        - Camera
+  /api/cameras/export.csv:
+    get:
+      operationId: exportCamerasCSV
+      responses:
+        "200":
+          content:
+            text/csv:
+              schema:
+                contentMediaType: application/octet-stream
+                format: binary
+                type: string
+          description: Camera configuration CSV export
+      summary: Export camera configuration as CSV
+      tags:
+        - Camera
+  /api/cameras/import.csv:
+    post:
+      operationId: importCamerasCSV
+      requestBody:
+        content:
+          text/csv:
+            schema:
+              contentMediaType: application/octet-stream
+              format: binary
+              type: string
+        required: true
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                properties:
+                  imported:
+                    type: integer
+                required:
+                  - imported
+                type: object
+          description: Import summary
+      summary: Import camera configuration from CSV
+      tags:
+        - Camera
+  /api/cameras/stats:
+    get:
+      operationId: listCameraStats
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ProducerStatsOutputBody"
+          description: OK
+        default:
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/ErrorModel"
+          description: Error
+      summary: Per-camera stream ingestion metrics
+      tags:
+        - Camera
+  /api/cameras/stats/summary:
+    get:
+      operationId: getSystemStats
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SystemStats"
+          description: OK
+        default:
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/ErrorModel"
+          description: Error
+      summary: Aggregated system-wide camera stats
+      tags:
+        - Camera
+  /api/cameras/ws/analytics:
+    get:
+      description: Streams analytics events as JSON text frames for a single camera.
+      operationId: streamCameraAnalyticsWs
+      parameters:
+        - in: query
+          name: cameraId
+          required: true
+          schema:
+            type: string
+      responses:
+        "101":
+          description: WebSocket upgrade for analytics streaming
+      summary: WebSocket analytics stream
+      tags:
+        - Analytics
+  /api/cameras/ws/stream:
+    get:
+      description: Unified WebSocket endpoint. Omit start for live; provide start (RFC3339) for recorded playback. Seek commands switch between modes transparently. Send {"type":"mse"} to start streaming.
+      operationId: streamCameraWs
+      parameters:
+        - in: query
+          name: cameraId
+          required: true
+          schema:
+            type: string
+        - description: Start time (RFC3339). Omit for live mode.
+          in: query
+          name: start
+          schema:
+            format: date-time
+            type: string
+      responses:
+        "101":
+          description: WebSocket upgrade for MSE streaming
+      summary: WebSocket MSE stream (live + recorded)
+      tags:
+        - Camera
+  /api/cameras/{cameraId}/analytics:
+    get:
+      operationId: getCameraAnalytics
+      parameters:
+        - description: Camera identifier
+          in: path
+          name: cameraId
+          required: true
+          schema:
+            description: Camera identifier
+            type: string
+        - description: "Start time (RFC3339, default: 24h ago)"
+          explode: false
+          in: query
+          name: start
+          schema:
+            description: "Start time (RFC3339, default: 24h ago)"
+            type: string
+        - description: "End time (RFC3339, default: now)"
+          explode: false
+          in: query
+          name: end
+          schema:
+            description: "End time (RFC3339, default: now)"
+            type: string
+        - description: Filter by detection class ID
+          explode: false
+          in: query
+          name: classId
+          schema:
+            description: Filter by detection class ID
+            type: string
+        - description: Minimum detection confidence (0-100)
+          explode: false
+          in: query
+          name: minConfidence
+          schema:
+            description: Minimum detection confidence (0-100)
+            type: string
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AnalyticsOutputBody"
+          description: OK
+        default:
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/ErrorModel"
+          description: Error
+      summary: Query frame analytics by time range
+      tags:
+        - Analytics
+  /api/cameras/{cameraId}/analytics/counts:
+    get:
+      operationId: getCameraAnalyticsCounts
+      parameters:
+        - description: Camera identifier
+          in: path
+          name: cameraId
+          required: true
+          schema:
+            description: Camera identifier
+            type: string
+        - description: "Start time (RFC3339, default: 24h ago)"
+          explode: false
+          in: query
+          name: start
+          schema:
+            description: "Start time (RFC3339, default: 24h ago)"
+            type: string
+        - description: "End time (RFC3339, default: now)"
+          explode: false
+          in: query
+          name: end
+          schema:
+            description: "End time (RFC3339, default: now)"
+            type: string
+        - description: "Bucket interval in seconds (default: 60)"
+          explode: false
+          in: query
+          name: interval
+          schema:
+            description: "Bucket interval in seconds (default: 60)"
+            format: int64
+            type: integer
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AnalyticsCountsOutputBody"
+          description: OK
+        default:
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/ErrorModel"
+          description: Error
+      summary: Aggregated analytics counts bucketed by interval
+      tags:
+        - Analytics
+  /api/cameras/{cameraId}/analytics/events:
+    get:
+      operationId: getCameraAnalyticsEvents
+      parameters:
+        - description: Camera identifier
+          in: path
+          name: cameraId
+          required: true
+          schema:
+            description: Camera identifier
+            type: string
+        - description: "Start time (RFC3339, default: 24h ago)"
+          explode: false
+          in: query
+          name: start
+          schema:
+            description: "Start time (RFC3339, default: 24h ago)"
+            type: string
+        - description: "End time (RFC3339, default: now)"
+          explode: false
+          in: query
+          name: end
+          schema:
+            description: "End time (RFC3339, default: now)"
+            type: string
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AnalyticsEventsOutputBody"
+          description: OK
+        default:
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/ErrorModel"
+          description: Error
+      summary: Event-flagged analytics frames
+      tags:
+        - Analytics
+  /api/cameras/{cameraId}/analytics/tracks/{trackId}:
+    get:
+      operationId: getCameraAnalyticsTrack
+      parameters:
+        - description: Camera identifier
+          in: path
+          name: cameraId
+          required: true
+          schema:
+            description: Camera identifier
+            type: string
+        - description: Track identifier
+          in: path
+          name: trackId
+          required: true
+          schema:
+            description: Track identifier
+            format: int64
+            type: integer
+        - description: "Start time (RFC3339, default: 24h ago)"
+          explode: false
+          in: query
+          name: start
+          schema:
+            description: "Start time (RFC3339, default: 24h ago)"
+            type: string
+        - description: "End time (RFC3339, default: now)"
+          explode: false
+          in: query
+          name: end
+          schema:
+            description: "End time (RFC3339, default: now)"
+            type: string
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AnalyticsTrackOutputBody"
+          description: OK
+        default:
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/ErrorModel"
+          description: Error
+      summary: Frames containing a tracked object
+      tags:
+        - Analytics
+  /api/cameras/{cameraId}/recordings:
+    get:
+      operationId: getCameraRecordings
+      parameters:
+        - description: Camera identifier
+          in: path
+          name: cameraId
+          required: true
+          schema:
+            description: Camera identifier
+            type: string
+        - description: "Start time (RFC3339, default: 24h ago)"
+          explode: false
+          in: query
+          name: start
+          schema:
+            description: "Start time (RFC3339, default: 24h ago)"
+            type: string
+        - description: "End time (RFC3339, default: now)"
+          explode: false
+          in: query
+          name: end
+          schema:
+            description: "End time (RFC3339, default: now)"
+            type: string
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/RecordingTimelineOutputBody"
+          description: OK
+        default:
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/ErrorModel"
+          description: Error
+      summary: Get recording segments for timebar display
+      tags:
+        - Camera
+  /api/cameras/{cameraId}/stats:
+    get:
+      operationId: getCameraStats
+      parameters:
+        - description: Camera identifier
+          in: path
+          name: cameraId
+          required: true
+          schema:
+            description: Camera identifier
+            type: string
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/RelayStats"
+          description: OK
+        default:
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/ErrorModel"
+          description: Error
+      summary: Stream ingestion metrics for a single camera
+      tags:
+        - Camera
+  /api/cameras/{cameraId}/stream:
+    get:
+      description: Unified HTTP chunked fMP4 stream. Omit start for live; provide start (RFC3339) for recorded playback.
+      operationId: streamCamera
+      parameters:
+        - in: path
+          name: cameraId
+          required: true
+          schema:
+            type: string
+        - description: Start time (RFC3339). Omit for live mode.
+          in: query
+          name: start
+          schema:
+            format: date-time
+            type: string
+      responses:
+        "200":
+          content:
+            video/mp4: {}
+          description: fMP4 video stream (video/mp4)
+      summary: fMP4 video stream (live + recorded)
+      tags:
+        - Camera
+  /api/cameras/{cameraId}/timeline:
+    get:
+      operationId: getCameraTimeline
+      parameters:
+        - description: Camera identifier
+          in: path
+          name: cameraId
+          required: true
+          schema:
+            description: Camera identifier
+            type: string
+        - description: "Start time (RFC3339, default: 24h ago)"
+          explode: false
+          in: query
+          name: start
+          schema:
+            description: "Start time (RFC3339, default: 24h ago)"
+            type: string
+        - description: "End time (RFC3339, default: now)"
+          explode: false
+          in: query
+          name: end
+          schema:
+            description: "End time (RFC3339, default: now)"
+            type: string
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/TimelineOutputBody"
+          description: OK
+        default:
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/ErrorModel"
+          description: Error
+      summary: Get recording timeline for a camera
+      tags:
+        - Camera
+  /api/cameras/{id}:
+    delete:
+      operationId: deleteCamera
+      parameters:
+        - description: Channel identifier
+          in: path
+          name: id
+          required: true
+          schema:
+            description: Channel identifier
+            type: string
+      responses:
+        "204":
+          description: No Content
+        default:
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/ErrorModel"
+          description: Error
+      summary: Delete a camera
+      tags:
+        - Camera
+    get:
+      operationId: getCameraConfig
+      parameters:
+        - description: Channel identifier
+          in: path
+          name: id
+          required: true
+          schema:
+            description: Channel identifier
+            type: string
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ChannelResponse"
+          description: OK
+        default:
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/ErrorModel"
+          description: Error
+      summary: Get a camera by ID
+      tags:
+        - Camera
+    put:
+      operationId: upsertCamera
+      parameters:
+        - description: Channel identifier
+          in: path
+          name: id
+          required: true
+          schema:
+            description: Channel identifier
+            type: string
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/Channel"
+        required: true
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ChannelResponse"
+          description: OK
+        default:
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/ErrorModel"
+          description: Error
+      summary: Create or update a camera
+      tags:
+        - Camera
+  /api/metrics:
+    get:
+      operationId: getMetrics
+      parameters:
+        - description: "Lookback duration (e.g. 1h, 30m). Default: 1h"
+          explode: false
+          in: query
+          name: since
+          schema:
+            description: "Lookback duration (e.g. 1h, 30m). Default: 1h"
+            type: string
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/MetricsResponse"
+          description: OK
+        default:
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/ErrorModel"
+          description: Error
+      summary: KPI metrics with histograms and system snapshots
+      tags:
+        - System
+  /health:
+    get:
+      operationId: getHealth
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/HealthSnapshot"
+          description: OK
+        default:
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/ErrorModel"
+          description: Error
+      security:
+        - {}
+      summary: System health stats
+      tags:
+        - System
+  /healthz:
+    get:
+      operationId: getHealthz
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/HealthzOutputBody"
+          description: OK
+        default:
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/ErrorModel"
+          description: Error
+      security:
+        - {}
+      summary: Basic health check
+      tags:
+        - System
+security:
+  - bearerAuth: []

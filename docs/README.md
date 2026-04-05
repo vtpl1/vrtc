@@ -8,8 +8,10 @@ spec first, then implement.
 
 | Document | Covers |
 |----------|--------|
+| [`streaming-architecture.md`](streaming-architecture.md) | Dual-hub design, streaming modes, analytics injection, analytics persistence |
 | [`seek-protocol.md`](seek-protocol.md) | Unified WebSocket streaming & seek protocol: endpoint, commands, server messages, client implementation guide |
 | [`kpi-targets.md`](kpi-targets.md) | Performance targets for streaming, recording, playback, scalability, and system health |
+| [`openapi/`](openapi/) | Generated OpenAPI contract for UI/client generation (`make openapi`) |
 
 ## Key invariants (quick reference)
 
