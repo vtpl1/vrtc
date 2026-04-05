@@ -2,10 +2,12 @@ package edgeview
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"io"
 	"net/http"
 	"runtime"
+	"strings"
 	"time"
 
 	"github.com/danielgtaylor/huma/v2"
@@ -116,6 +118,24 @@ func (h *HTTPHandler) Router() http.Handler {
 	cfg.Info.Description = "LAN-accessible API for live view, recorded playback, and camera management."
 	api := humachi.New(r, cfg)
 
+	// Define Bearer auth once; apply it globally so every operation
+	// inherits it (individual ops can override with an empty Security
+	// slice to opt out, e.g. health checks).
+	if api.OpenAPI().Components == nil {
+		api.OpenAPI().Components = &huma.Components{}
+	}
+
+	api.OpenAPI().Components.SecuritySchemes = map[string]*huma.SecurityScheme{
+		"bearerAuth": {
+			Type:   "http",
+			Scheme: "bearer",
+		},
+	}
+
+	api.OpenAPI().Security = []map[string][]string{
+		{"bearerAuth": {}},
+	}
+
 	// JSON endpoints — registered with explicit operation metadata.
 	h.registerJSONOps(api)
 	h.registerCameraOps(api)
@@ -205,12 +225,15 @@ func (h *HTTPHandler) registerStatsOps(api huma.API) {
 }
 
 func (h *HTTPHandler) registerHealthOps(api huma.API) {
+	noAuth := []map[string][]string{{}} // override global security — no auth required
+
 	huma.Register(api, huma.Operation{
 		OperationID: "getHealthz",
 		Method:      "GET",
 		Path:        "/healthz",
 		Summary:     "Basic health check",
 		Tags:        []string{"System"},
+		Security:    noAuth,
 	}, h.humaHealthz)
 
 	huma.Register(api, huma.Operation{
@@ -219,6 +242,7 @@ func (h *HTTPHandler) registerHealthOps(api huma.API) {
 		Path:        "/health",
 		Summary:     "System health stats",
 		Tags:        []string{"System"},
+		Security:    noAuth,
 	}, h.humaHealth)
 }
 
@@ -298,19 +322,59 @@ func (h *HTTPHandler) authMiddleware(next http.Handler) http.Handler {
 			return
 		}
 
+		// RFC 6750: prefer Authorization: Bearer header.
+		// Allow ?token= query param only for WebSocket upgrades (browsers
+		// cannot set custom headers on the WS handshake).
 		token := r.Header.Get("Authorization")
-		if token == "" {
-			token = r.URL.Query().Get("token")
+		if token == "" && isWebSocketUpgrade(r) {
+			token = "Bearer " + r.URL.Query().Get("token")
 		}
 
-		if token != "Bearer "+h.authToken && token != h.authToken {
-			http.Error(w, "unauthorized", http.StatusUnauthorized)
+		if token != "Bearer "+h.authToken {
+			w.Header().Set("WWW-Authenticate", `Bearer realm="edge-view"`)
+			writeProblem(w, http.StatusUnauthorized, "missing or invalid bearer token")
 
 			return
 		}
 
 		next.ServeHTTP(w, r)
 	})
+}
+
+// isWebSocketUpgrade returns true when the request carries the standard
+// WebSocket upgrade headers (Connection: Upgrade + Upgrade: websocket).
+func isWebSocketUpgrade(r *http.Request) bool {
+	return strings.EqualFold(r.Header.Get("Connection"), "upgrade") &&
+		strings.EqualFold(r.Header.Get("Upgrade"), "websocket")
+}
+
+// writeProblem writes an RFC 9457 problem+json response. Huma-registered
+// operations produce this automatically; this helper covers raw chi handlers
+// (auth, CSV, streaming) so every error surface uses the same format.
+// problemDetail is the RFC 9457 problem detail structure used by writeProblem.
+type problemDetail struct {
+	Type   string `json:"type"`
+	Title  string `json:"title"`
+	Status int    `json:"status"`
+	Detail string `json:"detail"`
+}
+
+func writeProblem(w http.ResponseWriter, status int, detail string) {
+	body, err := json.Marshal(problemDetail{
+		Type:   "about:blank",
+		Title:  http.StatusText(status),
+		Status: status,
+		Detail: detail,
+	})
+	if err != nil {
+		http.Error(w, detail, status)
+
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.WriteHeader(status)
+	_, _ = w.Write(body)
 }
 
 // ── Huma I/O types ──────────────────────────────────────────────────────────
@@ -706,14 +770,14 @@ func (h *HTTPHandler) collectHealth(ctx context.Context) HealthSnapshot {
 func (h *HTTPHandler) httpStream(w http.ResponseWriter, r *http.Request) {
 	cameraID := chi.URLParam(r, "cameraId")
 	if cameraID == "" {
-		http.Error(w, "missing cameraId", http.StatusBadRequest)
+		writeProblem(w, http.StatusBadRequest, "missing cameraId")
 
 		return
 	}
 
 	start, err := parsePlaybackStart(r)
 	if err != nil {
-		http.Error(w, err.Error(), http.StatusBadRequest)
+		writeProblem(w, http.StatusBadRequest, err.Error())
 
 		return
 	}
@@ -750,7 +814,7 @@ func (h *HTTPHandler) httpStreamLive(
 		ErrChan:      errCh,
 	})
 	if err != nil {
-		http.Error(w, err.Error(), http.StatusNotFound)
+		writeProblem(w, http.StatusNotFound, err.Error())
 
 		return
 	}
@@ -782,7 +846,7 @@ func (h *HTTPHandler) httpStreamRecorded(
 		relayhub.WithMaxConsumers(1),
 	)
 	if err := playSM.Start(ctx); err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
+		writeProblem(w, http.StatusInternalServerError, err.Error())
 
 		return
 	}
@@ -810,7 +874,7 @@ func (h *HTTPHandler) httpStreamRecorded(
 		ErrChan:      errCh,
 	})
 	if err != nil {
-		http.Error(w, err.Error(), http.StatusNotFound)
+		writeProblem(w, http.StatusNotFound, err.Error())
 
 		return
 	}

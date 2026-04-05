@@ -593,7 +593,7 @@ func TestWSClient_RecordedMode_SeekBeyondSwitchesToLive(t *testing.T) {
 
 	server := newWSTestServer(t, streams, withRecordingIndex(idx))
 	// Request a time after the last recording → should switch to live
-	start := time.Now().Add(1 * time.Hour).Format(time.RFC3339)
+	start := time.Now().Add(1 * time.Hour).UTC().Format(time.RFC3339)
 	client := dialWS(t, server, "cameraId=cam-1&start="+start)
 
 	msg := client.readTextJSON(2 * time.Second)

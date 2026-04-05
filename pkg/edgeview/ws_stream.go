@@ -59,12 +59,17 @@ type seekedResponse struct {
 func (h *HTTPHandler) wsStream(w http.ResponseWriter, r *http.Request) {
 	cameraID, err := parseWSCameraID(r)
 	if err != nil {
-		http.Error(w, err.Error(), http.StatusBadRequest)
+		writeProblem(w, http.StatusBadRequest, err.Error())
 
 		return
 	}
 
-	start := parseWSOptionalTime(r, "start")
+	start, err := parseWSOptionalTime(r, "start")
+	if err != nil {
+		writeProblem(w, http.StatusBadRequest, err.Error())
+
+		return
+	}
 
 	wsConn, err := websocket.Accept(w, r, &websocket.AcceptOptions{
 		OriginPatterns:  []string{"*"},
@@ -741,19 +746,19 @@ func parseWSCameraID(r *http.Request) (string, error) {
 }
 
 // parseWSOptionalTime reads an RFC3339 query parameter, returning zero if
-// absent or unparseable.
-func parseWSOptionalTime(r *http.Request, key string) time.Time {
+// absent. Returns an error if present but not valid RFC3339.
+func parseWSOptionalTime(r *http.Request, key string) (time.Time, error) {
 	s := r.URL.Query().Get(key)
 	if s == "" {
-		return time.Time{}
+		return time.Time{}, nil
 	}
 
 	t, err := time.Parse(time.RFC3339, s)
 	if err != nil {
-		return time.Time{}
+		return time.Time{}, errInvalidStartRFC3339
 	}
 
-	return t
+	return t, nil
 }
 
 // cancelWriter wraps an io.WriteCloser and cancels a context on Close.

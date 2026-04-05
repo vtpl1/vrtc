@@ -54,6 +54,7 @@ func newChannelResponse(ch channel.Channel) *channelResponse {
 }
 
 type saveChannelInput struct {
+	ID   string `doc:"Channel identifier" path:"id"`
 	Body channel.Channel
 }
 
@@ -98,17 +99,14 @@ func (h *HTTPHandler) registerCameraOps(api huma.API) {
 	})
 
 	huma.Register(api, huma.Operation{
-		OperationID:   "upsertCamera",
-		Method:        "PUT",
-		Path:          "/api/cameras",
-		Summary:       "Create or update a camera",
-		Tags:          []string{"Camera"},
-		DefaultStatus: 201,
+		OperationID: "upsertCamera",
+		Method:      "PUT",
+		Path:        "/api/cameras/{id}",
+		Summary:     "Create or update a camera",
+		Tags:        []string{"Camera"},
 	}, func(ctx context.Context, input *saveChannelInput) (*channelOutput, error) {
 		ch := input.Body
-		if ch.ID == "" {
-			return nil, huma.Error400BadRequest("id is required")
-		}
+		ch.ID = input.ID
 
 		if ch.StreamURL == "" {
 			return nil, huma.Error400BadRequest("stream_url is required")
@@ -207,7 +205,7 @@ func (h *HTTPHandler) exportCSV(w http.ResponseWriter, r *http.Request) {
 
 	channels, err := cw.ListChannels(r.Context())
 	if err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
+		writeProblem(w, http.StatusInternalServerError, err.Error())
 
 		return
 	}
@@ -232,7 +230,7 @@ func (h *HTTPHandler) exportCSV(w http.ResponseWriter, r *http.Request) {
 func (h *HTTPHandler) importCSV(w http.ResponseWriter, r *http.Request) {
 	body, err := io.ReadAll(io.LimitReader(r.Body, 10<<20)) // 10 MB limit
 	if err != nil {
-		http.Error(w, "failed to read body", http.StatusBadRequest)
+		writeProblem(w, http.StatusBadRequest, "failed to read body")
 
 		return
 	}
@@ -241,17 +239,17 @@ func (h *HTTPHandler) importCSV(w http.ResponseWriter, r *http.Request) {
 
 	header, err := reader.Read()
 	if err != nil {
-		http.Error(w, "empty or invalid CSV", http.StatusBadRequest)
+		writeProblem(w, http.StatusBadRequest, "empty or invalid CSV")
 
 		return
 	}
 
 	colIdx := buildColumnIndex(header)
 	if colIdx["id"] < 0 || colIdx["rtsp_main"] < 0 {
-		http.Error(
+		writeProblem(
 			w,
-			"CSV must have at least 'id' and 'rtsp_main' columns",
 			http.StatusBadRequest,
+			"CSV must have at least 'id' and 'rtsp_main' columns",
 		)
 
 		return
@@ -259,7 +257,7 @@ func (h *HTTPHandler) importCSV(w http.ResponseWriter, r *http.Request) {
 
 	imported, saveErr := h.saveCSVRecords(r.Context(), reader, colIdx)
 	if saveErr != nil {
-		http.Error(w, saveErr.Error(), http.StatusInternalServerError)
+		writeProblem(w, http.StatusInternalServerError, saveErr.Error())
 
 		return
 	}
