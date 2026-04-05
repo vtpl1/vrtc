@@ -112,57 +112,7 @@ func (h *HTTPHandler) wsStream(w http.ResponseWriter, r *http.Request) {
 	var wg sync.WaitGroup
 
 	wg.Go(func() {
-		for {
-			select {
-			case <-rCtx.Done():
-				return
-			default:
-				cmd, rerr := readWSCommand(rCtx, wsConn)
-				if rerr != nil {
-					if !errors.Is(rerr, context.Canceled) &&
-						!errors.Is(rerr, context.DeadlineExceeded) {
-						errChan <- rerr
-					}
-
-					return
-				}
-
-				if cmd.Type != cmdTypeMSE {
-					continue
-				}
-
-				switch cmd.Value {
-				case "": // initial play
-					if serr := session.attachConsumer(ctx, errChan); serr != nil {
-						writeWSErrorResponse(ctx, wsConn, serr, "consume failed")
-
-						errChan <- serr
-
-						return
-					}
-				case "pause":
-					session.pause(ctx)
-				case "resume":
-					session.resume(ctx)
-				case "seek":
-					if serr := session.handleSeek(ctx, cmd, errChan); serr != nil {
-						writeWSErrorResponse(ctx, wsConn, serr, "seek failed")
-
-						errChan <- serr
-
-						return
-					}
-				case "skip":
-					if serr := session.handleSkip(ctx, cmd, errChan); serr != nil {
-						writeWSErrorResponse(ctx, wsConn, serr, "skip failed")
-
-						errChan <- serr
-
-						return
-					}
-				}
-			}
-		}
+		session.readLoop(ctx, rCtx, wsConn, errChan)
 	})
 
 	select {
@@ -171,6 +121,7 @@ func (h *HTTPHandler) wsStream(w http.ResponseWriter, r *http.Request) {
 	}
 
 	rCancel()
+	wg.Wait() // ensure reader goroutine exits before session.stop()
 }
 
 // streamSession manages a single streaming pipeline. It transparently handles
@@ -384,8 +335,10 @@ func (s *streamSession) attachLiveConsumer(
 	opts av.ConsumeOptions,
 ) error {
 	hub := s.handler.svc.Hub()
-	if s.analyticsMode && s.handler.svc.analyticsRelayHub != nil {
-		hub = s.handler.svc.analyticsRelayHub
+	if s.analyticsMode {
+		if aHub := s.handler.svc.AnalyticsRelayHub(); aHub != nil {
+			hub = aHub
+		}
 	}
 
 	handle, cerr := hub.Consume(ctx, s.cameraID, opts)
@@ -472,6 +425,73 @@ func (s *streamSession) stop(ctx context.Context) {
 
 	if sm != nil {
 		_ = sm.Stop()
+	}
+}
+
+// readLoop reads WS commands and dispatches them to the session. It runs in
+// its own goroutine and exits when rCtx is cancelled or a fatal error occurs.
+func (s *streamSession) readLoop(
+	ctx, rCtx context.Context,
+	wsConn *websocket.Conn,
+	errChan chan<- error,
+) {
+	for {
+		select {
+		case <-rCtx.Done():
+			return
+		default:
+			cmd, rerr := readWSCommand(rCtx, wsConn)
+			if rerr != nil {
+				if !errors.Is(rerr, context.Canceled) &&
+					!errors.Is(rerr, context.DeadlineExceeded) {
+					trySendErr(errChan, rerr)
+				}
+
+				return
+			}
+
+			if cmd.Type != cmdTypeMSE {
+				continue
+			}
+
+			switch cmd.Value {
+			case "": // initial play
+				if serr := s.attachConsumer(ctx, errChan); serr != nil {
+					writeWSErrorResponse(ctx, wsConn, serr, "consume failed")
+					trySendErr(errChan, serr)
+
+					return
+				}
+			case "pause":
+				s.pause(ctx)
+			case "resume":
+				s.resume(ctx)
+			case "seek":
+				if serr := s.handleSeek(ctx, cmd, errChan); serr != nil {
+					writeWSErrorResponse(ctx, wsConn, serr, "seek failed")
+					trySendErr(errChan, serr)
+
+					return
+				}
+			case "skip":
+				if serr := s.handleSkip(ctx, cmd, errChan); serr != nil {
+					writeWSErrorResponse(ctx, wsConn, serr, "skip failed")
+					trySendErr(errChan, serr)
+
+					return
+				}
+			}
+		}
+	}
+}
+
+// trySendErr sends err to ch without blocking. If ch is full the error is
+// dropped — the main goroutine already observed a prior error or context
+// cancellation and is shutting down.
+func trySendErr(ch chan<- error, err error) {
+	select {
+	case ch <- err:
+	default:
 	}
 }
 

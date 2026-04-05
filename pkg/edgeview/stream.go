@@ -133,7 +133,17 @@ func (s *Service) Hub() av.RelayHub {
 // This is a setter rather than an option because the analytics hub depends
 // on viewSvc.RecordedDemuxerFactory, creating a circular init dependency.
 func (s *Service) SetAnalyticsRelayHub(hub av.RelayHub) {
+	s.mu.Lock()
 	s.analyticsRelayHub = hub
+	s.mu.Unlock()
+}
+
+// AnalyticsRelayHub returns the analytics relay hub, or nil if not configured.
+func (s *Service) AnalyticsRelayHub() av.RelayHub {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+
+	return s.analyticsRelayHub
 }
 
 // RecIndex returns the recording index, or nil if unavailable.

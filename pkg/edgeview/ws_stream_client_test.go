@@ -1234,7 +1234,12 @@ func TestWSClient_PauseResume_RecordedMode(t *testing.T) {
 
 	streams := testH264Streams(t)
 	segDir := t.TempDir()
-	segPath := createTestSegment(t, segDir, streams, 90)
+	// Need enough frames that the fMP4 data exceeds the TCP send buffer
+	// (~128 KB on most OSes). With ~1 KB per 30-frame fragment, 9000 frames
+	// produces ~300 fragments ≈ 300 KB — well above the buffer limit. This
+	// ensures the relay blocks on write before the pause command arrives,
+	// leaving data for resume.
+	segPath := createTestSegment(t, segDir, streams, 9000)
 
 	base := time.Now().Add(-1 * time.Hour).UTC().Truncate(time.Second)
 	idx := newMockRecordingIndex()

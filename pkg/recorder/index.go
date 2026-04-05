@@ -87,8 +87,9 @@ type RecordingIndex interface {
 	// Returns ErrNoRecordings if no playable recordings exist.
 	LastAvailable(ctx context.Context, channelID string) (RecordingEntry, error)
 
-	// Delete marks a segment as deleted in the index. The caller is responsible
-	// for removing the file from disk before calling Delete.
+	// Delete marks a segment as deleted in the index. The caller should call
+	// Delete before removing the file from disk, so that concurrent readers
+	// see the entry as deleted before the file disappears.
 	Delete(ctx context.Context, id string) error
 
 	// QueryAllChannels returns entries across every known channel, optionally
