@@ -130,8 +130,13 @@ Computes `target = lastSeekTime + offset`, then performs an absolute seek.
 Sent immediately after connection when starting in live mode.
 
 ```json
-{"type": "mode_change", "mode": "live"}
+{"type": "mode_change", "mode": "live", "wallClock": "2026-04-04T14:59:55.123Z"}
 ```
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `mode` | string | Always `"live"` |
+| `wallClock` | string | Current wall-clock time (RFC3339 with milliseconds) |
 
 ### 2. `playback_info` — Resolved Start Position
 
@@ -140,15 +145,17 @@ Sent when starting in recorded mode.
 ```json
 {
   "type": "playback_info",
-  "actualStart": "2026-04-04T14:00:02Z",
+  "actualStartWallClock": "2026-04-04T14:00:02.000Z",
+  "wallClock": "2026-04-04T14:00:02.000Z",
   "mode": "recorded"
 }
 ```
 
-| Field | Values |
-|-------|--------|
-| `mode` | `"recorded"` — recordings found at requested time |
-| | `"first_available"` — no recordings at requested time, fell back to earliest |
+| Field | Type | Description |
+|-------|------|-------------|
+| `mode` | string | `"recorded"` — recordings found at requested time; `"first_available"` — no recordings at requested time, fell back to earliest |
+| `actualStartWallClock` | string | Resolved start time (RFC3339ms). May differ from requested start. |
+| `wallClock` | string | Wall-clock anchor for the stream (RFC3339ms) |
 
 ### 3. `mse` — Codec String
 
@@ -166,7 +173,7 @@ Sent before the init segment. Use this value with:
 ```json
 {
   "type": "seeked",
-  "time": "2026-04-04T14:31:58Z",
+  "wallClock": "2026-04-04T14:31:58.000Z",
   "mode": "recorded",
   "codecChanged": false,
   "codecs": "",
@@ -178,7 +185,7 @@ Sent before the init segment. Use this value with:
 | Field | Type | Description |
 |-------|------|-------------|
 | `type` | string | Always `"seeked"` |
-| `time` | string | Actual wall-clock time landed on (RFC3339). May differ from requested time due to keyframe alignment or gaps. |
+| `wallClock` | string | Actual wall-clock time landed on (RFC3339ms). May differ from requested time due to keyframe alignment or gaps. |
 | `mode` | string | `"recorded"`, `"live"`, or `"first_available"` |
 | `codecChanged` | bool | `true` if the new position has different codecs than the previous position |
 | `codecs` | string | New MIME codec string. Present only when `codecChanged` is `true`. |
@@ -190,13 +197,26 @@ Sent before the init segment. Use this value with:
 - A new init segment (binary) follows
 - Media fragments (binary) follow
 
-### 5. `error` — Error
+### 5. `timing` — Continuous Wall-Clock Sync
+
+Sent on every fragment flush during streaming. Provides continuous wall-clock
+updates independent of analytics.
+
+```json
+{"type": "timing", "wallClock": "2026-04-04T14:32:01.456Z"}
+```
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `wallClock` | string | Packet wall-clock time (RFC3339ms) |
+
+### 6. `error` — Error
 
 ```json
 {"type": "error", "error": "human-readable message"}
 ```
 
-### 6. Binary Frames — fMP4 Media
+### 7. Binary Frames — fMP4 Media
 
 Binary WebSocket frames contain fMP4 data:
 1. Init segment (`ftyp` + `moov`) — after codec string
@@ -210,7 +230,7 @@ Binary WebSocket frames contain fMP4 data:
 
 ```
 Client: {"type":"mse","value":"seek","time":"2026-04-04T14:32:00Z","seq":1}
-Server: {"type":"seeked","time":"2026-04-04T14:31:58Z","mode":"recorded","codecChanged":false,"seq":1}
+Server: {"type":"seeked","wallClock":"2026-04-04T14:31:58.000Z","mode":"recorded","codecChanged":false,"seq":1}
 Server: {"type":"mse","value":"video/mp4; codecs=\"avc1.64001E\""}
 Server: [binary] init segment
 Server: [binary] moof+mdat (from keyframe at 14:31:58)
@@ -220,7 +240,7 @@ Server: [binary] moof+mdat (from keyframe at 14:31:58)
 
 ```
 Client: {"type":"mse","value":"seek","time":"2026-04-04T14:33:00Z","seq":2}
-Server: {"type":"seeked","time":"2026-04-04T14:35:00Z","mode":"recorded","codecChanged":false,"gap":true,"seq":2}
+Server: {"type":"seeked","wallClock":"2026-04-04T14:35:00.000Z","mode":"recorded","codecChanged":false,"gap":true,"seq":2}
 Server: {"type":"mse","value":"video/mp4; codecs=\"avc1.64001E\""}
 Server: [binary] init segment
 Server: [binary] moof+mdat (from next available segment)
@@ -230,7 +250,7 @@ Server: [binary] moof+mdat (from next available segment)
 
 ```
 Client: {"type":"mse","value":"seek","time":"2026-04-04T15:00:00Z","seq":3}
-Server: {"type":"seeked","time":"2026-04-04T14:59:55Z","mode":"live","codecChanged":false,"seq":3}
+Server: {"type":"seeked","wallClock":"2026-04-04T14:59:55.000Z","mode":"live","codecChanged":false,"seq":3}
 Server: {"type":"mse","value":"video/mp4; codecs=\"avc1.64001E\""}
 Server: [binary] init segment
 Server: [binary] live moof+mdat fragments
@@ -240,7 +260,7 @@ Server: [binary] live moof+mdat fragments
 
 ```
 Client: {"type":"mse","value":"seek","time":"2026-03-28T10:00:00Z","seq":4}
-Server: {"type":"seeked","time":"2026-03-28T10:00:02Z","mode":"recorded","codecChanged":true,"codecs":"video/mp4; codecs=\"hev1.1.6.L153.B0\"","seq":4}
+Server: {"type":"seeked","wallClock":"2026-03-28T10:00:02.000Z","mode":"recorded","codecChanged":true,"codecs":"video/mp4; codecs=\"hev1.1.6.L153.B0\"","seq":4}
 Server: {"type":"mse","value":"video/mp4; codecs=\"hev1.1.6.L153.B0\""}
 Server: [binary] init segment (H.265)
 Server: [binary] moof+mdat
@@ -250,7 +270,7 @@ Server: [binary] moof+mdat
 
 ```
 Client: {"type":"mse","value":"seek","time":"now","seq":5}
-Server: {"type":"seeked","time":"2026-04-04T14:59:55Z","mode":"live","codecChanged":false,"seq":5}
+Server: {"type":"seeked","wallClock":"2026-04-04T14:59:55.000Z","mode":"live","codecChanged":false,"seq":5}
 Server: {"type":"mse","value":"video/mp4; codecs=\"avc1.64001E\""}
 Server: [binary] init segment
 Server: [binary] live fragments
@@ -260,7 +280,7 @@ Server: [binary] live fragments
 
 ```
 Client: {"type":"mse","value":"skip","offset":"-30s","seq":6}
-Server: {"type":"seeked","time":"2026-04-04T14:31:30Z","mode":"recorded","codecChanged":false,"seq":6}
+Server: {"type":"seeked","wallClock":"2026-04-04T14:31:30.000Z","mode":"recorded","codecChanged":false,"seq":6}
 Server: {"type":"mse","value":"video/mp4; codecs=\"avc1.64001E\""}
 Server: [binary] init segment
 Server: [binary] moof+mdat
@@ -328,10 +348,13 @@ ws.onmessage = (event) => {
       handleSeeked(msg);
       break;
     case "mode_change":
-      handleModeChange(msg.mode);
+      handleModeChange(msg.mode, msg.wallClock);
       break;
     case "playback_info":
       handlePlaybackInfo(msg);
+      break;
+    case "timing":
+      handleTiming(msg.wallClock);
       break;
     case "error":
       console.error("Server error:", msg.error);
@@ -382,7 +405,7 @@ function handleSeeked(msg) {
   // Ignore responses from stale seeks
   if (msg.seq < seekSeq) return;
 
-  console.log(`Seeked to ${msg.time}, mode=${msg.mode}, gap=${msg.gap}`);
+  console.log(`Seeked to ${msg.wallClock}, mode=${msg.mode}, gap=${msg.gap}`);
 
   if (msg.codecChanged && msg.codecs) {
     // Codec will change — the next mse message + init segment will handle it
@@ -390,7 +413,7 @@ function handleSeeked(msg) {
   }
 
   // Update UI: playhead position, mode indicator, etc.
-  updatePlayhead(msg.time, msg.mode);
+  updatePlayhead(msg.wallClock, msg.mode);
 }
 ```
 
@@ -691,7 +714,7 @@ scrubber.addEventListener("change", (e) => {
 
       case "seeked":
         if (msg.seq >= seekSeq) {
-          console.log(`Seeked: time=${msg.time} mode=${msg.mode} gap=${msg.gap} codecChanged=${msg.codecChanged}`);
+          console.log(`Seeked: wallClock=${msg.wallClock} mode=${msg.mode} gap=${msg.gap} codecChanged=${msg.codecChanged}`);
         }
         break;
 
@@ -762,10 +785,13 @@ scrubber.addEventListener("change", (e) => {
 | `type` | Description |
 |--------|-------------|
 | `mse` | Codec string — use with `addSourceBuffer` / `changeType` |
-| `seeked` | Seek completed — contains time, mode, codecChanged, gap, seq |
-| `mode_change` | Initial mode notification (live) |
-| `playback_info` | Initial mode notification (recorded/first_available) with actual start |
+| `seeked` | Seek completed — contains wallClock, mode, codecChanged, gap, seq |
+| `mode_change` | Initial mode notification (live) with wallClock |
+| `playback_info` | Initial mode notification (recorded/first_available) with actualStartWallClock and wallClock |
+| `timing` | Continuous wall-clock sync — sent on every fragment flush |
 | `error` | Error message |
+
+All `wallClock` fields use RFC3339 with millisecond precision: `"2026-04-04T14:31:58.000Z"`
 
 ### Server → Client (Binary)
 

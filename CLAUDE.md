@@ -126,6 +126,22 @@ These terms have distinct meanings — do not use them interchangeably:
 | `av.Detection` | Single detected object: bounding box, class, confidence, track ID |
 
 BSON tags use `snake_case` (MongoDB); JSON tags use `camelCase` (API/emsg wire format).
+Timing fields (`capture`, `captureEnd`, `inference`) are stored as `int64` (Unix ms) internally
+but serialised as RFC3339 with millisecond precision in JSON (see `av.RFC3339Milli`).
+
+### WebSocket Text Frame Protocol
+
+All wall-clock fields use RFC3339 with millisecond precision (`av.RFC3339Milli`).
+
+| `type` | Key fields | When sent |
+|--------|------------|-----------|
+| `mode_change` | `mode`, `wallClock` | Live mode activation |
+| `playback_info` | `mode`, `actualStartWallClock`, `wallClock` | Recorded/first_available start |
+| `seeked` | `wallClock`, `mode`, `codecChanged`, `codecs?`, `gap?`, `seq` | After seek completes |
+| `timing` | `wallClock` | Every fragment flush (continuous wall-clock sync) |
+| `mse` | `value` (MIME codec string) | Codec negotiation |
+| `error` | `error` | Invalid command |
+| *(analytics)* | Full `FrameAnalytics` JSON | Only when real analytics are attached |
 
 ## Linting Rules
 
